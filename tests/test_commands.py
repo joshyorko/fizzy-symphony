@@ -104,7 +104,12 @@ class TestCommandBuilders:
 class TestBuildBoardPlan:
     def _make_board(self) -> Board:
         c1 = _make_card(number=42, title="First card")
-        c2 = _make_card(number=57, title="Second card", column_id="col_ready", labels=["tests"])
+        c2 = _make_card(
+            number=57,
+            title="Second card",
+            column_id="col_ready",
+            labels=["docs", "tests"],
+        )
         return _make_board(cards=[c1, c2])
 
     def test_plan_length_matches_cards(self):
@@ -150,7 +155,7 @@ class TestBuildBoardPlan:
     def test_labels_joined_with_comma(self):
         board = self._make_board()
         plan = build_board_plan(board, _make_config())
-        assert plan[1]["labels"] == "tests"
+        assert plan[1]["labels"] == "docs, tests"
 
     def test_empty_board_returns_empty_plan(self):
         board = _make_board()

@@ -109,7 +109,11 @@ def build_card_command(
     card: CardAdapter,
     config: FizzyConfig,
 ) -> str:
-    """Build the primary Fizzy CLI command for a card adapter."""
+    """Build the primary Fizzy CLI command for a card adapter.
+
+    The ``board`` parameter is retained for compatibility with the previous
+    public helper signature and may be removed in a future major revision.
+    """
     _ = board
     return build_card_show_command(agent, card, config)
 
@@ -170,5 +174,6 @@ def format_plan_as_text(plan: List[Dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+# Phase 0 compatibility aliases for the previous command-builder names.
 build_agent_command = build_card_command
 build_workflow_plan = build_board_plan
