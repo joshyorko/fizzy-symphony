@@ -3,12 +3,11 @@ Tests for fizzy_symphony.commands — covers the CLI-backed command builders,
 build_board_plan, and format_plan_as_text.
 """
 
-from pathlib import Path
-
 import pytest
 
 from fizzy_symphony.commands import (
     build_board_plan,
+    build_card_claim_command,
     build_card_column_command,
     build_card_command,
     build_card_list_command,
@@ -34,8 +33,8 @@ def _make_card(number=1, title="Do something", **kwargs) -> CardAdapter:
 def _make_board(**kwargs) -> Board:
     defaults = dict(
         name="test-board",
-        tracker="agent-skills/fizzy",
-        board_id="03board",
+        tracker="fizzy",
+        board_id="work-ai-board",
         cards=[],
     )
     defaults.update(kwargs)
@@ -54,7 +53,7 @@ class TestCommandBuilders:
 
     def test_build_card_list_command_uses_board_context_and_agent_markdown(self):
         cmd = build_card_list_command(_make_board(), _make_config())
-        assert cmd == "fizzy card list --board 03board --agent --markdown"
+        assert cmd == "fizzy card list --board work-ai-board --agent --markdown"
 
     def test_build_card_list_command_can_fall_back_to_fizzy_yaml(self, tmp_path, monkeypatch):
         (tmp_path / ".fizzy.yaml").write_text("board: 03fromfile\n", encoding="utf-8")
@@ -68,6 +67,10 @@ class TestCommandBuilders:
         cfg = _make_config(workspace=str(tmp_path), board=None)
         with pytest.raises(ValueError, match="Board context"):
             build_card_list_command(_make_board(board_id=None), cfg)
+
+    def test_build_card_claim_command_uses_card_number(self):
+        cmd = build_card_claim_command(_make_board(), _make_card(number=42), _make_config())
+        assert cmd == "fizzy card claim 42 --board work-ai-board --agent --quiet"
 
     def test_build_card_show_command_uses_card_number(self):
         cmd = build_card_show_command(_make_agent(), _make_card(number=42), _make_config())
@@ -131,6 +134,7 @@ class TestBuildBoardPlan:
             assert "labels" in entry
             assert "doctor_command" in entry
             assert "list_command" in entry
+            assert "claim_command" in entry
             assert "show_command" in entry
             assert "column_command" in entry
             assert "comment_command" in entry
@@ -145,7 +149,7 @@ class TestBuildBoardPlan:
         board = self._make_board()
         plan = build_board_plan(board, _make_config())
         assert plan[0]["board"] == "test-board"
-        assert plan[0]["board_context"] == "03board"
+        assert plan[0]["board_context"] == "work-ai-board"
 
     def test_labels_empty_when_card_has_none(self):
         board = self._make_board()
@@ -167,7 +171,7 @@ class TestFormatPlanAsText:
     def _plan(self) -> list:
         board = _make_board(
             name="fmt-board",
-            tracker="linear",
+            tracker="fizzy",
             board_id="03fmtboard",
             cards=[
                 _make_card(number=101, title="Alpha card"),
@@ -192,7 +196,7 @@ class TestFormatPlanAsText:
     def test_contains_tracker_and_board(self):
         text = format_plan_as_text(self._plan())
         assert "fmt-board" in text
-        assert "linear" in text
+        assert "fizzy" in text
         assert "03fmtboard" in text
 
     def test_empty_plan_returns_empty_message(self):
@@ -207,6 +211,7 @@ class TestFormatPlanAsText:
         text = format_plan_as_text(self._plan())
         assert "fizzy doctor" in text
         assert "fizzy card list" in text
+        assert "fizzy card claim 101" in text
         assert "fizzy card show 101" in text
         assert "fizzy card column 101" in text
         assert "fizzy comment create --card 101" in text

@@ -2,8 +2,9 @@
 Data models for Fizzy Symphony.
 
 These dataclasses describe the revised scaffold:
+  - FizzyCard   : normalized canonical card shape used across adapters.
   - Agent       : a Codex coding agent with an identity and optional capabilities.
-  - CardAdapter : a tracker card mapped into the Fizzy CLI contract.
+  - CardAdapter : a compatibility wrapper used by the dry-run planning scaffold.
   - Board       : an ordered collection of card adapters for a tracker board.
   - FizzyConfig : runtime configuration used when building Fizzy commands.
 
@@ -40,6 +41,42 @@ class AgentCapability(str, Enum):
 
 
 @dataclass
+class FizzyCard:
+    """Normalized Fizzy card shape.
+
+    The canonical tracker model uses both the internal card ``id`` and the
+    human-facing ``number`` because Fizzy CLI commands operate on ``number``.
+    """
+
+    id: str
+    number: int
+    identifier: str
+    title: str
+    description: str = ""
+    state: str = ""
+    url: Optional[str] = None
+    labels: List[str] = field(default_factory=list)
+    priority: Optional[str] = None
+    blocked_by: List[str] = field(default_factory=list)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    branch_name: Optional[str] = None
+    column_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("FizzyCard.id must not be empty.")
+        if self.number < 1:
+            raise ValueError("FizzyCard.number must be >= 1.")
+        if not self.identifier:
+            raise ValueError("FizzyCard.identifier must not be empty.")
+        if not self.title:
+            raise ValueError("FizzyCard.title must not be empty.")
+        if not self.state:
+            raise ValueError("FizzyCard.state must not be empty.")
+
+
+@dataclass
 class Agent:
     """Represents a Codex coding agent.
 
@@ -72,7 +109,7 @@ class Agent:
 
 @dataclass
 class CardAdapter:
-    """A tracker card adapted into the Fizzy CLI planning model.
+    """A tracker card adapted into the dry-run planning model.
 
     Attributes:
         number: The Fizzy card number used by the CLI.
@@ -99,6 +136,38 @@ class CardAdapter:
             raise ValueError("CardAdapter.title must not be empty.")
         if not self.column_id:
             raise ValueError("CardAdapter.column_id must not be empty.")
+
+    def as_fizzy_card(
+        self,
+        *,
+        card_id: str,
+        identifier: str,
+        state: str,
+        description: str = "",
+        url: Optional[str] = None,
+        priority: Optional[str] = None,
+        blocked_by: Optional[List[str]] = None,
+        created_at: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        branch_name: Optional[str] = None,
+    ) -> FizzyCard:
+        """Convert the compatibility adapter into the canonical card shape."""
+        return FizzyCard(
+            id=card_id,
+            number=self.number,
+            identifier=identifier,
+            title=self.title,
+            description=description,
+            state=state,
+            url=url,
+            labels=list(self.labels),
+            priority=priority,
+            blocked_by=list(blocked_by or []),
+            created_at=created_at,
+            updated_at=updated_at,
+            branch_name=branch_name,
+            column_id=self.column_id,
+        )
 
 
 @dataclass

@@ -1,57 +1,35 @@
-"""
-Command construction for Fizzy Symphony.
+"""Compatibility command builders for Fizzy Symphony.
 
-All public functions in this module **build** command strings or plan
-descriptions — they never execute subprocesses. Phase 0 mirrors the real
-Fizzy CLI contract while remaining dry-run only.
+The canonical dry-run command construction now lives in
+:mod:`fizzy_symphony.adapters.fizzy_cli`. This module keeps the original helper
+functions available while delegating to the adapter.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from shlex import quote
 from typing import Dict, List
 
+from .adapters.fizzy_cli import FizzyCLIAdapter
 from .models import Agent, Board, CardAdapter, FizzyConfig
 
 
-def _board_flag_parts(board: Board, config: FizzyConfig) -> List[str]:
-    board_id = config.board or board.board_id
-    if board_id:
-        return ["--board", quote(board_id)]
-
-    context_paths = [
-        Path.cwd() / ".fizzy.yaml",
-        Path(config.workspace) / ".fizzy.yaml",
-    ]
-    if any(path.exists() for path in context_paths):
-        return []
-
-    raise ValueError(
-        "Board context requires .fizzy.yaml or an explicit board ID via Board.board_id or FizzyConfig.board."
-    )
-
-
-def _agent_markdown_parts() -> List[str]:
-    return ["--agent", "--markdown"]
-
-
-def _agent_quiet_parts() -> List[str]:
-    return ["--agent", "--quiet"]
+def _adapter(config: FizzyConfig) -> FizzyCLIAdapter:
+    return FizzyCLIAdapter(config=config)
 
 
 def build_doctor_command(config: FizzyConfig) -> str:
     """Build the recommended health check command for setup/config/auth issues."""
-    return " ".join([quote(config.fizzy_bin), "doctor"])
+    return _adapter(config).build_doctor_command()
 
 
 def build_card_list_command(board: Board, config: FizzyConfig) -> str:
     """Build the Fizzy CLI list command for board cards."""
-    parts: List[str] = [quote(config.fizzy_bin), "card", "list"]
-    parts.extend(_board_flag_parts(board, config))
-    parts.extend(_agent_markdown_parts())
-    parts.extend(config.extra_flags)
-    return " ".join(parts)
+    return _adapter(config).build_list_command(board.board_id)
+
+
+def build_card_claim_command(board: Board, card: CardAdapter, config: FizzyConfig) -> str:
+    """Build the Fizzy CLI claim command for a single card number."""
+    return _adapter(config).build_claim_command(card.number, board.board_id)
 
 
 def build_card_show_command(
@@ -60,47 +38,19 @@ def build_card_show_command(
     config: FizzyConfig,
 ) -> str:
     """Build the Fizzy CLI show command for a single card number."""
-    parts: List[str] = [
-        quote(config.fizzy_bin),
-        "card",
-        "show",
-        str(card.number),
-    ]
-    parts.extend(_agent_markdown_parts())
-    parts.extend(config.extra_flags)
-    return " ".join(parts)
+    _ = agent
+    return _adapter(config).build_show_command(card.number)
 
 
 def build_card_column_command(card: CardAdapter, config: FizzyConfig) -> str:
     """Build the Fizzy CLI command to move a card to a column."""
-    parts: List[str] = [
-        quote(config.fizzy_bin),
-        "card",
-        "column",
-        str(card.number),
-        "--column",
-        quote(card.column_id),
-    ]
-    parts.extend(_agent_quiet_parts())
-    parts.extend(config.extra_flags)
-    return " ".join(parts)
+    return _adapter(config).build_move_command(card.number, card.column_id)
 
 
 def build_comment_create_command(card: CardAdapter, config: FizzyConfig) -> str:
     """Build the Fizzy CLI command to create a comment on a card."""
     body = card.comment_body if card.comment_body else card.title
-    parts: List[str] = [
-        quote(config.fizzy_bin),
-        "comment",
-        "create",
-        "--card",
-        str(card.number),
-        "--body",
-        quote(body),
-    ]
-    parts.extend(_agent_quiet_parts())
-    parts.extend(config.extra_flags)
-    return " ".join(parts)
+    return _adapter(config).build_comment_command(card.number, body)
 
 
 def build_card_command(
@@ -140,6 +90,7 @@ def build_board_plan(
                 "labels": ", ".join(card.labels),
                 "doctor_command": doctor_command,
                 "list_command": list_command,
+                "claim_command": build_card_claim_command(board, card, config),
                 "show_command": build_card_show_command(card.agent, card, config),
                 "column_command": build_card_column_command(card, config),
                 "comment_command": build_comment_create_command(card, config),
@@ -167,6 +118,7 @@ def format_plan_as_text(plan: List[Dict[str, str]]) -> str:
         if entry["labels"]:
             lines.append(f"  Labels         : {entry['labels']}")
         lines.append(f"  List command   : {entry['list_command']}")
+        lines.append(f"  Claim command  : {entry['claim_command']}")
         lines.append(f"  Show command   : {entry['show_command']}")
         lines.append(f"  Move command   : {entry['column_command']}")
         lines.append(f"  Comment command: {entry['comment_command']}")
