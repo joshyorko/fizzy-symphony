@@ -1,16 +1,9 @@
 # Roadmap
 
-## Near Term
-
-- [x] Revise the scaffold around `Board` and `CardAdapter`
-- [x] Keep the Python scaffold and dry-run CLI intact
-- [x] Add docs, examples, prompts, and tests for the board-first model
-- [x] Align the dry-run builder with the `agent-skills` Fizzy CLI contract
-
-## Next Milestones
-
-- [ ] Load boards and cards from YAML or JSON fixtures
-- [ ] Support real Fizzy CLI execution behind an explicit non-dry-run mode
-- [ ] Add richer board reporting for card status and labels
-- [ ] Introduce tracker-specific adapters for GitHub Projects and Linear
-- [ ] Explore dependency and batching rules between cards
+- [x] Phase 0: spec/scaffold
+- [ ] Phase 1: CLI-backed Fizzy adapter
+- [ ] Phase 2: dispatch loop
+- [ ] Phase 3: workspace manager
+- [ ] Phase 4: Codex app-server runner
+- [ ] Phase 5: dashboard/observability
+- [ ] Phase 6: hardened safety model
