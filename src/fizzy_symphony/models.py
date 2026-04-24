@@ -1,10 +1,10 @@
 """
 Data models for Fizzy Symphony.
 
-These dataclasses describe the core domain objects:
+These dataclasses describe the revised scaffold:
   - Agent       : a Codex coding agent with an identity and optional capabilities.
-  - Task        : a unit of work assigned to an agent.
-  - Workflow    : an ordered collection of tasks forming an orchestration plan.
+  - CardAdapter : a tracker card mapped into the Fizzy CLI contract.
+  - Board       : an ordered collection of card adapters for a tracker board.
   - FizzyConfig : runtime configuration used when building Fizzy commands.
 """
 
@@ -15,14 +15,14 @@ from enum import Enum
 from typing import List, Optional
 
 
-class TaskStatus(str, Enum):
-    """Lifecycle states for a Task."""
+class CardStatus(str, Enum):
+    """Lifecycle states for a card on a tracker board."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    SKIPPED = "skipped"
+    BACKLOG = "backlog"
+    READY = "ready"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    BLOCKED = "blocked"
 
 
 class AgentCapability(str, Enum):
@@ -67,63 +67,73 @@ class Agent:
 
 
 @dataclass
-class Task:
-    """A unit of work assigned to an Agent.
+class CardAdapter:
+    """A tracker card adapted into the Fizzy CLI planning model.
 
     Attributes:
-        task_id: Unique identifier for the task within a workflow.
-        description: Human-readable description of what the task should do.
-        agent: The :class:`Agent` responsible for executing the task.
-        depends_on: IDs of tasks that must complete before this one starts.
-        status: Current lifecycle status of the task.
-        prompt: Optional detailed prompt to pass to the agent.
+        number: The Fizzy card number used by the CLI.
+        title: Human-readable title for the card.
+        agent: The :class:`Agent` responsible for handling the card.
+        column_id: The target board column ID for move commands.
+        labels: Optional card labels or tags from the tracker.
+        status: Current lifecycle status of the card.
+        comment_body: Optional comment body for CLI-backed note creation.
     """
 
-    task_id: str
-    description: str
+    number: int
+    title: str
     agent: Agent
-    depends_on: List[str] = field(default_factory=list)
-    status: TaskStatus = TaskStatus.PENDING
-    prompt: Optional[str] = None
+    column_id: str = "backlog"
+    labels: List[str] = field(default_factory=list)
+    status: CardStatus = CardStatus.BACKLOG
+    comment_body: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if not self.task_id:
-            raise ValueError("Task.task_id must not be empty.")
-        if not self.description:
-            raise ValueError("Task.description must not be empty.")
+        if self.number < 1:
+            raise ValueError("CardAdapter.number must be >= 1.")
+        if not self.title:
+            raise ValueError("CardAdapter.title must not be empty.")
+        if not self.column_id:
+            raise ValueError("CardAdapter.column_id must not be empty.")
 
 
 @dataclass
-class Workflow:
-    """An ordered collection of tasks forming an orchestration plan.
+class Board:
+    """An ordered collection of tracker cards forming a dry-run board plan.
 
     Attributes:
-        name: Human-readable name for the workflow.
-        tasks: Ordered list of :class:`Task` objects.
-        description: Optional longer description of the workflow's purpose.
+        name: Human-readable name for the board.
+        tracker: The upstream tracker or board provider name.
+        board_id: Optional Fizzy board identifier for `--board`.
+        cards: Ordered list of :class:`CardAdapter` objects.
+        description: Optional longer description of the board's purpose.
     """
 
     name: str
-    tasks: List[Task] = field(default_factory=list)
+    tracker: str = "fizzy"
+    board_id: Optional[str] = None
+    cards: List[CardAdapter] = field(default_factory=list)
     description: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("Workflow.name must not be empty.")
+            raise ValueError("Board.name must not be empty.")
+        if not self.tracker:
+            raise ValueError("Board.tracker must not be empty.")
 
-    def add_task(self, task: Task) -> None:
-        """Append a task to the workflow."""
-        self.tasks.append(task)
+    def add_card(self, card: CardAdapter) -> None:
+        """Append a card adapter to the board."""
+        self.cards.append(card)
 
-    def task_ids(self) -> List[str]:
-        """Return an ordered list of task IDs in this workflow."""
-        return [t.task_id for t in self.tasks]
+    def card_numbers(self) -> List[int]:
+        """Return an ordered list of card numbers in this board."""
+        return [card.number for card in self.cards]
 
-    def get_task(self, task_id: str) -> Optional[Task]:
-        """Look up a task by ID; returns ``None`` if not found."""
-        for task in self.tasks:
-            if task.task_id == task_id:
-                return task
+    def get_card(self, number: int) -> Optional[CardAdapter]:
+        """Look up a card adapter by number; returns ``None`` if not found."""
+        for card in self.cards:
+            if card.number == number:
+                return card
         return None
 
 
@@ -134,13 +144,15 @@ class FizzyConfig:
     Attributes:
         fizzy_bin: Path or name of the ``fizzy`` executable.
         workspace: Working directory for Fizzy job execution.
+        board: Optional explicit Fizzy board ID override.
         dry_run: When ``True``, commands are printed but never executed.
         extra_flags: Additional flags forwarded verbatim to Fizzy.
-        timeout_seconds: Per-task execution timeout in seconds.
+        timeout_seconds: Per-card execution timeout in seconds.
     """
 
     fizzy_bin: str = "fizzy"
     workspace: str = "/tmp/fizzy-workspace"
+    board: Optional[str] = None
     dry_run: bool = True
     extra_flags: List[str] = field(default_factory=list)
     timeout_seconds: int = 300
@@ -152,3 +164,8 @@ class FizzyConfig:
             raise ValueError(
                 f"FizzyConfig.timeout_seconds must be >= 1; got {self.timeout_seconds}."
             )
+
+
+TaskStatus = CardStatus
+Task = CardAdapter
+Workflow = Board

@@ -28,7 +28,8 @@ fizzy-symphony version
 # fizzy-symphony 0.1.0
 
 fizzy-symphony plan
-# === Fizzy Symphony — Dry-Run Execution Plan ===
+# === Fizzy Symphony — Dry-Run Board Plan ===
+# Setup check  : fizzy doctor
 # ...
 # (dry-run mode — no commands were executed)
 ```
@@ -36,8 +37,8 @@ fizzy-symphony plan
 ## Step 4 — Run the Tests
 
 ```bash
-python -m compileall src        # syntax check
-python -m pytest                # full test suite
+python -m compileall src
+python -m pytest
 ```
 
 All tests should pass.
@@ -48,36 +49,69 @@ The main package lives in `src/fizzy_symphony/`:
 
 | File | Purpose |
 |---|---|
-| `models.py` | `Agent`, `Task`, `Workflow`, `FizzyConfig` dataclasses |
-| `commands.py` | Pure functions that build Fizzy command strings |
+| `models.py` | `Agent`, `CardAdapter`, `Board`, `FizzyConfig` dataclasses |
+| `commands.py` | Pure functions that build dry-run Fizzy CLI commands |
 | `cli.py` | `fizzy-symphony` CLI entry point |
 
-## Step 6 — Write Your First Workflow (API)
+## Step 6 — Build Your First Board (API)
 
 ```python
-from fizzy_symphony import Agent, Task, Workflow, FizzyConfig
-from fizzy_symphony import build_workflow_plan
+from fizzy_symphony import Agent, Board, CardAdapter, FizzyConfig, build_board_plan
 from fizzy_symphony.commands import format_plan_as_text
 
 agent = Agent(name="my-agent", model="gpt-4o")
 
-task1 = Task(task_id="scaffold", description="Create project structure.", agent=agent)
-task2 = Task(
-    task_id="implement",
-    description="Implement the core logic.",
-    agent=agent,
-    depends_on=["scaffold"],
+board = Board(
+    name="my-first-board",
+    tracker="agent-skills/fizzy",
+    board_id="03myboard",
+    cards=[
+        CardAdapter(
+            number=42,
+            title="Review the incoming request and summarize the scope.",
+            column_id="triage",
+            labels=["planning"],
+            agent=agent,
+            comment_body="Summarized the scope and prepared the next CLI-backed step.",
+        ),
+        CardAdapter(
+            number=57,
+            title="Translate the tracker card into a dry-run implementation prompt.",
+            column_id="ready",
+            labels=["adapter"],
+            agent=agent,
+            comment_body="Drafted the next implementation note for the card.",
+        ),
+    ],
 )
-
-workflow = Workflow(name="my-first-workflow", tasks=[task1, task2])
 config = FizzyConfig(dry_run=True)
 
-plan = build_workflow_plan(workflow, config)
+plan = build_board_plan(board, config)
 print(format_plan_as_text(plan))
 ```
+
+## Step 7 — Reuse the Prompt Template
+
+The scaffold includes `prompts/card-adapter-prompt.txt` for adapting tracker
+metadata into the board/card language used by the CLI and docs.
+
+## Step 8 — Match the Fizzy Skill Contract
+
+The scaffold intentionally mirrors the `agent-skills` Fizzy skill and its
+recommended commands:
+
+```bash
+fizzy doctor
+fizzy card list --board BOARD_ID --agent --markdown
+fizzy card show NUMBER --agent --markdown
+fizzy card column NUMBER --column COLUMN_ID --agent --quiet
+fizzy comment create --card NUMBER --body "TEXT" --agent --quiet
+```
+
+If a repo already has `.fizzy.yaml`, the board plan can omit `--board`.
 
 ## Next Steps
 
 - Read the [Architecture Guide](architecture.md) to understand the layered design.
-- Check the `tests/` directory for examples of how to test models and commands.
-- Watch the [Roadmap](../README.md#roadmap) for upcoming features.
+- Run `python examples/github_project_board.py` for a complete example.
+- Review the [Roadmap](roadmap.md) for the next board-first milestones.

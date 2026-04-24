@@ -1,5 +1,5 @@
 """
-Tests for fizzy_symphony.models — covers Agent, Task, Workflow, and FizzyConfig.
+Tests for fizzy_symphony.models — covers Agent, CardAdapter, Board, and FizzyConfig.
 """
 
 import pytest
@@ -7,16 +7,12 @@ import pytest
 from fizzy_symphony.models import (
     Agent,
     AgentCapability,
+    Board,
+    CardAdapter,
+    CardStatus,
     FizzyConfig,
-    Task,
-    TaskStatus,
-    Workflow,
 )
 
-
-# ---------------------------------------------------------------------------
-# Agent tests
-# ---------------------------------------------------------------------------
 
 class TestAgent:
     def test_default_values(self):
@@ -66,105 +62,103 @@ class TestAgent:
         assert agent.max_tokens == 1
 
 
-# ---------------------------------------------------------------------------
-# Task tests
-# ---------------------------------------------------------------------------
-
-class TestTask:
+class TestCardAdapter:
     def _make_agent(self) -> Agent:
         return Agent(name="default-agent")
 
     def test_default_values(self):
-        task = Task(task_id="t1", description="do something", agent=self._make_agent())
-        assert task.status == TaskStatus.PENDING
-        assert task.depends_on == []
-        assert task.prompt is None
+        card = CardAdapter(number=1, title="do something", agent=self._make_agent())
+        assert card.status == CardStatus.BACKLOG
+        assert card.column_id == "backlog"
+        assert card.labels == []
+        assert card.comment_body is None
 
-    def test_custom_prompt(self):
-        task = Task(
-            task_id="t2",
-            description="Write code",
+    def test_custom_comment_body(self):
+        card = CardAdapter(
+            number=2,
+            title="Write code",
             agent=self._make_agent(),
-            prompt="Implement a binary search function in Python.",
+            comment_body="Implemented the dry-run note for the card.",
         )
-        assert task.prompt == "Implement a binary search function in Python."
+        assert card.comment_body == "Implemented the dry-run note for the card."
 
-    def test_empty_task_id_raises(self):
-        with pytest.raises(ValueError, match="task_id"):
-            Task(task_id="", description="x", agent=self._make_agent())
+    def test_card_number_must_be_positive(self):
+        with pytest.raises(ValueError, match="number"):
+            CardAdapter(number=0, title="x", agent=self._make_agent())
 
-    def test_empty_description_raises(self):
-        with pytest.raises(ValueError, match="description"):
-            Task(task_id="t3", description="", agent=self._make_agent())
+    def test_empty_title_raises(self):
+        with pytest.raises(ValueError, match="title"):
+            CardAdapter(number=3, title="", agent=self._make_agent())
 
-    def test_depends_on_stored(self):
-        task = Task(
-            task_id="t4",
-            description="last step",
+    def test_empty_column_id_raises(self):
+        with pytest.raises(ValueError, match="column_id"):
+            CardAdapter(number=4, title="x", column_id="", agent=self._make_agent())
+
+    def test_labels_stored(self):
+        card = CardAdapter(
+            number=5,
+            title="last step",
             agent=self._make_agent(),
-            depends_on=["t1", "t2"],
+            labels=["docs", "tests"],
         )
-        assert task.depends_on == ["t1", "t2"]
+        assert card.labels == ["docs", "tests"]
 
-    def test_task_status_enum_values(self):
-        assert TaskStatus.PENDING == "pending"
-        assert TaskStatus.RUNNING == "running"
-        assert TaskStatus.SUCCEEDED == "succeeded"
-        assert TaskStatus.FAILED == "failed"
-        assert TaskStatus.SKIPPED == "skipped"
+    def test_card_status_enum_values(self):
+        assert CardStatus.BACKLOG == "backlog"
+        assert CardStatus.READY == "ready"
+        assert CardStatus.IN_PROGRESS == "in_progress"
+        assert CardStatus.DONE == "done"
+        assert CardStatus.BLOCKED == "blocked"
 
 
-# ---------------------------------------------------------------------------
-# Workflow tests
-# ---------------------------------------------------------------------------
-
-class TestWorkflow:
+class TestBoard:
     def _make_agent(self) -> Agent:
-        return Agent(name="wf-agent")
+        return Agent(name="board-agent")
 
-    def _make_task(self, task_id: str) -> Task:
-        return Task(task_id=task_id, description=f"Task {task_id}", agent=self._make_agent())
+    def _make_card(self, number: int) -> CardAdapter:
+        return CardAdapter(number=number, title=f"Card {number}", agent=self._make_agent())
 
-    def test_empty_workflow(self):
-        wf = Workflow(name="empty")
-        assert wf.tasks == []
-        assert wf.task_ids() == []
+    def test_empty_board(self):
+        board = Board(name="empty")
+        assert board.cards == []
+        assert board.card_numbers() == []
+        assert board.tracker == "fizzy"
 
-    def test_add_task(self):
-        wf = Workflow(name="wf1")
-        t = self._make_task("a")
-        wf.add_task(t)
-        assert len(wf.tasks) == 1
-        assert wf.task_ids() == ["a"]
+    def test_add_card(self):
+        board = Board(name="board-1")
+        card = self._make_card(1)
+        board.add_card(card)
+        assert len(board.cards) == 1
+        assert board.card_numbers() == [1]
 
-    def test_task_ids_order_preserved(self):
-        wf = Workflow(name="wf2", tasks=[self._make_task("x"), self._make_task("y")])
-        assert wf.task_ids() == ["x", "y"]
+    def test_card_numbers_order_preserved(self):
+        board = Board(name="board-2", cards=[self._make_card(10), self._make_card(11)])
+        assert board.card_numbers() == [10, 11]
 
-    def test_get_task_found(self):
-        t = self._make_task("found")
-        wf = Workflow(name="wf3", tasks=[t])
-        result = wf.get_task("found")
-        assert result is t
+    def test_get_card_found(self):
+        card = self._make_card(42)
+        board = Board(name="board-3", cards=[card])
+        result = board.get_card(42)
+        assert result is card
 
-    def test_get_task_not_found(self):
-        wf = Workflow(name="wf4")
-        assert wf.get_task("missing") is None
+    def test_get_card_not_found(self):
+        board = Board(name="board-4")
+        assert board.get_card(999) is None
 
     def test_empty_name_raises(self):
-        with pytest.raises(ValueError, match="Workflow.name"):
-            Workflow(name="")
+        with pytest.raises(ValueError, match="Board.name"):
+            Board(name="")
+
+    def test_empty_tracker_raises(self):
+        with pytest.raises(ValueError, match="Board.tracker"):
+            Board(name="board-5", tracker="")
 
     def test_description_optional(self):
-        wf = Workflow(name="wf5")
-        assert wf.description is None
-        wf2 = Workflow(name="wf6", description="A test workflow")
-        assert wf2.description == "A test workflow"
+        board = Board(name="board-6")
+        assert board.description is None
+        board2 = Board(name="board-7", description="A test board")
+        assert board2.description == "A test board"
 
-
-# ---------------------------------------------------------------------------
-# FizzyConfig tests
-# ---------------------------------------------------------------------------
 
 class TestFizzyConfig:
     def test_default_values(self):
@@ -179,12 +173,14 @@ class TestFizzyConfig:
         cfg = FizzyConfig(
             fizzy_bin="/usr/local/bin/fizzy",
             workspace="/data/ws",
+            board="board_123",
             dry_run=False,
             extra_flags=["--verbose"],
             timeout_seconds=600,
         )
         assert cfg.fizzy_bin == "/usr/local/bin/fizzy"
         assert cfg.workspace == "/data/ws"
+        assert cfg.board == "board_123"
         assert cfg.dry_run is False
         assert cfg.extra_flags == ["--verbose"]
         assert cfg.timeout_seconds == 600
