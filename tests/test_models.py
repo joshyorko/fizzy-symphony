@@ -1,5 +1,5 @@
 """
-Tests for fizzy_symphony.models — covers Agent, CardAdapter, Board, and FizzyConfig.
+Tests for fizzy_symphony.models — covers Agent, CardAdapter, Board, FizzyCard, and FizzyConfig.
 """
 
 import pytest
@@ -10,8 +10,40 @@ from fizzy_symphony.models import (
     Board,
     CardAdapter,
     CardStatus,
+    FizzyCard,
     FizzyConfig,
 )
+
+
+class TestFizzyCard:
+    def test_default_optional_values(self):
+        card = FizzyCard(
+            id="card_123",
+            number=42,
+            identifier="work-ai-board-42",
+            title="Implement adapter scaffold",
+            state="Ready for Agents",
+        )
+        assert card.description == ""
+        assert card.labels == []
+        assert card.blocked_by == []
+        assert card.column_id is None
+
+    def test_requires_required_fields(self):
+        with pytest.raises(ValueError, match="FizzyCard.id"):
+            FizzyCard(id="", number=42, identifier="abc", title="x", state="Ready")
+
+        with pytest.raises(ValueError, match="FizzyCard.number"):
+            FizzyCard(id="card_123", number=0, identifier="abc", title="x", state="Ready")
+
+        with pytest.raises(ValueError, match="FizzyCard.identifier"):
+            FizzyCard(id="card_123", number=42, identifier="", title="x", state="Ready")
+
+        with pytest.raises(ValueError, match="FizzyCard.title"):
+            FizzyCard(id="card_123", number=42, identifier="abc", title="", state="Ready")
+
+        with pytest.raises(ValueError, match="FizzyCard.state"):
+            FizzyCard(id="card_123", number=42, identifier="abc", title="x", state="")
 
 
 class TestAgent:
@@ -102,6 +134,13 @@ class TestCardAdapter:
             labels=["docs", "tests"],
         )
         assert card.labels == ["docs", "tests"]
+
+    def test_can_convert_to_fizzy_card(self):
+        card = CardAdapter(number=5, title="last step", agent=self._make_agent(), column_id="ready")
+        normalized = card.as_fizzy_card(card_id="card_5", identifier="work-ai-board-5", state="Ready for Agents")
+        assert normalized.id == "card_5"
+        assert normalized.number == 5
+        assert normalized.column_id == "ready"
 
     def test_card_status_enum_values(self):
         assert CardStatus.BACKLOG == "backlog"

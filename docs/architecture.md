@@ -4,98 +4,69 @@
 
 Fizzy Symphony is structured in three layers:
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │                   CLI Layer                  │
 │         fizzy_symphony.cli  (cli.py)         │
 │   - Argument parsing via argparse            │
-│   - Sub-commands: plan, version              │
+│   - Sub-commands: list/claim/comment/move    │
+│   - Demo plan and version commands           │
 │   - Dry-run only; never spawns processes     │
 └──────────────────────┬──────────────────────┘
                        │ calls
 ┌──────────────────────▼──────────────────────┐
-│              Command Layer                   │
-│      fizzy_symphony.commands (commands.py)   │
-│   - build_card_list_command()                │
-│   - build_card_show_command()                │
-│   - build_card_column_command()              │
-│   - build_comment_create_command()           │
-│   - build_board_plan()                       │
-│   - format_plan_as_text()                    │
-│   - Pure functions; no I/O or subprocesses   │
+│               Adapter Layer                  │
+│  fizzy_symphony.adapters.fizzy_cli           │
+│   - Builds Fizzy CLI command strings         │
+│   - Mirrors list/claim/show/move/comment     │
+│   - Enforces dry-run-only behavior           │
 └──────────────────────┬──────────────────────┘
                        │ uses
 ┌──────────────────────▼──────────────────────┐
 │               Domain Model Layer             │
-│       fizzy_symphony.models (models.py)      │
-│   - Agent, CardAdapter, Board, FizzyConfig   │
+│       fizzy_symphony.models / tracker        │
+│   - FizzyCard, Agent, CardAdapter, Board     │
+│   - TrackerAdapter protocol                  │
 │   - Python dataclasses with validation       │
-│   - No external dependencies                 │
 └─────────────────────────────────────────────┘
 ```
 
 ## Revised Scaffold Model
 
-The scaffold now treats **Fizzy as the board/tracker layer** instead of a generic
-task runner. Tracker items are normalized into `CardAdapter` objects, and a
-`Board` groups those cards into a dry-run execution plan.
+The scaffold treats **Fizzy as the tracker/board layer**. Tracker items are
+normalized into `FizzyCard` objects, while `CardAdapter` remains a compatibility
+wrapper for the existing demo board plan.
 
-Phase 0 uses the `joshyorko/agent-skills` Fizzy skill as the CLI contract. That
-means the dry-run builder mirrors real Fizzy commands even before any live
-execution exists.
-
-This keeps the scaffold small while matching the workflow language used by issue
-trackers and planning boards:
-
-- `Board` identifies the planning surface, tracker provider, and optional board ID.
-- `CardAdapter` captures the Fizzy card number, title, target column ID, labels, and comment body.
-- `Agent` remains the execution persona that would eventually process a card.
-
-## Key Design Decisions
-
-### 1. Dry-Run-First
-All functionality in the initial scaffold is dry-run only. The `FizzyConfig.dry_run`
-flag is `True` by default. Real subprocess execution can be layered on later
-without changing the core model.
-
-### 2. CLI-First Contract
-The first real adapter is explicitly CLI-backed because Fizzy is purpose-built
-for agent workflows. The command builder mirrors these commands:
+Phase 0 keeps the system dry-run only. The adapter mirrors real Fizzy CLI
+commands, but it never executes subprocesses:
 
 - `fizzy card list`
+- `fizzy card claim NUMBER`
 - `fizzy card show NUMBER`
 - `fizzy card column NUMBER --column COLUMN_ID`
 - `fizzy comment create --card NUMBER --body TEXT`
 - `fizzy doctor`
 
-### 3. Pure Functions for Command Construction
-`commands.py` contains only pure functions that accept domain objects and return
-strings or lists of dicts. This makes the command-building logic trivially
-testable without mocking any I/O.
+## Key Design Decisions
 
-### 4. Tracker-Native Vocabulary
-The previous generic task/workflow vocabulary has been replaced with `Board` and
-`CardAdapter` so the scaffold mirrors real tracker data more closely.
+### 1. Dry-Run-First
+All functionality is dry-run only. `FizzyCLIAdapter` raises if configured for
+non-dry-run use so Phase 0 cannot accidentally execute real tracker mutations.
 
-### 5. Board Context Resolution
-The builder prefers an explicit `--board` value, but will fall back to `.fizzy.yaml`
-when available. This matches the Fizzy skill guidance for board-scoped commands.
+### 2. Canonical Card Shape
+`FizzyCard` is the normalized tracker model. It keeps both the internal `id` and
+human-facing `number` because Fizzy CLI commands operate on card numbers.
 
-### 6. Standard-Library-Only Runtime
-The package has **zero runtime dependencies** in the initial scaffold. This
-maximises portability and keeps `pip install` fast. Optional extras (`[dev]`)
-add `pytest` and `pytest-cov` for development use.
+### 3. Explicit Tracker Contract
+`tracker.py` defines the minimal adapter contract needed for later dispatch and
+integration work: fetch candidate cards, fetch cards by state, read states,
+create comments, and update states.
 
-### 7. `src/` Layout
-The package is placed under `src/fizzy_symphony/` following the
-[src-layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)
-convention, which prevents accidental imports from the project root during
-development.
+### 4. Compatibility Without Blocking Progress
+`Board`, `CardAdapter`, and the compatibility command builders remain available
+so the existing demo scaffold and examples still work while Phase 1 introduces a
+more adapter-centric architecture.
 
-## Supporting Artifacts
-
-| Path | Purpose |
-|---|---|
-| `examples/github_project_board.py` | Minimal board/card adapter example |
-| `prompts/card-adapter-prompt.txt` | Reusable prompt template for a CLI-backed card adapter |
-| `docs/roadmap.md` | Board-first milestones for the scaffold |
+### 5. Standard-Library-Only Runtime
+The package has zero runtime dependencies. Optional extras (`[dev]`) add pytest
+and pytest-cov for development.
