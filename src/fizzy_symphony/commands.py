@@ -2,122 +2,178 @@
 Command construction for Fizzy Symphony.
 
 All public functions in this module **build** command strings or plan
-descriptions — they never execute subprocesses.  Real Fizzy and Codex
-execution is out-of-scope for this initial scaffold.
+descriptions — they never execute subprocesses. Phase 0 mirrors the real
+Fizzy CLI contract while remaining dry-run only.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+from shlex import quote
 from typing import Dict, List
 
-from .models import Agent, FizzyConfig, Task, Workflow
+from .models import Agent, Board, CardAdapter, FizzyConfig
 
 
-def build_agent_command(
-    agent: Agent,
-    task: Task,
-    config: FizzyConfig,
-) -> str:
-    """Build the Fizzy shell command for a single agent/task pair.
+def _board_flag_parts(board: Board, config: FizzyConfig) -> List[str]:
+    board_id = config.board or board.board_id
+    if board_id:
+        return ["--board", quote(board_id)]
 
-    The resulting string is suitable for display (dry-run) or later
-    subprocess execution.  The function itself never spawns a process.
+    context_paths = [
+        Path.cwd() / ".fizzy.yaml",
+        Path(config.workspace) / ".fizzy.yaml",
+    ]
+    if any(path.exists() for path in context_paths):
+        return []
 
-    Args:
-        agent: The :class:`~fizzy_symphony.models.Agent` that will run the task.
-        task: The :class:`~fizzy_symphony.models.Task` to be executed.
-        config: :class:`~fizzy_symphony.models.FizzyConfig` with runtime options.
+    raise ValueError(
+        "Board context requires .fizzy.yaml or an explicit board ID via Board.board_id or FizzyConfig.board."
+    )
 
-    Returns:
-        A shell command string, e.g.::
 
-            fizzy run --model gpt-4o --max-tokens 4096 --temperature 0.2
-                      --workspace /tmp/fizzy-workspace --timeout 300
-                      --task-id generate-tests
-                      --prompt "Write unit tests for the auth module"
-    """
-    parts: List[str] = [config.fizzy_bin, "run"]
+def _agent_markdown_parts() -> List[str]:
+    return ["--agent", "--markdown"]
 
-    parts += ["--model", agent.model]
-    parts += ["--max-tokens", str(agent.max_tokens)]
-    parts += ["--temperature", str(agent.temperature)]
-    parts += ["--workspace", config.workspace]
-    parts += ["--timeout", str(config.timeout_seconds)]
-    parts += ["--task-id", task.task_id]
 
-    if task.prompt:
-        parts += ["--prompt", f'"{task.prompt}"']
-    else:
-        parts += ["--prompt", f'"{task.description}"']
+def _agent_quiet_parts() -> List[str]:
+    return ["--agent", "--quiet"]
 
-    if config.dry_run:
-        parts += ["--dry-run"]
 
+def build_doctor_command(config: FizzyConfig) -> str:
+    """Build the recommended health check command for setup/config/auth issues."""
+    return " ".join([quote(config.fizzy_bin), "doctor"])
+
+
+def build_card_list_command(board: Board, config: FizzyConfig) -> str:
+    """Build the Fizzy CLI list command for board cards."""
+    parts: List[str] = [quote(config.fizzy_bin), "card", "list"]
+    parts.extend(_board_flag_parts(board, config))
+    parts.extend(_agent_markdown_parts())
     parts.extend(config.extra_flags)
-
     return " ".join(parts)
 
 
-def build_workflow_plan(
-    workflow: Workflow,
+def build_card_show_command(
+    agent: Agent,
+    card: CardAdapter,
+    config: FizzyConfig,
+) -> str:
+    """Build the Fizzy CLI show command for a single card number."""
+    parts: List[str] = [
+        quote(config.fizzy_bin),
+        "card",
+        "show",
+        str(card.number),
+    ]
+    parts.extend(_agent_markdown_parts())
+    parts.extend(config.extra_flags)
+    return " ".join(parts)
+
+
+def build_card_column_command(card: CardAdapter, config: FizzyConfig) -> str:
+    """Build the Fizzy CLI command to move a card to a column."""
+    parts: List[str] = [
+        quote(config.fizzy_bin),
+        "card",
+        "column",
+        str(card.number),
+        "--column",
+        quote(card.column_id),
+    ]
+    parts.extend(_agent_quiet_parts())
+    parts.extend(config.extra_flags)
+    return " ".join(parts)
+
+
+def build_comment_create_command(card: CardAdapter, config: FizzyConfig) -> str:
+    """Build the Fizzy CLI command to create a comment on a card."""
+    body = card.comment_body if card.comment_body else card.title
+    parts: List[str] = [
+        quote(config.fizzy_bin),
+        "comment",
+        "create",
+        "--card",
+        str(card.number),
+        "--body",
+        quote(body),
+    ]
+    parts.extend(_agent_quiet_parts())
+    parts.extend(config.extra_flags)
+    return " ".join(parts)
+
+
+def build_card_command(
+    agent: Agent,
+    board: Board,
+    card: CardAdapter,
+    config: FizzyConfig,
+) -> str:
+    """Build the primary Fizzy CLI command for a card adapter.
+
+    The ``board`` parameter is retained for compatibility with the previous
+    public helper signature and may be removed in a future major revision.
+    """
+    _ = board
+    return build_card_show_command(agent, card, config)
+
+
+def build_board_plan(
+    board: Board,
     config: FizzyConfig,
 ) -> List[Dict[str, str]]:
-    """Build a dry-run execution plan for an entire workflow.
-
-    Each entry in the returned list is a mapping with the keys:
-
-    ``task_id``
-        The task identifier.
-    ``description``
-        Human-readable description of the task.
-    ``agent``
-        The agent name assigned to the task.
-    ``command``
-        The fully-constructed Fizzy command string (never executed).
-    ``depends_on``
-        Comma-separated list of prerequisite task IDs (empty string if none).
-
-    Args:
-        workflow: The :class:`~fizzy_symphony.models.Workflow` to plan.
-        config: :class:`~fizzy_symphony.models.FizzyConfig` with runtime options.
-
-    Returns:
-        An ordered list of plan entry dicts, one per task.
-    """
+    """Build a dry-run execution plan for an entire tracker board."""
     plan: List[Dict[str, str]] = []
-    for task in workflow.tasks:
-        cmd = build_agent_command(task.agent, task, config)
+    list_command = build_card_list_command(board, config)
+    doctor_command = build_doctor_command(config)
+    board_context = config.board or board.board_id or ".fizzy.yaml"
+    for card in board.cards:
         plan.append(
             {
-                "task_id": task.task_id,
-                "description": task.description,
-                "agent": task.agent.name,
-                "command": cmd,
-                "depends_on": ", ".join(task.depends_on),
+                "board": board.name,
+                "board_context": board_context,
+                "tracker": board.tracker,
+                "card_number": str(card.number),
+                "title": card.title,
+                "agent": card.agent.name,
+                "column_id": card.column_id,
+                "labels": ", ".join(card.labels),
+                "doctor_command": doctor_command,
+                "list_command": list_command,
+                "show_command": build_card_show_command(card.agent, card, config),
+                "column_command": build_card_column_command(card, config),
+                "comment_command": build_comment_create_command(card, config),
             }
         )
     return plan
 
 
 def format_plan_as_text(plan: List[Dict[str, str]]) -> str:
-    """Render a workflow plan (from :func:`build_workflow_plan`) as human-readable text.
-
-    Args:
-        plan: Output from :func:`build_workflow_plan`.
-
-    Returns:
-        A multi-line string suitable for printing to a terminal.
-    """
+    """Render a board plan (from :func:`build_board_plan`) as human-readable text."""
     if not plan:
-        return "(empty workflow — no tasks defined)"
+        return "(empty board — no cards defined)"
 
-    lines: List[str] = ["=== Fizzy Symphony — Dry-Run Execution Plan ===", ""]
+    lines: List[str] = ["=== Fizzy Symphony — Dry-Run Board Plan ===", ""]
+    lines.append(f"Setup check  : {plan[0]['doctor_command']}")
+    lines.append(f"Board ctx    : {plan[0]['board_context']}")
+    lines.append("")
     for i, entry in enumerate(plan, start=1):
-        lines.append(f"Step {i}: [{entry['task_id']}]")
-        lines.append(f"  Description : {entry['description']}")
-        lines.append(f"  Agent       : {entry['agent']}")
-        if entry["depends_on"]:
-            lines.append(f"  Depends on  : {entry['depends_on']}")
-        lines.append(f"  Command     : {entry['command']}")
+        lines.append(f"Card {i}: [#{entry['card_number']}]")
+        lines.append(f"  Title          : {entry['title']}")
+        lines.append(f"  Agent          : {entry['agent']}")
+        lines.append(f"  Board          : {entry['board']}")
+        lines.append(f"  Tracker        : {entry['tracker']}")
+        lines.append(f"  Column ID      : {entry['column_id']}")
+        if entry["labels"]:
+            lines.append(f"  Labels         : {entry['labels']}")
+        lines.append(f"  List command   : {entry['list_command']}")
+        lines.append(f"  Show command   : {entry['show_command']}")
+        lines.append(f"  Move command   : {entry['column_command']}")
+        lines.append(f"  Comment command: {entry['comment_command']}")
         lines.append("")
     return "\n".join(lines)
+
+
+# Phase 0 compatibility aliases for the previous command-builder names.
+build_agent_command = build_card_command
+build_workflow_plan = build_board_plan

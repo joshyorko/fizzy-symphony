@@ -1,18 +1,34 @@
 """
-Fizzy Symphony — Fizzy-backed Symphony-style orchestration for Codex coding agents.
+Fizzy Symphony — Fizzy-backed board orchestration for Codex coding agents.
 """
 
 __version__ = "0.1.0"
 __author__ = "Fizzy Symphony Contributors"
 
-from .models import Agent, FizzyConfig, Task, Workflow
-from .commands import build_agent_command, build_workflow_plan
+from .commands import (
+    build_board_plan,
+    build_card_column_command,
+    build_card_command,
+    build_card_list_command,
+    build_card_show_command,
+    build_comment_create_command,
+    build_doctor_command,
+    build_workflow_plan,
+)
+from .models import Agent, Board, CardAdapter, FizzyConfig, Workflow
 
 __all__ = [
     "Agent",
+    "Board",
+    "CardAdapter",
     "FizzyConfig",
-    "Task",
     "Workflow",
-    "build_agent_command",
+    "build_board_plan",
+    "build_card_column_command",
+    "build_card_command",
+    "build_card_list_command",
+    "build_card_show_command",
+    "build_comment_create_command",
+    "build_doctor_command",
     "build_workflow_plan",
 ]

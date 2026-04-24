@@ -6,7 +6,7 @@ or Codex subprocesses are spawned.
 
 Usage examples (after ``pip install -e .``):
 
-    fizzy-symphony plan    --workflow examples/hello_world.yaml
+    fizzy-symphony plan
     fizzy-symphony version
 """
 
@@ -17,16 +17,12 @@ import sys
 from typing import List, Optional
 
 from . import __version__
-from .commands import build_workflow_plan, format_plan_as_text
-from .models import Agent, FizzyConfig, Task, Workflow
+from .commands import build_board_plan, format_plan_as_text
+from .models import Agent, Board, CardAdapter, FizzyConfig
 
 
-# ---------------------------------------------------------------------------
-# Demo workflow builder
-# ---------------------------------------------------------------------------
-
-def _build_demo_workflow() -> Workflow:
-    """Return a hard-coded demonstration workflow (no file I/O required)."""
+def _build_demo_board() -> Board:
+    """Return a hard-coded demonstration board (no file I/O required)."""
     agent = Agent(
         name="codex-agent",
         model="gpt-4o",
@@ -35,35 +31,39 @@ def _build_demo_workflow() -> Workflow:
         temperature=0.2,
     )
 
-    scaffold_task = Task(
-        task_id="scaffold-project",
-        description="Create the initial project structure and boilerplate files.",
+    intake_card = CardAdapter(
+        number=42,
+        title="Capture the board request and draft a scoped implementation prompt.",
         agent=agent,
+        column_id="triage",
+        labels=["board", "planning"],
+        comment_body="Captured the request in dry-run mode and prepared the adapter prompt.",
     )
-    implement_task = Task(
-        task_id="implement-core",
-        description="Implement the core orchestration logic.",
+    adapter_card = CardAdapter(
+        number=57,
+        title="Map the tracker card into the Fizzy card adapter model.",
         agent=agent,
-        depends_on=["scaffold-project"],
+        column_id="ready",
+        labels=["adapter", "modeling"],
+        comment_body="Mapped the tracker card into the CLI-backed card adapter fields.",
     )
-    test_task = Task(
-        task_id="write-tests",
-        description="Write unit tests for all public APIs.",
+    verify_card = CardAdapter(
+        number=61,
+        title="Review the dry-run board plan output and update docs/tests.",
         agent=agent,
-        depends_on=["implement-core"],
+        column_id="in-progress",
+        labels=["docs", "tests"],
+        comment_body="Validated the dry-run CLI contract and documented the setup guidance.",
     )
 
-    workflow = Workflow(
-        name="demo-workflow",
-        description="A demonstration workflow used by the CLI dry-run.",
-        tasks=[scaffold_task, implement_task, test_task],
+    return Board(
+        name="fizzy-scaffold",
+        tracker="agent-skills/fizzy",
+        board_id="03foq1hqmyy91tuyz3ghugg6c",
+        description="A demonstration board used by the CLI dry-run.",
+        cards=[intake_card, adapter_card, verify_card],
     )
-    return workflow
 
-
-# ---------------------------------------------------------------------------
-# Sub-command handlers
-# ---------------------------------------------------------------------------
 
 def _cmd_version(args: argparse.Namespace) -> int:  # noqa: ARG001
     """Print the package version and exit."""
@@ -72,32 +72,26 @@ def _cmd_version(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
-    """Print the dry-run execution plan for a workflow."""
+    """Print the dry-run execution plan for a board."""
     config = FizzyConfig(
         fizzy_bin=args.fizzy_bin,
         workspace=args.workspace,
+        board=args.board,
         dry_run=True,
         timeout_seconds=args.timeout,
     )
 
-    # In this scaffold, we always use the built-in demo workflow.
-    workflow = _build_demo_workflow()
-
-    plan = build_workflow_plan(workflow, config)
+    board = _build_demo_board()
+    plan = build_board_plan(board, config)
     print(format_plan_as_text(plan))
-
     print("(dry-run mode — no commands were executed)")
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Argument parser
-# ---------------------------------------------------------------------------
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fizzy-symphony",
-        description="Fizzy-backed Symphony-style orchestration for Codex coding agents.",
+        description="Fizzy-backed board orchestration for Codex coding agents.",
     )
     parser.add_argument(
         "--version",
@@ -108,13 +102,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
-    # version sub-command
     sub.add_parser("version", help="Print the package version.")
 
-    # plan sub-command
     plan_p = sub.add_parser(
         "plan",
-        help="Display the dry-run execution plan for a workflow.",
+        help="Display the dry-run execution plan for a tracker board.",
     )
     plan_p.add_argument(
         "--fizzy-bin",
@@ -129,19 +121,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Working directory for Fizzy jobs (default: /tmp/fizzy-workspace).",
     )
     plan_p.add_argument(
+        "--board",
+        metavar="BOARD_ID",
+        help="Explicit Fizzy board ID; otherwise .fizzy.yaml board context is used when available.",
+    )
+    plan_p.add_argument(
         "--timeout",
         type=int,
         default=300,
         metavar="SECONDS",
-        help="Per-task timeout in seconds (default: 300).",
+        help="Reserved per-card timeout in seconds for future execution support (default: 300).",
     )
 
     return parser
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
     """Parse arguments and dispatch to the appropriate sub-command.

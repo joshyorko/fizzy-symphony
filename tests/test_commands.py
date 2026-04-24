@@ -1,21 +1,24 @@
 """
-Tests for fizzy_symphony.commands — covers build_agent_command,
-build_workflow_plan, and format_plan_as_text.
+Tests for fizzy_symphony.commands — covers the CLI-backed command builders,
+build_board_plan, and format_plan_as_text.
 """
+
+from pathlib import Path
 
 import pytest
 
 from fizzy_symphony.commands import (
-    build_agent_command,
-    build_workflow_plan,
+    build_board_plan,
+    build_card_column_command,
+    build_card_command,
+    build_card_list_command,
+    build_card_show_command,
+    build_comment_create_command,
+    build_doctor_command,
     format_plan_as_text,
 )
-from fizzy_symphony.models import Agent, FizzyConfig, Task, Workflow
+from fizzy_symphony.models import Agent, Board, CardAdapter, FizzyConfig
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _make_agent(**kwargs) -> Agent:
     defaults = dict(name="test-agent", model="gpt-4o", max_tokens=4096, temperature=0.2)
@@ -23,9 +26,20 @@ def _make_agent(**kwargs) -> Agent:
     return Agent(**defaults)
 
 
-def _make_task(task_id="task-1", description="Do something", **kwargs) -> Task:
+def _make_card(number=1, title="Do something", **kwargs) -> CardAdapter:
     agent = kwargs.pop("agent", _make_agent())
-    return Task(task_id=task_id, description=description, agent=agent, **kwargs)
+    return CardAdapter(number=number, title=title, agent=agent, **kwargs)
+
+
+def _make_board(**kwargs) -> Board:
+    defaults = dict(
+        name="test-board",
+        tracker="agent-skills/fizzy",
+        board_id="03board",
+        cards=[],
+    )
+    defaults.update(kwargs)
+    return Board(**defaults)
 
 
 def _make_config(**kwargs) -> FizzyConfig:
@@ -34,186 +48,165 @@ def _make_config(**kwargs) -> FizzyConfig:
     return FizzyConfig(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# build_agent_command tests
-# ---------------------------------------------------------------------------
+class TestCommandBuilders:
+    def test_build_doctor_command(self):
+        assert build_doctor_command(_make_config()) == "fizzy doctor"
 
-class TestBuildAgentCommand:
-    def test_contains_fizzy_bin(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config(fizzy_bin="fizzy"))
-        assert cmd.startswith("fizzy run")
+    def test_build_card_list_command_uses_board_context_and_agent_markdown(self):
+        cmd = build_card_list_command(_make_board(), _make_config())
+        assert cmd == "fizzy card list --board 03board --agent --markdown"
 
-    def test_contains_model(self):
-        cmd = build_agent_command(_make_agent(model="gpt-3.5-turbo"), _make_task(), _make_config())
-        assert "--model gpt-3.5-turbo" in cmd
+    def test_build_card_list_command_can_fall_back_to_fizzy_yaml(self, tmp_path, monkeypatch):
+        (tmp_path / ".fizzy.yaml").write_text("board: 03fromfile\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        cfg = _make_config(workspace=str(tmp_path))
+        cmd = build_card_list_command(_make_board(board_id=None), cfg)
+        assert cmd == "fizzy card list --agent --markdown"
 
-    def test_contains_max_tokens(self):
-        cmd = build_agent_command(_make_agent(max_tokens=2048), _make_task(), _make_config())
-        assert "--max-tokens 2048" in cmd
+    def test_build_card_list_command_requires_board_context_when_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = _make_config(workspace=str(tmp_path), board=None)
+        with pytest.raises(ValueError, match="Board context"):
+            build_card_list_command(_make_board(board_id=None), cfg)
 
-    def test_contains_temperature(self):
-        cmd = build_agent_command(_make_agent(temperature=0.7), _make_task(), _make_config())
-        assert "--temperature 0.7" in cmd
+    def test_build_card_show_command_uses_card_number(self):
+        cmd = build_card_show_command(_make_agent(), _make_card(number=42), _make_config())
+        assert cmd == "fizzy card show 42 --agent --markdown"
 
-    def test_contains_workspace(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config(workspace="/data/ws"))
-        assert "--workspace /data/ws" in cmd
+    def test_build_card_column_command_uses_column_id(self):
+        cmd = build_card_column_command(_make_card(number=42, column_id="col_123"), _make_config())
+        assert cmd == "fizzy card column 42 --column col_123 --agent --quiet"
 
-    def test_contains_timeout(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config(timeout_seconds=600))
-        assert "--timeout 600" in cmd
+    def test_build_comment_create_command_uses_comment_body(self):
+        card = _make_card(number=42, comment_body="Moved this card through the CLI adapter.")
+        cmd = build_comment_create_command(card, _make_config())
+        assert (
+            cmd
+            == "fizzy comment create --card 42 --body 'Moved this card through the CLI adapter.' --agent --quiet"
+        )
 
-    def test_contains_task_id(self):
-        cmd = build_agent_command(_make_agent(), _make_task(task_id="my-task"), _make_config())
-        assert "--task-id my-task" in cmd
+    def test_build_comment_create_command_falls_back_to_title(self):
+        card = _make_card(number=42, title="Describe the function.", comment_body=None)
+        cmd = build_comment_create_command(card, _make_config())
+        assert "--body 'Describe the function.'" in cmd
 
-    def test_uses_prompt_when_provided(self):
-        task = _make_task(prompt="Write a binary search.")
-        cmd = build_agent_command(_make_agent(), task, _make_config())
-        assert "Write a binary search." in cmd
-
-    def test_falls_back_to_description_when_no_prompt(self):
-        task = _make_task(description="Describe the function.", prompt=None)
-        cmd = build_agent_command(_make_agent(), task, _make_config())
-        assert "Describe the function." in cmd
-
-    def test_dry_run_flag_present_when_true(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config(dry_run=True))
-        assert "--dry-run" in cmd
-
-    def test_dry_run_flag_absent_when_false(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config(dry_run=False))
-        assert "--dry-run" not in cmd
+    def test_build_card_command_aliases_show_command(self):
+        card = _make_card(number=42)
+        cmd = build_card_command(_make_agent(), _make_board(), card, _make_config())
+        assert cmd == "fizzy card show 42 --agent --markdown"
 
     def test_extra_flags_appended(self):
-        cfg = _make_config(extra_flags=["--verbose", "--log-level=debug"])
-        cmd = build_agent_command(_make_agent(), _make_task(), cfg)
-        assert "--verbose" in cmd
-        assert "--log-level=debug" in cmd
-
-    def test_custom_fizzy_bin_path(self):
-        cfg = _make_config(fizzy_bin="/usr/local/bin/fizzy")
-        cmd = build_agent_command(_make_agent(), _make_task(), cfg)
-        assert cmd.startswith("/usr/local/bin/fizzy run")
-
-    def test_returns_string(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config())
-        assert isinstance(cmd, str)
-
-    def test_no_newlines_in_command(self):
-        cmd = build_agent_command(_make_agent(), _make_task(), _make_config())
-        assert "\n" not in cmd
+        cfg = _make_config(extra_flags=["--verbose"])
+        cmd = build_card_show_command(_make_agent(), _make_card(number=42), cfg)
+        assert cmd.endswith("--verbose")
 
 
-# ---------------------------------------------------------------------------
-# build_workflow_plan tests
-# ---------------------------------------------------------------------------
+class TestBuildBoardPlan:
+    def _make_board(self) -> Board:
+        c1 = _make_card(number=42, title="First card")
+        c2 = _make_card(
+            number=57,
+            title="Second card",
+            column_id="col_ready",
+            labels=["docs", "tests"],
+        )
+        return _make_board(cards=[c1, c2])
 
-class TestBuildWorkflowPlan:
-    def _make_workflow(self) -> Workflow:
-        agent = _make_agent()
-        t1 = _make_task(task_id="step-1", description="First step")
-        t2 = _make_task(task_id="step-2", description="Second step", depends_on=["step-1"])
-        return Workflow(name="test-wf", tasks=[t1, t2])
-
-    def test_plan_length_matches_tasks(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
+    def test_plan_length_matches_cards(self):
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
         assert len(plan) == 2
 
     def test_plan_entry_keys(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
         for entry in plan:
-            assert "task_id" in entry
-            assert "description" in entry
+            assert "board" in entry
+            assert "board_context" in entry
+            assert "tracker" in entry
+            assert "card_number" in entry
+            assert "title" in entry
             assert "agent" in entry
-            assert "command" in entry
-            assert "depends_on" in entry
+            assert "column_id" in entry
+            assert "labels" in entry
+            assert "doctor_command" in entry
+            assert "list_command" in entry
+            assert "show_command" in entry
+            assert "column_command" in entry
+            assert "comment_command" in entry
 
-    def test_task_ids_in_order(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
-        assert plan[0]["task_id"] == "step-1"
-        assert plan[1]["task_id"] == "step-2"
+    def test_card_numbers_in_order(self):
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
+        assert plan[0]["card_number"] == "42"
+        assert plan[1]["card_number"] == "57"
 
-    def test_depends_on_empty_for_first_task(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
-        assert plan[0]["depends_on"] == ""
+    def test_board_name_in_plan_entry(self):
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
+        assert plan[0]["board"] == "test-board"
+        assert plan[0]["board_context"] == "03board"
 
-    def test_depends_on_populated_for_second_task(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
-        assert "step-1" in plan[1]["depends_on"]
+    def test_labels_empty_when_card_has_none(self):
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
+        assert plan[0]["labels"] == ""
 
-    def test_agent_name_in_plan_entry(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
-        assert plan[0]["agent"] == "test-agent"
+    def test_labels_joined_with_comma(self):
+        board = self._make_board()
+        plan = build_board_plan(board, _make_config())
+        assert plan[1]["labels"] == "docs, tests"
 
-    def test_command_is_string(self):
-        wf = self._make_workflow()
-        plan = build_workflow_plan(wf, _make_config())
-        for entry in plan:
-            assert isinstance(entry["command"], str)
-            assert len(entry["command"]) > 0
-
-    def test_empty_workflow_returns_empty_plan(self):
-        wf = Workflow(name="empty-wf")
-        plan = build_workflow_plan(wf, _make_config())
+    def test_empty_board_returns_empty_plan(self):
+        board = _make_board()
+        plan = build_board_plan(board, _make_config())
         assert plan == []
 
-    def test_multiple_depends_on_joined_with_comma(self):
-        agent = _make_agent()
-        t = _make_task(task_id="final", description="Final", depends_on=["a", "b", "c"])
-        wf = Workflow(name="multi-dep", tasks=[t])
-        plan = build_workflow_plan(wf, _make_config())
-        assert plan[0]["depends_on"] == "a, b, c"
-
-
-# ---------------------------------------------------------------------------
-# format_plan_as_text tests
-# ---------------------------------------------------------------------------
 
 class TestFormatPlanAsText:
     def _plan(self) -> list:
-        wf = Workflow(
-            name="fmt-wf",
-            tasks=[
-                _make_task(task_id="alpha", description="Alpha task"),
-                _make_task(task_id="beta", description="Beta task", depends_on=["alpha"]),
+        board = _make_board(
+            name="fmt-board",
+            tracker="linear",
+            board_id="03fmtboard",
+            cards=[
+                _make_card(number=101, title="Alpha card"),
+                _make_card(number=102, title="Beta card", labels=["docs"]),
             ],
         )
-        return build_workflow_plan(wf, _make_config())
+        return build_board_plan(board, _make_config())
 
     def test_returns_string(self):
-        plan = self._plan()
-        text = format_plan_as_text(plan)
+        text = format_plan_as_text(self._plan())
         assert isinstance(text, str)
 
     def test_contains_header(self):
         text = format_plan_as_text(self._plan())
-        assert "Fizzy Symphony" in text
+        assert "Dry-Run Board Plan" in text
 
-    def test_contains_task_ids(self):
+    def test_contains_card_numbers(self):
         text = format_plan_as_text(self._plan())
-        assert "alpha" in text
-        assert "beta" in text
+        assert "#101" in text
+        assert "#102" in text
 
-    def test_contains_step_numbers(self):
+    def test_contains_tracker_and_board(self):
         text = format_plan_as_text(self._plan())
-        assert "Step 1" in text
-        assert "Step 2" in text
+        assert "fmt-board" in text
+        assert "linear" in text
+        assert "03fmtboard" in text
 
     def test_empty_plan_returns_empty_message(self):
         text = format_plan_as_text([])
         assert "empty" in text.lower()
 
-    def test_depends_on_shown_when_present(self):
+    def test_labels_shown_when_present(self):
         text = format_plan_as_text(self._plan())
-        assert "alpha" in text  # beta depends on alpha
+        assert "docs" in text
 
-    def test_command_present_in_output(self):
+    def test_commands_present_in_output(self):
         text = format_plan_as_text(self._plan())
-        assert "fizzy run" in text
+        assert "fizzy doctor" in text
+        assert "fizzy card list" in text
+        assert "fizzy card show 101" in text
+        assert "fizzy card column 101" in text
+        assert "fizzy comment create --card 101" in text
