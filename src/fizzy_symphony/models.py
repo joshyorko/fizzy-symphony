@@ -6,6 +6,10 @@ These dataclasses describe the revised scaffold:
   - CardAdapter : a tracker card mapped into the Fizzy CLI contract.
   - Board       : an ordered collection of card adapters for a tracker board.
   - FizzyConfig : runtime configuration used when building Fizzy commands.
+
+Compatibility aliases for `Task`, `Workflow`, and `TaskStatus` remain available
+in Phase 0 to ease migration from the previous scaffold and are intended to be
+removed in a future major revision.
 """
 
 from __future__ import annotations
@@ -166,6 +170,7 @@ class FizzyConfig:
             )
 
 
+# Phase 0 compatibility aliases for the previous scaffold vocabulary.
 TaskStatus = CardStatus
 Task = CardAdapter
 Workflow = Board
