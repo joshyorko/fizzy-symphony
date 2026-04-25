@@ -16,7 +16,11 @@ from .commands import (
     build_workflow_plan,
 )
 from .models import Agent, Board, CardAdapter, FizzyCard, FizzyConfig, Workflow
+from .robocorp_adapter import RobocorpWorkitemConfig
+from .symphony import SymphonyColumn, SymphonyMapping
 from .tracker import TrackerAdapter
+from .workitem_pipeline import CodexWorkItemWorker, FizzyWorkItemProducer, FizzyWorkItemReporter
+from .workitem_queue import FizzyWorkItemPayload, ReservedWorkItem, WorkItemQueue, WorkItemState
 
 __all__ = [
     "Agent",
@@ -25,7 +29,17 @@ __all__ = [
     "FizzyCard",
     "FizzyConfig",
     "FizzyCLIAdapter",
+    "FizzyWorkItemPayload",
+    "FizzyWorkItemProducer",
+    "FizzyWorkItemReporter",
+    "RobocorpWorkitemConfig",
+    "CodexWorkItemWorker",
+    "ReservedWorkItem",
+    "SymphonyColumn",
+    "SymphonyMapping",
     "TrackerAdapter",
+    "WorkItemQueue",
+    "WorkItemState",
     "Workflow",
     "build_board_plan",
     "build_card_claim_command",
