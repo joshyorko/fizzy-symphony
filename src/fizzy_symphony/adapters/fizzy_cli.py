@@ -24,6 +24,34 @@ class FizzyCLIAdapter:
         """Build the recommended health check command."""
         return " ".join([quote(self.config.fizzy_bin), "doctor"])
 
+    def build_column_list_command(self, board: Optional[str] = None) -> str:
+        """Build the Fizzy CLI command used to list board columns."""
+        parts: List[str] = [quote(self.config.fizzy_bin), "column", "list"]
+        parts.extend(self._board_flag_parts(board))
+        parts.extend(self._agent_quiet_parts())
+        parts.extend(self.config.extra_flags)
+        return " ".join(parts)
+
+    def build_column_create_command(self, board: str, name: str) -> str:
+        """Build the Fizzy CLI command used to create a board column."""
+        self._ensure_dry_run()
+        if not board:
+            raise ValueError("board must not be empty.")
+        if not name:
+            raise ValueError("name must not be empty.")
+        parts: List[str] = [
+            quote(self.config.fizzy_bin),
+            "column",
+            "create",
+            "--board",
+            quote(board),
+            "--name",
+            quote(name),
+        ]
+        parts.extend(self._agent_quiet_parts())
+        parts.extend(self.config.extra_flags)
+        return " ".join(parts)
+
     def build_list_command(self, board: Optional[str] = None) -> str:
         """Build the Fizzy CLI command used to list board cards."""
         parts: List[str] = [quote(self.config.fizzy_bin), "card", "list"]

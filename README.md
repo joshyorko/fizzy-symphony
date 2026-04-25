@@ -9,7 +9,15 @@
 **Fizzy Symphony** is a Python scaffold for planning card-based automation on top
 of [Fizzy](https://github.com/fizzy-project/fizzy). The scaffold treats **Fizzy
 as the tracker and board system**, normalizes cards into a canonical `FizzyCard`
-shape, and keeps all adapter behavior dry-run only for now.
+shape, and keeps tracker mutations dry-run-first while the durable queue layer
+is delegated to `robocorp-adapters-custom`.
+
+The design follows the original OpenAI Symphony model: an existing tracker board
+is the human source of truth, one issue/card is claimed at a time, Codex works in
+an isolated workspace, and proof is reported back to the same issue/card. The
+main divergence is implementation plumbing: this project can use Robocorp
+workitems as the durable claimed/running/result queue instead of keeping that
+state only inside a long-running daemon.
 
 It provides:
 
@@ -17,7 +25,8 @@ It provides:
 |---|---|
 | **Models** | Pure Python dataclasses (`FizzyCard`, `Agent`, `CardAdapter`, `Board`, `FizzyConfig`) |
 | **Adapter** | A dry-run `FizzyCLIAdapter` that builds real Fizzy CLI commands without executing them |
-| **CLI** | `fizzy-symphony` entry points for dry-run list/claim/comment/move flows and a demo plan |
+| **CLI** | `fizzy-symphony` entry points for board bootstrap, setup checks, dry-run list/claim/comment/move flows, and a demo plan |
+| **Workitems** | Robocorp-compatible queue payloads, adapter env helpers, and producer/worker/reporter helpers |
 
 ## Main Mapping
 
@@ -28,11 +37,14 @@ It provides:
 | Project | Fizzy board |
 | State | Fizzy list/column |
 | Comment | Fizzy card comment/update |
-| Worker | Codex app-server session |
+| Orchestrator state | Robocorp workitem reservation/release/output state |
+| Worker | Codex command/app-server session |
 | Workflow contract | WORKFLOW.md |
 | Workspace | Per-card branch/worktree |
 
 > **Status:** Pre-alpha scaffold — no real Fizzy or Codex execution yet.
+> The durable orchestration direction is now Robocorp workitems/RCC: Fizzy stays
+> the board, workitems provide queue leasing/release, and Codex is the worker.
 
 ---
 
@@ -41,6 +53,18 @@ It provides:
 ```bash
 # Install in editable mode (requires Python ≥ 3.9)
 pip install -e ".[dev]"
+
+# Optional: install Robocorp workitems adapter support
+pip install -e ".[workitems]"
+
+# Check how this checkout maps to the upstream Symphony model
+fizzy-symphony doctor --board work-ai-board
+
+# Print dry-run commands for preparing an existing Fizzy board
+fizzy-symphony init-board --board work-ai-board
+
+# Print default env JSON for robocorp-adapters-custom
+fizzy-symphony workitems-env
 
 # Print the dry-run Fizzy command for listing a board
 fizzy-symphony list --board work-ai-board --dry-run
@@ -68,6 +92,36 @@ pip install -e ".[dev]"
 ---
 
 ## CLI Commands
+
+### `fizzy-symphony doctor`
+
+Prints a deterministic setup checklist and maps upstream OpenAI Symphony
+concepts onto this Fizzy/RCC implementation.
+
+```bash
+fizzy-symphony doctor --board work-ai-board
+```
+
+### `fizzy-symphony init-board`
+
+Prints dry-run commands for preparing an existing Fizzy board with the
+recommended Symphony-style columns. It does not create a hidden system board by
+default.
+
+```bash
+fizzy-symphony init-board --board work-ai-board
+# fizzy column list --board work-ai-board --agent --quiet
+# fizzy column create --board work-ai-board --name 'Ready for Agents' --agent --quiet
+```
+
+### `fizzy-symphony workitems-env`
+
+Prints the default environment contract for the published
+`robocorp-adapters-custom` package.
+
+```bash
+fizzy-symphony workitems-env
+```
 
 ### `fizzy-symphony list`
 
@@ -136,7 +190,11 @@ fizzy-symphony/
 │       ├── cli.py                  # CLI entry point
 │       ├── commands.py             # Compatibility wrappers over the adapter
 │       ├── models.py               # FizzyCard, Agent, CardAdapter, Board, FizzyConfig
-│       └── tracker.py              # Tracker adapter contract
+│       ├── robocorp_adapter.py     # Published adapter package loader/env contract
+│       ├── symphony.py             # OpenAI Symphony concept mapping and board bootstrap
+│       ├── tracker.py              # Tracker adapter contract
+│       ├── workitem_pipeline.py    # Fizzy/workitems/Codex pipeline helpers
+│       └── workitem_queue.py       # Robocorp-compatible work item payload/queue seam
 ├── tests/
 │   ├── test_adapters_fizzy_cli.py
 │   ├── test_cli.py
@@ -166,6 +224,8 @@ python -m pytest
 - `WORKFLOW.example.md` shows a board/workspace/agent configuration and a worker prompt body.
 - `prompts/program-lead.md` guides the lead agent on board coordination and state transitions.
 - `prompts/worker-agent.md` guides a worker to claim exactly one card, stay within allowed paths, and report proof of work.
+- `docs/openai-symphony-alignment.md` explains how this maps to the upstream OpenAI Symphony model.
+- `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
 
 ---
 

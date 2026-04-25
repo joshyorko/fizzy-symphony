@@ -17,6 +17,19 @@ def test_build_list_command_uses_explicit_board():
     assert cmd == "fizzy card list --board work-ai-board --agent --markdown"
 
 
+def test_build_column_commands_use_existing_board():
+    adapter = _make_adapter()
+
+    assert (
+        adapter.build_column_list_command("board-1")
+        == "fizzy column list --board board-1 --agent --quiet"
+    )
+    assert (
+        adapter.build_column_create_command("board-1", "Ready for Agents")
+        == "fizzy column create --board board-1 --name 'Ready for Agents' --agent --quiet"
+    )
+
+
 def test_build_claim_command_uses_card_number_and_board():
     cmd = _make_adapter().build_claim_command(42, "work-ai-board")
     assert cmd == "fizzy card claim 42 --board work-ai-board --agent --quiet"

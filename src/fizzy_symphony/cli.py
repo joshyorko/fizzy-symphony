@@ -10,6 +10,12 @@ from . import __version__
 from .adapters.fizzy_cli import FizzyCLIAdapter
 from .commands import build_board_plan, format_plan_as_text
 from .models import Agent, Board, CardAdapter, FizzyConfig
+from .robocorp_adapter import (
+    RobocorpWorkitemConfig,
+    adapter_package_available,
+    format_workitem_env,
+)
+from .symphony import format_init_board_plan, format_mapping_table
 
 
 def _build_demo_board() -> Board:
@@ -79,6 +85,45 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     plan = build_board_plan(board, config)
     print(format_plan_as_text(plan))
     print("(dry-run mode — no commands were executed)")
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Print a deterministic readiness checklist for the local integration."""
+    config = _config_from_args(args)
+    adapter_status = "available" if adapter_package_available() else "missing"
+    board = args.board or "FIZZY_BOARD / .fizzy.yaml"
+
+    print("Fizzy Symphony Doctor")
+    print("")
+    print(f"Fizzy CLI check : {FizzyCLIAdapter(config=config).build_doctor_command()}")
+    print(f"Board context   : {board}")
+    print(f"Adapter package : robocorp-adapters-custom ({adapter_status})")
+    print("Adapter role    : durable queue plumbing only")
+    print("Orchestrator    : fizzy-symphony owns Symphony semantics")
+    print("")
+    print(format_mapping_table())
+    return 0
+
+
+def _cmd_init_board(args: argparse.Namespace) -> int:
+    """Print dry-run commands for preparing an existing Fizzy board."""
+    print(format_init_board_plan(args.board, fizzy_bin=args.fizzy_bin))
+    print("")
+    print("(dry-run mode — create only the columns that are missing)")
+    return 0
+
+
+def _cmd_workitems_env(args: argparse.Namespace) -> int:
+    """Print default environment variables for the published adapter package."""
+    config = RobocorpWorkitemConfig(
+        adapter=args.adapter,
+        queue_name=args.queue_name,
+        output_queue_name=args.output_queue_name,
+        db_path=args.db_path,
+        files_dir=args.files_dir,
+    )
+    print(format_workitem_env(config))
     return 0
 
 
@@ -156,6 +201,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reserved per-card timeout in seconds for future execution support (default: 300).",
     )
 
+    doctor_p = sub.add_parser(
+        "doctor",
+        help="Print setup checks and the upstream Symphony mapping.",
+    )
+    _add_common_command_options(doctor_p)
+    doctor_p.add_argument(
+        "--board",
+        metavar="BOARD_ID",
+        help="Fizzy board ID to validate conceptually; otherwise use FIZZY_BOARD/.fizzy.yaml.",
+    )
+
+    init_p = sub.add_parser(
+        "init-board",
+        help="Print dry-run commands for preparing an existing Fizzy board.",
+    )
+    _add_common_command_options(init_p, include_board=True)
+
+    env_p = sub.add_parser(
+        "workitems-env",
+        help="Print default robocorp-adapters-custom environment variables.",
+    )
+    env_p.add_argument(
+        "--adapter",
+        default=RobocorpWorkitemConfig.adapter,
+        help="Fully qualified adapter class path.",
+    )
+    env_p.add_argument(
+        "--queue-name",
+        default=RobocorpWorkitemConfig.queue_name,
+        help="Input queue name used by producer/worker.",
+    )
+    env_p.add_argument(
+        "--output-queue-name",
+        default=RobocorpWorkitemConfig.output_queue_name,
+        help="Output queue name used by worker/reporter.",
+    )
+    env_p.add_argument(
+        "--db-path",
+        default=RobocorpWorkitemConfig.db_path,
+        help="SQLite database path for local development.",
+    )
+    env_p.add_argument(
+        "--files-dir",
+        default=RobocorpWorkitemConfig.files_dir,
+        help="Attachment directory for local development.",
+    )
+
     list_p = sub.add_parser("list", help="Print the Fizzy CLI command for listing cards on a board.")
     _add_common_command_options(list_p, include_board=True)
 
@@ -184,6 +276,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     dispatch = {
         "version": _cmd_version,
         "plan": _cmd_plan,
+        "doctor": _cmd_doctor,
+        "init-board": _cmd_init_board,
+        "workitems-env": _cmd_workitems_env,
         "list": _cmd_list,
         "claim": _cmd_claim,
         "comment": _cmd_comment,
