@@ -6,6 +6,20 @@ Fizzy Symphony is a dry-run-first scaffold for orchestrating coding agents
 against a Fizzy board. Its job is to normalize tracker data, define safe state
 transitions, and produce the exact Fizzy CLI commands that later phases may run.
 
+The architecture follows OpenAI Symphony's tracker-first model: the existing
+tracker board remains the human source of truth, one issue/card maps to one
+agent task, and worker proof is written back to the original issue/card. This
+project diverges by using Robocorp workitems as durable queue plumbing for
+claimed/running/result state instead of treating one daemon process as the only
+owner of orchestration state.
+
+Boundary:
+
+- `fizzy-symphony` owns board semantics, workflow state, Codex runner policy,
+  workspace policy, and reporter output.
+- `robocorp-adapters-custom` owns reserve/release/fail/output queue mechanics.
+- Fizzy owns the visible board, cards, comments, and columns.
+
 ## Core Domain Model
 
 - `FizzyCard`: canonical normalized tracker card.
@@ -14,6 +28,9 @@ transitions, and produce the exact Fizzy CLI commands that later phases may run.
 - `Board`: ordered collection of cards for a Fizzy board.
 - `TrackerAdapter`: contract for reading cards and writing comments/state updates.
 - `FizzyCLIAdapter`: dry-run adapter that builds Fizzy CLI commands.
+- `SymphonyColumn`: recommended tracker column for the upstream-inspired flow.
+- `RobocorpWorkitemConfig`: environment contract for the published adapter
+  package.
 
 ## Normalized Fizzy Card Shape
 
@@ -67,6 +84,19 @@ already under active execution:
 - `Synthesize & Verify`
 - `Ready to Ship`
 
+## Recommended Board Columns
+
+Fizzy Symphony expects an existing board by default. `fizzy-symphony init-board`
+prints dry-run commands to add any missing recommended columns:
+
+- `Shaping`
+- `Ready for Agents`
+- `In Flight`
+- `Needs Input`
+- `Synthesize & Verify`
+- `Ready to Ship`
+- `Done`
+
 ## Terminal States
 
 Terminal states indicate no more automated work should occur:
@@ -104,6 +134,8 @@ passes, and preserve the card as the source of truth for scope and status.
 - Phase 0 is dry-run only; no subprocess execution is allowed.
 - No direct HTTP or API behavior is allowed in the scaffold.
 - No daemon/background loop behavior is allowed yet.
+- The system must not create a hidden board by default; it configures or checks
+  an existing Fizzy board unless the user explicitly opts into creation later.
 - Fizzy CLI mutations must target the visible card `number`, not only the internal `id`.
 - Workers claim exactly one card at a time.
 - Workers may edit only approved paths for the claimed card.
