@@ -14,27 +14,24 @@ fizzy-symphony version
 python -m pytest -q
 ```
 
-The devcontainer forwards `FIZZY_TOKEN`, `FIZZY_API_URL`, `FIZZY_PROFILE`,
-`FIZZY_BOARD`, and `OPENAI_API_KEY` from the host when those variables exist. It
-also mounts `.codex`, `.config/fizzy`, and `.robocorp` so Codex/Fizzy/RCC state
-can be reused.
+The devcontainer forwards `FIZZY_TOKEN`, `FIZZY_API_URL`, `FIZZY_PROFILE`, and
+`FIZZY_BOARD` from the host when those variables exist. It mounts `.config/fizzy`
+so Fizzy auth can be reused. It does not mount host `.codex`; log into Codex
+inside the devcontainer so auth, sessions, and conversation history stay
+container-local. RCC is installed inside the container with Homebrew and builds
+its own container-local holotree with `rcc ht vars`.
 
 ## 2. Authenticate Codex and Fizzy
 
 RCC does not need auth for this project. It only builds and runs the local robot
 environment.
 
-Codex CLI auth must exist in the same environment that runs the robot:
+Codex CLI auth must exist inside the devcontainer because that is the
+environment that runs the robot. This project assumes the Codex subscription
+login flow, not API-key worker auth:
 
 ```bash
 codex login
-codex login status
-```
-
-API-key auth is also supported by the CLI:
-
-```bash
-printenv OPENAI_API_KEY | codex login --with-api-key
 codex login status
 ```
 
@@ -53,6 +50,8 @@ fizzy board list
 ## 3. Verify RCC Locally
 
 ```bash
+brew tap joshyorko/tools
+brew install joshyorko/tools/rcc
 rcc --version
 rcc ht vars -r robots/workitems/robot.yaml --json
 rcc run -r robots/workitems/robot.yaml -t Doctor --silent

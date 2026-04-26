@@ -94,10 +94,10 @@ Do not mix credential state inside one worker process.
 
 ## Authentication Notes
 
-Codex supports ChatGPT sign-in for subscription access and API-key sign-in for
-usage-based access. Durable mode should treat auth as worker-local runtime
-state, not as Fizzy board state. For CI-style or fleet workers, prefer explicit
-worker profiles/containers so account limits and credentials are observable.
+This project assumes Codex subscription auth through the normal `codex login`
+flow. Durable mode should treat that auth as worker-local runtime state, not as
+Fizzy board state. For multiple Codex accounts, prefer explicit worker
+profiles/containers so account limits and credentials are observable.
 
 ## Agents SDK Decision
 
