@@ -1,0 +1,3 @@
+# Official OpenAI Python SDK for codex app-server. Keep this outside
+# pyproject.toml because setuptools rejects VCS direct references in extras.
+codex-app-server-sdk @ git+https://github.com/openai/codex.git@87bc72408c5ef08f8d21f2cdd00c55451c3be33f#subdirectory=sdk/python

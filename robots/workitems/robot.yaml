@@ -6,6 +6,7 @@
 #   rcc run -r robots/workitems/robot.yaml --dev -t Doctor --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t WorkitemsEnv --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow -e robots/workitems/devdata/env-sqlite.json --silent
+#   rcc run -r robots/workitems/robot.yaml --dev -t FizzySymphonyContractTest --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t WorkAIProductionSmoke -e workai-smoke.env.json --silent
 
 tasks:
@@ -24,6 +25,9 @@ devTasks:
 
   WorkAIProductionSmoke:
     shell: python -m robocorp.tasks run tasks.py -t WorkAIProductionSmoke
+
+  FizzySymphonyContractTest:
+    shell: python -m robocorp.tasks run tasks.py -t FizzySymphonyContractTest
 
   PromptCardSmoke:
     shell: python -m robocorp.tasks run tasks.py -t PromptCardSmoke
