@@ -81,8 +81,9 @@ When prompted, paste the prompt you want Codex to run. If you leave the
 workspace prompt blank, the robot defaults to this checkout. With no board/card
 values, `FizzySymphony` creates a fresh live board and card, adds the default
 custom columns, runs Codex through SQLite workitems, comments back, moves the
-card to `Synthesize & Verify`, and prints a cleanup command for the disposable
-board.
+card according to the golden ticket completion tag, and prints a cleanup
+command for the disposable board. The default disposable board golden ticket
+moves completed work cards to `Done`.
 
 For repeatable runs, create a tiny local env file from the template:
 
