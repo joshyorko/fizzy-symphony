@@ -69,7 +69,10 @@ class FizzyCLIAdapter:
         return " ".join(parts)
 
     def build_show_command(self, card_number: int) -> str:
-        """Build the Fizzy CLI command used to show a card by number."""
+        """Build the Fizzy CLI command used to show a card by number.
+
+        Compatibility wrapper over :meth:`build_get_card_command`.
+        """
         return self.build_get_card_command(card_number)
 
     def build_move_to_column_command(self, card_number: int, column_id: str) -> str:
@@ -90,7 +93,10 @@ class FizzyCLIAdapter:
         return " ".join(parts)
 
     def build_move_command(self, card_number: int, column_id: str) -> str:
-        """Build the Fizzy CLI command used to move a card to a column."""
+        """Build the Fizzy CLI command used to move a card to a column.
+
+        Compatibility wrapper over :meth:`build_move_to_column_command`.
+        """
         return self.build_move_to_column_command(card_number, column_id)
 
     def build_create_comment_command(self, card_number: int, body: str) -> str:
@@ -112,7 +118,10 @@ class FizzyCLIAdapter:
         return " ".join(parts)
 
     def build_comment_command(self, card_number: int, body: str) -> str:
-        """Build the Fizzy CLI command used to comment on a card."""
+        """Build the Fizzy CLI command used to comment on a card.
+
+        Compatibility wrapper over :meth:`build_create_comment_command`.
+        """
         return self.build_create_comment_command(card_number, body)
 
     def build_assign_card_command(self, card_number: int, user_id: str) -> str:
