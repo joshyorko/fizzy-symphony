@@ -1,0 +1,36 @@
+---
+# yamllint disable rule:line-length
+# RCC environment resolution suite.
+# Run from the repo root:
+#   rcc ht vars -r robot_tests/env_resolve/robot.yaml --json
+#   rcc run -r robot_tests/env_resolve/robot.yaml --dev -t EnvResolve --silent
+
+tasks:
+  EnvResolve:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  WorkitemsEnv:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t WorkitemsEnv
+
+  EnvResolve:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore

@@ -24,9 +24,12 @@ WORKFLOWS_ROOT = ROOT / ".github" / "workflows"
 WORKAI_SAMPLE = ROOT / "test-projects" / "workai-smoke" / "sample_project"
 PER_SUITE_ROBOT_FILES = ("robot.yaml", "conda.yaml", "test.robot", "README.md")
 EXPECTED_RCC_SUITES = {
+    "env_resolve": "EnvResolve",
     "sqlite_workitem_flow": "SmokeSQLiteWorkitemFlow",
     "fizzy_contract": "FizzySymphonyContractTest",
     "fizzy_parity": "FizzySymphonyParityContract",
+    "prompt_card_smoke": "PromptCardSmoke",
+    "workai_production_smoke": "WorkAIProductionSmoke",
 }
 
 
@@ -67,14 +70,24 @@ def test_github_actions_cover_python_uv_and_rcc_suites():
     expected_workflows = {
         "python.yml": ("python -m pip install -e \".[dev]\"", "python -m pytest -q"),
         "uv.yml": ("uv venv .venv", "uv pip install -e \".[dev]\""),
+        "rcc-env-resolve.yml": ("env_resolve", "EnvResolve"),
         "rcc-sqlite-workitem-flow.yml": ("sqlite_workitem_flow", "SmokeSQLiteWorkitemFlow"),
         "rcc-fizzy-contract.yml": ("fizzy_contract", "FizzySymphonyContractTest"),
         "rcc-fizzy-parity.yml": ("fizzy_parity", "FizzySymphonyParityContract"),
+        "rcc-prompt-card-smoke.yml": ("prompt_card_smoke", "PromptCardSmoke"),
+        "rcc-workai-production-smoke.yml": (
+            "workai_production_smoke",
+            "WorkAIProductionSmoke",
+        ),
     }
 
     assert (WORKFLOWS_ROOT / "_rcc-robot.yml").is_file()
     reusable = (WORKFLOWS_ROOT / "_rcc-robot.yml").read_text(encoding="utf-8")
     assert "workflow_call:" in reusable
+    assert "FIZZY_SYMPHONY_PROMPT:" in reusable
+    assert "WORKAI_SMOKE_BOARD_ID:" in reusable
+    assert "ROBOCORP_HOME:" in reusable
+    assert "RCC_HOME:" in reusable
     assert "rcc ht vars" in reusable
     assert "rcc run" in reusable
     assert "actions/upload-artifact" in reusable
@@ -84,6 +97,16 @@ def test_github_actions_cover_python_uv_and_rcc_suites():
         assert "workflow_dispatch:" in workflow
         for text in required_text:
             assert text in workflow
+
+    assert "push:" in (WORKFLOWS_ROOT / "rcc-env-resolve.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "push:" not in (WORKFLOWS_ROOT / "rcc-prompt-card-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "push:" not in (
+        WORKFLOWS_ROOT / "rcc-workai-production-smoke.yml"
+    ).read_text(encoding="utf-8")
 
 
 def test_robot_yaml_exposes_expected_tasks():

@@ -59,10 +59,12 @@ The RCC-facing test layout is one self-contained Robot project per suite under
 
 ```text
 robot_tests/
+  env_resolve/
   sqlite_workitem_flow/
   fizzy_contract/
   fizzy_parity/
-  <future-suite>/
+  prompt_card_smoke/
+  workai_production_smoke/
     robot.yaml
     conda.yaml
     test.robot
@@ -89,10 +91,13 @@ compatibility path.
 
 ## Current Gaps
 
-- CI proof pending: Python, uv, and RCC workflow files exist, but hosted Actions
-  still need to prove the matrix on GitHub.
-- RCC expansion pending: only the initial SQLite workitem, Fizzy contract, and
-  Fizzy parity suites have independent suite roots today.
+- CI proof pending: Python, uv, and RCC workflow files exist, and the automatic
+  RCC suites pass locally, but hosted Actions still need to prove the matrix on
+  GitHub.
+- RCC expansion pending: the current suite roots cover environment resolution,
+  SQLite workitems, Fizzy contract, Fizzy parity, prompt-card smoke, and WorkAI
+  production smoke. Prompt-card and WorkAI remain manual/gated until real
+  Codex/Fizzy credentials are available.
 - Live smoke gated: live Fizzy mutation must stay opt-in and require explicit
   board/card configuration plus cleanup proof.
 - Production daemon not implemented: there is no always-on scheduler,

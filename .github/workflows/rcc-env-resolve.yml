@@ -1,0 +1,16 @@
+---
+name: RCC env_resolve
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  env-resolve:
+    uses: ./.github/workflows/_rcc-robot.yml
+    with:
+      suite: env_resolve
+      task: EnvResolve

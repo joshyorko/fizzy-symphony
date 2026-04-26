@@ -70,6 +70,29 @@ Basecamp reference implementation.
 > Tracker-facing CLI flows remain dry-run-first unless explicitly guarded as
 > live smoke commands.
 
+## Proof Status
+
+| Capability | Status |
+| --- | --- |
+| pip editable install | Locally passing |
+| uv editable install | Workflow file present; hosted proof pending |
+| pytest | Locally passing; GitHub matrix workflow present |
+| compileall | Covered by Python workflow |
+| CLI dry-run | Locally passing |
+| Golden-ticket routing | Unit-tested |
+| Fake Fizzy/Codex contract | Unit-tested and RCC suite present |
+| RCC environment resolution | Local RCC run passing; workflow caller present |
+| SQLite workitem Robot smoke | Local RCC run passing; workflow caller present |
+| Fizzy contract Robot smoke | Local RCC run passing; workflow caller present |
+| Fizzy parity Robot smoke | Local RCC run passing; workflow caller present |
+| Prompt-card smoke | Manual/gated RCC suite only |
+| WorkAI production smoke | Manual/gated RCC suite only |
+| Live Fizzy disposable smoke | Manual/gated, no public CI proof yet |
+| Live Codex SDK/app-server smoke | Manual/gated, no public CI proof yet |
+| Webhook endpoint | Not implemented |
+| HTTP status/health endpoint | Not implemented |
+| Full Symphony daemon parity | Not implemented |
+
 ---
 
 ## Quick Start

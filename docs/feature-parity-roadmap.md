@@ -13,8 +13,9 @@ Implemented and locally tested:
   policy paths.
 - SQLite/in-memory smoke paths and WorkAI sample-project tests with scripted
   Codex SDK runners.
-- Independent RCC suite projects for SQLite workitems, Fizzy contract, and
-  Fizzy parity under `robot_tests/<suite>/`.
+- Independent RCC suite projects for environment resolution, SQLite workitems,
+  Fizzy contract, Fizzy parity, manual prompt-card smoke, and manual WorkAI
+  production smoke under `robot_tests/<suite>/`.
 - GitHub Actions workflow files for Python, uv, and RCC suite execution.
 
 Still pending:
@@ -26,6 +27,25 @@ Still pending:
   reconciler, or background service is implemented yet.
 - Webhook receiver behavior: webhooks are future acceleration only, not current
   correctness machinery.
+
+## Proof Status Table
+
+| Capability | Status |
+| --- | --- |
+| Python editable install | Locally passing; matrix workflow present |
+| uv editable install | Workflow file present; hosted proof pending |
+| pytest and compileall | Workflow file present |
+| CLI dry-run claim/list/comment/move | Locally passing |
+| Board contract and routing | Unit-tested |
+| Fake Fizzy/Codex contract | Unit-tested and RCC suite present |
+| RCC env resolve | Local RCC run passing; workflow caller present |
+| RCC SQLite workitem flow | Local RCC run passing; workflow caller present |
+| RCC Fizzy contract | Local RCC run passing; workflow caller present |
+| RCC Fizzy parity | Local RCC run passing; workflow caller present |
+| Prompt-card smoke | Manual/gated suite and workflow_dispatch caller |
+| WorkAI production smoke | Manual/gated suite and workflow_dispatch caller |
+| Live Fizzy/Codex proof | Manual suites fail closed without explicit inputs; not public CI-proven |
+| Webhook/server/dashboard breadth | Deferred |
 
 ## Product Shape
 
