@@ -117,6 +117,7 @@ def test_worker_completes_reserved_item_with_runner_result():
     assert result.output_id == "output-1"
     assert adapter.outputs["output-1"]["card_id"] == "card-579"
     assert adapter.outputs["output-1"]["comment"] == "Done 579"
+    assert adapter.outputs["output-1"]["handoff_column_id"] == "Synthesize & Verify"
     assert adapter.releases == [("item-1", WorkItemState.DONE, None)]
 
 
@@ -150,7 +151,7 @@ def test_reporter_posts_comment_and_updates_state_from_result_item():
             "card_id": "card-579",
             "card_number": 579,
             "comment": "Proof attached",
-            "handoff_state": "Synthesize & Verify",
+            "handoff_column_id": "Synthesize & Verify",
         }
     )
     tracker = FakeTracker()
@@ -161,6 +162,24 @@ def test_reporter_posts_comment_and_updates_state_from_result_item():
     assert tracker.comments == [(579, "Proof attached")]
     assert tracker.columns == [(579, "Synthesize & Verify")]
     assert adapter.releases == [("item-1", WorkItemState.DONE, None)]
+
+
+def test_reporter_accepts_legacy_handoff_state_key():
+    adapter = FakeAdapter()
+    adapter.seed_input(
+        payload={
+            "card_id": "card-579",
+            "card_number": 579,
+            "comment": "Proof attached",
+            "handoff_state": "Synthesize & Verify",
+        }
+    )
+    tracker = FakeTracker()
+
+    result = FizzyWorkItemReporter(queue=WorkItemQueue(adapter), tracker=tracker).report_one()
+
+    assert result.reported is True
+    assert tracker.columns == [(579, "Synthesize & Verify")]
 
 
 def test_reporter_failure_releases_result_item_as_failed():

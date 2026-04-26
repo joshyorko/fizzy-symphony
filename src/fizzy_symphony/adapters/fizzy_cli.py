@@ -158,6 +158,7 @@ class FizzyCLIAdapter:
         self_assign: bool = False,
     ) -> List[str]:
         """Build the dry-run command sequence used to claim a card."""
+        self._ensure_dry_run()
         if assignee_id and self_assign:
             raise ValueError("assignee_id and self_assign are mutually exclusive.")
 

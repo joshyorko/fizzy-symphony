@@ -92,6 +92,11 @@ def test_adapter_rejects_non_dry_run():
         _make_adapter(dry_run=False, board="work-ai-board").build_list_command()
 
 
+def test_build_claim_commands_reject_non_dry_run():
+    with pytest.raises(ValueError, match="dry-run only"):
+        _make_adapter(dry_run=False).build_claim_commands(42, "in-flight", "Claimed by worker.")
+
+
 def test_claim_card_does_not_execute_subprocesses(monkeypatch):
     import subprocess
 

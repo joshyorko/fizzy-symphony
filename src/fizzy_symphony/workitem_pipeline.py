@@ -85,9 +85,12 @@ class CodexWorkItemWorker:
             "card_id": payload.card.get("id"),
             "card_number": payload.card.get("number"),
             "comment": result.get("comment", ""),
-            "handoff_state": result.get(
-                "handoff_state",
-                payload.workflow.get("handoff_column", "Synthesize & Verify"),
+            "handoff_column_id": result.get(
+                "handoff_column_id",
+                result.get(
+                    "handoff_state",
+                    payload.workflow.get("handoff_column", "Synthesize & Verify"),
+                ),
             ),
             "runner": payload.runner,
             "result": dict(result),
@@ -109,10 +112,14 @@ class FizzyWorkItemReporter:
             card_id = str(payload["card_id"])
             card_number = int(payload["card_number"])
             comment = str(payload.get("comment") or "Codex work item completed.")
-            handoff_state = str(payload.get("handoff_state") or "Synthesize & Verify")
+            handoff_column_id = str(
+                payload.get("handoff_column_id")
+                or payload.get("handoff_state")
+                or "Synthesize & Verify"
+            )
 
             self.tracker.create_comment(card_number, comment)
-            self.tracker.move_card_to_column(card_number, handoff_state)
+            self.tracker.move_card_to_column(card_number, handoff_column_id)
             self.queue.complete(item.id, {"reported": True, "card_id": card_id})
         except Exception as exc:
             self.queue.fail(item.id, message=str(exc), code=self.failure_code)
