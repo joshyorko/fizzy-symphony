@@ -681,8 +681,11 @@ def run_board_native_fizzy_symphony(
 
     artifacts_dir = resolve_output_dir(output_dir)
     workspace = Path(workspace).resolve()
-    if not workspace.is_dir():
-        raise FullSmokeBlocked(f"FizzySymphony workspace does not exist: {workspace}")
+    if workspace.exists() and not workspace.is_dir():
+        raise FullSmokeBlocked(f"FizzySymphony workspace is not a directory: {workspace}")
+    if not workspace.exists():
+        workspace.mkdir(parents=True, exist_ok=True)
+        print(f"fizzy-symphony workspace_created path={workspace}", flush=True)
 
     bootstrap = _ensure_symphony_board_and_seed_card(
         board_id=board_id,
