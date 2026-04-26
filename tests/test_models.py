@@ -12,6 +12,8 @@ from fizzy_symphony.models import (
     CardStatus,
     FizzyCard,
     FizzyConfig,
+    GoldenTicket,
+    parse_golden_ticket_card,
 )
 
 
@@ -44,6 +46,78 @@ class TestFizzyCard:
 
         with pytest.raises(ValueError, match="FizzyCard.state"):
             FizzyCard(id="card_123", number=42, identifier="abc", title="x", state="")
+
+
+class TestGoldenTicket:
+    _DEFAULT = object()
+
+    def _make_card(self, *, tags=None, column=_DEFAULT, steps=None):
+        resolved_column = (
+            {"id": "col_ready", "name": "Ready for Agents"}
+            if column is self._DEFAULT
+            else column
+        )
+        return {
+            "id": "card_gt",
+            "number": 12,
+            "title": "Codex Agent",
+            "description": "Work the card and leave proof.",
+            "tags": tags or ["agent-instructions", "codex", "move-to-ready-to-ship"],
+            "column": resolved_column,
+            "steps": steps or [
+                {"content": "Read the card"},
+                {"content": "Run validation"},
+            ],
+        }
+
+    def test_golden_ticket_requires_identity_and_column(self):
+        with pytest.raises(ValueError, match="GoldenTicket.card_id"):
+            GoldenTicket(card_id="", card_number=1, column_id="col", column_name="Ready")
+
+        with pytest.raises(ValueError, match="GoldenTicket.card_number"):
+            GoldenTicket(card_id="card", card_number=0, column_id="col", column_name="Ready")
+
+        with pytest.raises(ValueError, match="GoldenTicket.column_id"):
+            GoldenTicket(card_id="card", card_number=1, column_id="", column_name="Ready")
+
+    def test_parse_golden_ticket_card_maps_prompt_steps_backend_and_completion(self):
+        ticket = parse_golden_ticket_card(self._make_card())
+
+        assert ticket == GoldenTicket(
+            card_id="card_gt",
+            card_number=12,
+            column_id="col_ready",
+            column_name="Ready for Agents",
+            prompt="Work the card and leave proof.",
+            steps=["Read the card", "Run validation"],
+            backend="codex",
+            completion_policy="move:ready to ship",
+        )
+
+    def test_parse_golden_ticket_card_defaults_to_comment_and_configured_backend(self):
+        ticket = parse_golden_ticket_card(
+            self._make_card(tags=["#agent-instructions"]),
+            default_backend="claude",
+        )
+
+        assert ticket is not None
+        assert ticket.backend == "claude"
+        assert ticket.completion_policy == "comment"
+
+    def test_parse_golden_ticket_card_supports_close_on_complete(self):
+        ticket = parse_golden_ticket_card(
+            self._make_card(tags=["agent-instructions", "close-on-complete"])
+        )
+
+        assert ticket is not None
+        assert ticket.completion_policy == "close"
+
+    def test_parse_golden_ticket_card_ignores_non_instruction_cards(self):
+        assert parse_golden_ticket_card(self._make_card(tags=["codex"])) is None
+
+    def test_parse_golden_ticket_card_requires_real_column(self):
+        assert parse_golden_ticket_card(self._make_card(column=None)) is None
+        assert parse_golden_ticket_card(self._make_card(column={})) is None
 
 
 class TestAgent:

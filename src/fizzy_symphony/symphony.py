@@ -22,12 +22,48 @@ class SymphonyColumn:
 
 
 @dataclass(frozen=True)
+class FizzySystemLane:
+    """Built-in Fizzy lane that is not created as a custom board column."""
+
+    name: str
+    pseudo_id: str
+    kind: str
+    role: str
+    description: str
+
+
+@dataclass(frozen=True)
 class SymphonyMapping:
     """Concept mapping between upstream Symphony and this implementation."""
 
     upstream: str
     fizzy_symphony: str
     note: str
+
+
+FIZZY_SYSTEM_LANES: Tuple[FizzySystemLane, ...] = (
+    FizzySystemLane(
+        name="Maybe?",
+        pseudo_id="maybe",
+        kind="triage",
+        role="Default intake",
+        description="Active cards with no custom column assignment.",
+    ),
+    FizzySystemLane(
+        name="Not Now",
+        pseudo_id="not-now",
+        kind="not_now",
+        role="Postponed",
+        description="Cards postponed out of active automation.",
+    ),
+    FizzySystemLane(
+        name="Done",
+        pseudo_id="done",
+        kind="closed",
+        role="Terminal",
+        description="Closed cards; no more automated work should occur.",
+    ),
+)
 
 
 RECOMMENDED_COLUMNS: Tuple[SymphonyColumn, ...] = (
@@ -66,12 +102,6 @@ RECOMMENDED_COLUMNS: Tuple[SymphonyColumn, ...] = (
         role="Integration",
         upstream_state="Ready",
         description="Verified work that can be merged or released.",
-    ),
-    SymphonyColumn(
-        name="Done",
-        role="Terminal",
-        upstream_state="Done",
-        description="No more automated work should occur.",
     ),
 )
 
@@ -115,6 +145,11 @@ def recommended_columns() -> List[SymphonyColumn]:
     return list(RECOMMENDED_COLUMNS)
 
 
+def fizzy_system_lanes() -> List[FizzySystemLane]:
+    """Return Fizzy's built-in pseudo lanes used by the orchestration model."""
+    return list(FIZZY_SYSTEM_LANES)
+
+
 def upstream_mapping() -> List[SymphonyMapping]:
     """Return a copy of the upstream-to-Fizzy mapping."""
     return list(UPSTREAM_MAPPING)
@@ -133,11 +168,19 @@ def format_init_board_plan(board_id: str, *, fizzy_bin: str = "fizzy") -> str:
         "",
         f"Board: {board_id}",
         "",
-        "Check existing columns first:",
-        f"{quote(fizzy_bin)} column list --board {quote(board_id)} --agent --quiet",
-        "",
-        "Create any missing columns:",
+        "Fizzy system lanes already exist and are not custom columns:",
     ]
+    for lane in FIZZY_SYSTEM_LANES:
+        lines.append(f"- {lane.name} ({lane.pseudo_id}, {lane.kind})")
+    lines.extend(
+        [
+            "",
+            "Check existing custom columns first:",
+            f"{quote(fizzy_bin)} column list --board {quote(board_id)} --agent --quiet",
+            "",
+            "Create any missing custom workflow columns:",
+        ]
+    )
     for column in RECOMMENDED_COLUMNS:
         lines.append(
             f"{quote(fizzy_bin)} column create --board {quote(board_id)} "
