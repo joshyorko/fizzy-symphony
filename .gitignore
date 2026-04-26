@@ -33,6 +33,8 @@ Thumbs.db
 
 # Temporary files
 /tmp/
+.fizzy-symphony/
 
 # RCC runtime artifacts
 robots/workitems/output/
+robots/workitems/tmp/

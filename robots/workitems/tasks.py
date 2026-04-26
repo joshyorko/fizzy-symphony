@@ -2247,7 +2247,10 @@ def _workspace_from_environment(output_dir: Path) -> Path:
         if _looks_like_git_workspace(raw_workspace):
             ref = os.getenv("FIZZY_SYMPHONY_GIT_REF") or os.getenv("FIZZY_SYMPHONY_BRANCH")
             return _clone_git_workspace(raw_workspace, output_dir=output_dir, ref=ref)
-        return Path(raw_workspace)
+        workspace = Path(raw_workspace).expanduser()
+        if workspace.is_absolute():
+            return workspace
+        return (REPO_ROOT / workspace).resolve()
     default = REPO_ROOT
     if _can_prompt_interactively():
         value = _read_interactive_value("Workspace", default=str(default))
@@ -2335,6 +2338,7 @@ def _resolve_robot_file(path: Path) -> Path:
     if path.is_absolute():
         return path
     candidates = [Path.cwd() / path]
+    candidates.append(REPO_ROOT / path)
     robot_root = os.getenv("ROBOT_ROOT")
     if robot_root:
         candidates.append(Path(robot_root) / path)
