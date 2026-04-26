@@ -86,8 +86,10 @@ def test_github_actions_cover_python_uv_and_rcc_suites():
     assert "workflow_call:" in reusable
     assert "FIZZY_SYMPHONY_PROMPT:" in reusable
     assert "WORKAI_SMOKE_BOARD_ID:" in reusable
-    assert "ROBOCORP_HOME:" in reusable
-    assert "RCC_HOME:" in reusable
+    assert "Configure RCC environment roots" in reusable
+    assert "ROBOCORP_HOME=${RUNNER_TEMP}/robocorp/${{ inputs.suite }}" in reusable
+    assert "RCC_HOME=${RUNNER_TEMP}/rcc/${{ inputs.suite }}" in reusable
+    assert "runner.temp" not in reusable
     assert "rcc ht vars" in reusable
     assert "rcc run" in reusable
     assert "actions/upload-artifact" in reusable
