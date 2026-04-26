@@ -108,6 +108,7 @@ def test_status_reports_configured_board_and_latest_artifact(tmp_path, capsys):
         json.dumps(
             {
                 "status": "PASS",
+                "phase": "complete",
                 "board_id": "board-123",
                 "card_number": 55,
                 "sdk": {"thread_id": "thread-1", "run_id": "run-1"},
@@ -139,10 +140,54 @@ def test_status_reports_configured_board_and_latest_artifact(tmp_path, capsys):
     assert exit_code == 0
     assert "Fizzy Symphony Status" in captured.out
     assert "process: stopped" in captured.out
+    assert "phase: complete" in captured.out
     assert "board: board-123" in captured.out
     assert "card: 55" in captured.out
     assert "thread-1" in captured.out
     assert "run-1" in captured.out
+
+
+def test_status_reports_running_worker_phase(tmp_path, capsys):
+    config_dir = tmp_path / ".fizzy-symphony"
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "fizzy-symphony-status.json").write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "phase": "worker_running",
+                "board_id": "board-456",
+                "card_number": 77,
+                "worker": {"input_id": "input-1", "state": "RESERVED"},
+                "queue": {"input_queue": "fizzy_codex_input", "state": "RESERVED"},
+                "sdk": {
+                    "preflight_thread_id": "pre-thread",
+                    "preflight_run_id": "pre-run",
+                },
+                "heartbeat_at": "2026-04-26T16:10:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps({"output_dir": str(output_dir)}),
+        encoding="utf-8",
+    )
+    (config_dir / "run.json").write_text(
+        json.dumps({"pid": 999999, "command": ["rcc"], "log_path": str(config_dir / "service.log")}),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["status", "--config-dir", str(config_dir)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "status: RUNNING" in captured.out
+    assert "phase: worker_running" in captured.out
+    assert "card: 77" in captured.out
+    assert "worker: RESERVED input=input-1" in captured.out
+    assert "heartbeat: 2026-04-26T16:10:00Z" in captured.out
 
 
 def test_boards_runs_fizzy_board_list(monkeypatch, capsys):

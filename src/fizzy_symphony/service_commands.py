@@ -111,14 +111,23 @@ def status_command(args: object) -> int:
         print(f"log: {run_state['log_path']}")
     if status:
         print(f"status: {status.get('status') or status.get('health') or 'unknown'}")
+        if status.get("phase"):
+            print(f"phase: {status['phase']}")
         if status.get("board_id"):
             print(f"board: {status['board_id']}")
         if status.get("card_number"):
             print(f"card: {status['card_number']}")
+        worker = status.get("worker") if isinstance(status.get("worker"), Mapping) else {}
+        if worker:
+            worker_state = worker.get("state") or "unknown"
+            worker_input_id = worker.get("input_id") or ""
+            print(f"worker: {worker_state}" + (f" input={worker_input_id}" if worker_input_id else ""))
         sdk = status.get("sdk") if isinstance(status.get("sdk"), Mapping) else {}
         if sdk:
-            print(f"sdk thread: {sdk.get('thread_id') or ''}")
-            print(f"sdk run: {sdk.get('run_id') or ''}")
+            print(f"sdk thread: {sdk.get('thread_id') or sdk.get('preflight_thread_id') or ''}")
+            print(f"sdk run: {sdk.get('run_id') or sdk.get('preflight_run_id') or ''}")
+        if status.get("heartbeat_at"):
+            print(f"heartbeat: {status['heartbeat_at']}")
         if status.get("summary_path"):
             print(f"summary: {status['summary_path']}")
     else:
