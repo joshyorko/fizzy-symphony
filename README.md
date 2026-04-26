@@ -114,7 +114,8 @@ fizzy-symphony setup \
   --workspace "$PWD/tmp/rails-todo-live" \
   --prompt-file devdata/rails-todo.prompt.md \
   --board-name "Fizzy Symphony Rails Todo" \
-  --card-title "Build a simple Rails todo app"
+  --card-title "Build a simple Rails todo app" \
+  --fizzy-timeout-seconds 30
 
 # Start the RCC-backed service in the background
 fizzy-symphony start
@@ -169,14 +170,17 @@ pip install -e ".[dev]"
 These are the normal operator commands. `setup` writes `.fizzy-symphony/config.json`
 and `.fizzy-symphony/env.json`; `start` delegates to RCC using that env file;
 `status` shows process, queue, latest board/card, and SDK metadata; `boards`
-lists boards through the Fizzy CLI.
+lists boards through the Fizzy CLI. Live Fizzy mutation remains off unless
+`FIZZY_SYMPHONY_LIVE_FIZZY=1` is set, and live Fizzy CLI calls are bounded by
+`FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS`, defaulting to 30 seconds.
 
 ```bash
 fizzy-symphony setup \
   --workspace "$PWD/tmp/rails-todo-live" \
   --prompt-file devdata/rails-todo.prompt.md \
   --board-name "Fizzy Symphony Rails Todo" \
-  --card-title "Build a simple Rails todo app"
+  --card-title "Build a simple Rails todo app" \
+  --fizzy-timeout-seconds 30
 
 fizzy-symphony start
 fizzy-symphony status
