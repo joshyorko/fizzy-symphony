@@ -1,0 +1,26 @@
+{
+  "name": "fizzy-symphony",
+  "image": "ghcr.io/joshyorko/ror:latest",
+  "workspaceFolder": "/workspaces/fizzy-symphony",
+  "containerEnv": {
+    "FIZZY_API_URL": "${localEnv:FIZZY_API_URL}",
+    "FIZZY_BOARD": "${localEnv:FIZZY_BOARD}",
+    "FIZZY_PROFILE": "${localEnv:FIZZY_PROFILE}",
+    "FIZZY_TOKEN": "${localEnv:FIZZY_TOKEN}",
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.config/fizzy,target=/home/vscode/.config/fizzy,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.robocorp,target=/home/vscode/.robocorp,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "python -m pip install -e '.[dev,workitems,codex-sdk]'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}

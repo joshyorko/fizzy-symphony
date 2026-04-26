@@ -364,12 +364,122 @@ def run_workai_production_smoke(
     return summary
 
 
+def run_prompt_card_smoke(
+    *,
+    board_id: Optional[str],
+    card_number: Optional[int],
+    prompt: Optional[str],
+    workspace: Optional[Path],
+    output_dir: Optional[Path] = None,
+    adapter=None,
+    runner=None,
+    prefer_real_adapter: bool = True,
+    live_fizzy: bool = False,
+    handoff_column_id: Optional[str] = None,
+    codex_model: Optional[str] = "gpt-5.4-mini",
+    codex_approval_policy: Optional[str] = "never",
+    codex_sandbox_mode: Optional[str] = "workspace-write",
+) -> JSONDict:
+    """Run one explicit prompt/card through SQLite workitems and Codex SDK."""
+
+    board_id = _require_board_id(
+        board_id,
+        "Prompt card smoke requires FIZZY_SYMPHONY_BOARD_ID.",
+    )
+    if not card_number:
+        raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_CARD_NUMBER.")
+    if not prompt:
+        raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_PROMPT.")
+    if workspace is None:
+        raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_WORKSPACE.")
+
+    artifacts_dir = resolve_output_dir(output_dir)
+    workspace = Path(workspace).resolve()
+    if not workspace.is_dir():
+        raise FullSmokeBlocked(f"Prompt card workspace does not exist: {workspace}")
+
+    sdk_runner, sdk_preflight = _require_sdk_runner(
+        runner,
+        workspace=workspace,
+        codex_model=codex_model,
+        codex_approval_policy=codex_approval_policy,
+        codex_sandbox_mode=codex_sandbox_mode,
+    )
+    selected_adapter, adapter_kind = _make_required_workai_adapter(
+        artifacts_dir,
+        adapter=adapter,
+        prefer_real_adapter=prefer_real_adapter,
+    )
+    fizzy_preflight = _run_prompt_card_fizzy_preflight(
+        board_id=board_id,
+        card_number=card_number,
+        live=live_fizzy,
+    )
+
+    payload = _prompt_card_payload(
+        board_id=board_id,
+        card_number=card_number,
+        prompt=prompt,
+        workspace=workspace,
+        live_card=fizzy_preflight.get("card") if live_fizzy else None,
+        codex_model=codex_model,
+        codex_approval_policy=codex_approval_policy,
+        codex_sandbox_mode=codex_sandbox_mode,
+    )
+    queue = WorkItemQueue(selected_adapter)
+    input_id = queue.enqueue_input(payload)
+    worker_result = CodexWorkItemWorker(
+        queue=queue,
+        runner=CodexWorkItemRunner(sdk_runner),
+    ).work_one()
+    output_payload = _load_output_payload(selected_adapter, worker_result.output_id)
+    report_back = _report_card_result(
+        output_payload,
+        card_number=card_number,
+        live=live_fizzy,
+        handoff_column_id=handoff_column_id,
+    )
+    summary: JSONDict = {
+        "status": "PASS" if worker_result.succeeded else "FAIL",
+        "board": {
+            "id": board_id,
+            "url": _board_url(board_id),
+            "mutated_fizzy": live_fizzy,
+        },
+        "card_number": card_number,
+        "workspace": str(workspace),
+        "preflight": {
+            "fizzy": fizzy_preflight,
+            "sqlite_workitems": {"adapter": adapter_kind, "required": prefer_real_adapter},
+            "sdk": sdk_preflight,
+        },
+        "worker": {
+            "input_id": input_id,
+            "item_id": worker_result.item_id,
+            "output_id": worker_result.output_id,
+            "succeeded": worker_result.succeeded,
+        },
+        "sdk": _sdk_metadata(output_payload.get("result", {})),
+        "report_back": report_back,
+        "artifacts": {},
+    }
+    summary_path = artifacts_dir / "prompt-card-smoke-summary.json"
+    summary["artifacts"]["summary_path"] = str(summary_path)
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
 def _require_disposable_board_id(board_id: Optional[str]) -> str:
+    return _require_board_id(
+        board_id,
+        "Full WorkAI smoke requires an explicit disposable board id. "
+        "Create or choose the disposable board intentionally before running.",
+    )
+
+
+def _require_board_id(board_id: Optional[str], message: str) -> str:
     if not board_id:
-        raise FullSmokeBlocked(
-            "Full WorkAI smoke requires an explicit disposable board id. "
-            "Create or choose the disposable board intentionally before running."
-        )
+        raise FullSmokeBlocked(message)
     return board_id
 
 
@@ -484,6 +594,53 @@ def _workai_payload_for_card(
             "approval_policy": codex_approval_policy,
             "sandbox_mode": codex_sandbox_mode,
             "timeout_seconds": 600,
+        },
+    )
+
+
+def _prompt_card_payload(
+    *,
+    board_id: str,
+    card_number: int,
+    prompt: str,
+    workspace: Path,
+    live_card: Optional[JSONDict],
+    codex_model: Optional[str],
+    codex_approval_policy: Optional[str],
+    codex_sandbox_mode: Optional[str],
+) -> FizzyWorkItemPayload:
+    title = "Prompt card"
+    description = prompt
+    if live_card:
+        title = str(live_card.get("title") or title)
+        description = str(live_card.get("description") or prompt)
+    column = live_card.get("column") if live_card else None
+    fizzy_card = FizzyCard(
+        id=str(live_card.get("id") if live_card else f"prompt-card-{card_number}"),
+        number=card_number,
+        identifier=f"FIZZY-{card_number}",
+        title=title,
+        description=description,
+        state=str(column.get("name") if isinstance(column, Mapping) else "Ready for Agents"),
+        labels=["prompt-card", "codex-sdk"],
+    )
+    card_data = {**fizzy_card.__dict__, "board_id": board_id}
+    return FizzyWorkItemPayload(
+        source="fizzy",
+        card=card_data,
+        workflow={
+            "prompt_template": prompt,
+            "allowed_paths": [str(workspace)],
+            "handoff_column": "Synthesize & Verify",
+            "workspace": str(workspace),
+        },
+        runner={
+            "kind": "codex_sdk",
+            "workspace": str(workspace),
+            "model": codex_model,
+            "approval_policy": codex_approval_policy,
+            "sandbox_mode": codex_sandbox_mode,
+            "timeout_seconds": 900,
         },
     )
 
@@ -676,6 +833,35 @@ def _run_fizzy_preflight(
     }
 
 
+def _run_prompt_card_fizzy_preflight(
+    *,
+    board_id: str,
+    card_number: int,
+    live: bool,
+) -> JSONDict:
+    if not live:
+        return {
+            "mode": "dry-run",
+            "board_check": f"fizzy board show {board_id} --agent --quiet",
+            "card_check": f"fizzy card show {card_number} --agent --quiet",
+        }
+    completed = subprocess.run(["fizzy", "doctor"], text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise FullSmokeBlocked(f"fizzy doctor failed: {completed.stderr or completed.stdout}")
+    board = _run_json(["fizzy", "board", "show", board_id, "--agent", "--quiet"])
+    if str(board.get("id") or "") != board_id:
+        raise FullSmokeBlocked(f"Board {board_id} could not be verified.")
+    card = _run_json(["fizzy", "card", "show", str(card_number), "--agent", "--quiet"])
+    _verify_live_card_on_board(card, board_id=board_id, expected_golden=False)
+    return {
+        "mode": "live",
+        "doctor_command": "fizzy doctor",
+        "board_id": board_id,
+        "card_number": card_number,
+        "card": card,
+    }
+
+
 def _run_json(command: List[str]) -> JSONDict:
     completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
@@ -756,6 +942,12 @@ def _parse_optional_int(raw: Optional[str]) -> Optional[int]:
     return int(raw)
 
 
+def _parse_optional_path(raw: Optional[str]) -> Optional[Path]:
+    if raw is None or raw == "":
+        return None
+    return Path(raw)
+
+
 @task
 def Doctor() -> None:
     output_dir = resolve_output_dir()
@@ -790,5 +982,21 @@ def WorkAIProductionSmoke() -> None:
         codex_model=os.getenv("WORKAI_SMOKE_CODEX_MODEL") or "gpt-5.4-mini",
         codex_approval_policy=os.getenv("WORKAI_SMOKE_CODEX_APPROVAL_POLICY") or "never",
         codex_sandbox_mode=os.getenv("WORKAI_SMOKE_CODEX_SANDBOX") or "workspace-write",
+    )
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+@task
+def PromptCardSmoke() -> None:
+    proof = run_prompt_card_smoke(
+        board_id=os.getenv("FIZZY_SYMPHONY_BOARD_ID"),
+        card_number=_parse_optional_int(os.getenv("FIZZY_SYMPHONY_CARD_NUMBER")),
+        prompt=os.getenv("FIZZY_SYMPHONY_PROMPT"),
+        workspace=_parse_optional_path(os.getenv("FIZZY_SYMPHONY_WORKSPACE")),
+        live_fizzy=os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY") == "1",
+        handoff_column_id=os.getenv("FIZZY_SYMPHONY_HANDOFF_COLUMN_ID"),
+        codex_model=os.getenv("FIZZY_SYMPHONY_CODEX_MODEL") or "gpt-5.4-mini",
+        codex_approval_policy=os.getenv("FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY") or "never",
+        codex_sandbox_mode=os.getenv("FIZZY_SYMPHONY_CODEX_SANDBOX") or "workspace-write",
     )
     print(json.dumps(proof, indent=2, sort_keys=True))

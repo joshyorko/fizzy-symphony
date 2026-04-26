@@ -313,6 +313,7 @@ python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 - `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
 - `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
 - `docs/production-smoke-agent.md` defines the SDK-backed release smoke gate.
+- `docs/live-operator-guide.md` walks from devcontainer setup to a live Fizzy card run.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
 - `robots/workitems/` contains the RCC SQLite smoke robot.
 - `test-projects/workai-smoke/` contains the disposable Fizzy board fixture and fake project.

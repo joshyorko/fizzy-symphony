@@ -231,12 +231,29 @@ def configure_live_board(fixture: dict, *, board_id: str) -> dict:
             )
         )
 
+    golden_number = next(
+        (card.get("number") for card in golden_tickets if card.get("golden")),
+        None,
+    )
+    card_number_env = ",".join(
+        f"{index}={card['number']}"
+        for index, card in enumerate(task_cards, start=1)
+        if card.get("number")
+    )
+    handoff_column_id = column_ids.get("Synthesize & Verify")
     return {
         "board_id": board_id,
         "cleanup_command": shell_join(["fizzy", "board", "delete", board_id]),
         "columns": column_ids,
         "golden_tickets": golden_tickets,
         "task_cards": task_cards,
+        "smoke_env": {
+            "WORKAI_SMOKE_BOARD_ID": board_id,
+            "WORKAI_SMOKE_CARD_NUMBERS": card_number_env,
+            "WORKAI_SMOKE_GOLDEN_CARD_NUMBER": golden_number,
+            "WORKAI_SMOKE_HANDOFF_COLUMN_ID": handoff_column_id,
+            "WORKAI_SMOKE_LIVE_FIZZY": "1",
+        },
     }
 
 
