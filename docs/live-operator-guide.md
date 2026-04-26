@@ -157,6 +157,22 @@ When finished, delete only the disposable board:
 fizzy board delete <printed board id>
 ```
 
+## Robot-Level Tests
+
+The repo includes Robot Framework tests modeled after `joshyorko/rcc`'s
+`robot_tests` style. They run real RCC commands and assert robot output and
+artifacts:
+
+```bash
+uvx --from robotframework robot --outputdir robots/workitems/output/robot-tests \
+  robot_tests/fizzy_symphony.robot
+```
+
+These tests do not mutate a live Fizzy board. The `FizzySymphonyContractTest`
+dev task fakes the Fizzy boundary and the Codex SDK boundary while exercising
+the real RCC task, SQLite adapter, board/card bootstrap, worker, and reporter
+flow.
+
 ## Useful Defaults
 
 - Codex model: `gpt-5.4-mini`
@@ -174,6 +190,7 @@ same libraries yourself, you can run the same robot without RCC:
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -e ".[robot]"
+python -m pip install -r robots/workitems/requirements.txt
 python robots/workitems/run_fizzy_symphony.py --env-json env.local.json
 ```
 

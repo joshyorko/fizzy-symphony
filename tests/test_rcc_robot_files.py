@@ -25,11 +25,14 @@ WORKAI_SAMPLE = ROOT / "test-projects" / "workai-smoke" / "sample_project"
 def test_rcc_workitem_robot_files_exist():
     assert (ROBOT_ROOT / "robot.yaml").is_file()
     assert (ROBOT_ROOT / "conda.yaml").is_file()
+    assert (ROBOT_ROOT / "requirements.txt").is_file()
     assert (ROBOT_ROOT / "tasks.py").is_file()
     assert (ROBOT_ROOT / "run_fizzy_symphony.py").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-sqlite.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-prompt-card.example.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "prompt-card.prompt.md").is_file()
+    assert (ROOT / "robot_tests" / "resources.robot").is_file()
+    assert (ROOT / "robot_tests" / "fizzy_symphony.robot").is_file()
 
 
 def test_robot_yaml_exposes_expected_tasks():
@@ -42,6 +45,7 @@ def test_robot_yaml_exposes_expected_tasks():
     assert "WorkitemsEnv:" in robot_yaml
     assert "SmokeSQLiteWorkitemFlow:" in robot_yaml
     assert "WorkAIProductionSmoke:" in robot_yaml
+    assert "FizzySymphonyContractTest:" in robot_yaml
     assert "PromptCardSmoke:" in robot_yaml
     assert "RunSymphony:" in robot_yaml
     assert "robocorp.tasks" in robot_yaml
@@ -59,6 +63,9 @@ def test_rcc_conda_uses_focused_robocorp_packages():
     assert "robocorp-log>=" in pyproject
     assert "robocorp-workitems>=" in pyproject
     assert '"robocorp==' not in pyproject
+    assert "codex-app-server-sdk @ git+" in (ROBOT_ROOT / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_smoke_helper_runs_with_in_memory_adapter(tmp_path):
