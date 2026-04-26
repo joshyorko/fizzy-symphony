@@ -46,6 +46,8 @@ def test_robot_yaml_exposes_expected_tasks():
     assert "SmokeSQLiteWorkitemFlow:" in robot_yaml
     assert "WorkAIProductionSmoke:" in robot_yaml
     assert "FizzySymphonyContractTest:" in robot_yaml
+    assert "FizzySymphonyParityContract:" in robot_yaml
+    assert "FizzySymphonyStatus:" in robot_yaml
     assert "PromptCardSmoke:" in robot_yaml
     assert "RunSymphony:" in robot_yaml
     assert "robocorp.tasks" in robot_yaml
@@ -312,9 +314,59 @@ def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monk
     assert summary["board"]["id"] == "board_auto"
     assert summary["bootstrap"]["created_board"] is True
     assert summary["bootstrap"]["created_card"] is True
+    assert summary["bootstrap"]["golden_ticket_created"] is True
+    assert summary["bootstrap"]["golden_ticket_number"] == 320
+    assert summary["bootstrap"]["work_card_number"] == 321
+    assert summary["discovery"]["golden_tickets"][0]["card_number"] == 320
+    assert summary["card_number"] == 321
     assert summary["preflight"]["sqlite_workitems"]["adapter"] == "in-memory"
     assert summary["report_back"]["mode"] == "live"
     assert any(call[:3] == ["fizzy", "board", "create"] for call in calls)
+    assert any(call[:3] == ["fizzy", "card", "golden"] for call in calls)
+    assert any(call[:3] == ["fizzy", "card", "tag"] and "--tag" in call for call in calls)
+
+
+def test_fizzy_symphony_existing_board_requires_golden_ticket(tmp_path, monkeypatch):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    calls = []
+
+    def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append(command)
+        if command[:2] == ["fizzy", "doctor"]:
+            return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+        if command[:3] == ["fizzy", "board", "show"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps({"id": "board_existing", "name": "Existing"}),
+                stderr="",
+            )
+        if command[:3] == ["fizzy", "card", "list"]:
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps([]), stderr="")
+        if command[:3] in (
+            ["fizzy", "board", "create"],
+            ["fizzy", "column", "create"],
+            ["fizzy", "card", "create"],
+            ["fizzy", "card", "golden"],
+            ["fizzy", "card", "tag"],
+        ):
+            raise AssertionError(f"existing board setup should not mutate structure: {command}")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(task_module.subprocess, "run", fake_run)
+    monkeypatch.setenv("FIZZY_SYMPHONY_BOARD_ID", "board_existing")
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+
+    with pytest.raises(FullSmokeBlocked, match="No golden ticket"):
+        run_fizzy_symphony_from_environment(
+            output_dir=tmp_path / "output",
+            runner=_ScriptedPromptSdkRunner(),
+            prefer_real_adapter=False,
+        )
+
+    assert not any(call[:3] == ["fizzy", "card", "create"] for call in calls)
 
 
 def test_fizzy_symphony_interactive_prompt_can_fill_missing_inputs(tmp_path, monkeypatch):
@@ -435,6 +487,7 @@ class _UnavailableSdkRunner:
 def _patch_fake_fizzy(monkeypatch):
     calls = []
     real_run = subprocess.run
+    created_cards = []
 
     def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         if command and command[0] == "git":
@@ -450,22 +503,45 @@ def _patch_fake_fizzy(monkeypatch):
             column_id = f"col_{column_name.lower().replace(' & ', '_').replace(' ', '_')}"
             stdout = json.dumps({"id": column_id})
         elif command[:3] == ["fizzy", "card", "create"]:
-            stdout = json.dumps({"id": "card_auto", "number": 321})
+            is_golden = len(created_cards) == 0
+            number = 320 if is_golden else 321
+            title = command[command.index("--title") + 1]
+            description = command[command.index("--description") + 1]
+            card = {
+                "id": "card_golden" if is_golden else "card_work",
+                "number": number,
+                "title": title,
+                "description": description,
+                "golden": is_golden,
+                "tags": ["agent-instructions", "codex", "move-to-done"] if is_golden else [],
+                "board": {"id": "board_auto"},
+                "column": {"id": "col_ready_for_agents", "name": "Ready for Agents"},
+            }
+            created_cards.append(card)
+            stdout = json.dumps({"id": card["id"], "number": number})
         elif command[:3] == ["fizzy", "board", "show"]:
             stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "card", "list"]:
+            stdout = json.dumps(created_cards)
         elif command[:3] == ["fizzy", "card", "show"]:
-            stdout = json.dumps(
-                {
-                    "id": "card_auto",
+            number = int(command[3])
+            card = next((card for card in created_cards if card["number"] == number), None)
+            if card is None:
+                card = {
+                    "id": "card_work",
                     "number": 321,
                     "title": "Run Codex prompt smoke",
                     "description": "Create prompt-proof.txt",
                     "golden": False,
                     "board": {"id": "board_auto"},
-                    "column": {"name": "Ready for Agents"},
+                    "column": {"id": "col_ready_for_agents", "name": "Ready for Agents"},
                 }
+            stdout = json.dumps(
+                card
             )
         elif command[:3] in (
+            ["fizzy", "card", "golden"],
+            ["fizzy", "card", "tag"],
             ["fizzy", "card", "column"],
             ["fizzy", "comment", "create"],
         ):
