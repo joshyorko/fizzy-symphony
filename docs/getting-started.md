@@ -104,11 +104,17 @@ recommended commands:
 fizzy doctor
 fizzy card list --board BOARD_ID --agent --markdown
 fizzy card show NUMBER --agent --markdown
+fizzy card assign NUMBER --user USER_ID --agent --quiet
+fizzy card self-assign NUMBER --agent --quiet
 fizzy card column NUMBER --column COLUMN_ID --agent --quiet
 fizzy comment create --card NUMBER --body "TEXT" --agent --quiet
 ```
 
 If a repo already has `.fizzy.yaml`, the board plan can omit `--board`.
+
+`fizzy-symphony claim` previews a composite orchestration claim using those
+native commands. Assignment is optional for MVP; moving the card to the in-flight
+column and leaving a worker-identity comment is sufficient.
 
 ## Next Steps
 

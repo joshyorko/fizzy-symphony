@@ -3,10 +3,11 @@
 __version__ = "0.1.0"
 __author__ = "Fizzy Symphony Contributors"
 
-from .adapters import FizzyCLIAdapter
+from .adapters import FizzyCLIAdapter, FizzyOpenAPIAdapter
 from .commands import (
     build_board_plan,
     build_card_claim_command,
+    build_card_claim_commands,
     build_card_column_command,
     build_card_command,
     build_card_list_command,
@@ -29,6 +30,7 @@ __all__ = [
     "FizzyCard",
     "FizzyConfig",
     "FizzyCLIAdapter",
+    "FizzyOpenAPIAdapter",
     "FizzyWorkItemPayload",
     "FizzyWorkItemProducer",
     "FizzyWorkItemReporter",
@@ -43,6 +45,7 @@ __all__ = [
     "Workflow",
     "build_board_plan",
     "build_card_claim_command",
+    "build_card_claim_commands",
     "build_card_column_command",
     "build_card_command",
     "build_card_list_command",

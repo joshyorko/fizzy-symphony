@@ -18,7 +18,8 @@ Fizzy Symphony is structured in three layers:
 │               Adapter Layer                  │
 │  fizzy_symphony.adapters.fizzy_cli           │
 │   - Builds Fizzy CLI command strings         │
-│   - Mirrors list/claim/show/move/comment     │
+│   - Mirrors list/show/move/comment/assign    │
+│   - Models claim as a composite preview      │
 │   - Enforces dry-run-only behavior           │
 └──────────────────────┬──────────────────────┘
                        │ uses
@@ -37,15 +38,19 @@ The scaffold treats **Fizzy as the tracker/board layer**. Tracker items are
 normalized into `FizzyCard` objects, while `CardAdapter` remains a compatibility
 wrapper for the existing demo board plan.
 
-Phase 0 keeps the system dry-run only. The adapter mirrors real Fizzy CLI
-commands, but it never executes subprocesses:
+Phase 0 keeps the system dry-run only. The CLI adapter mirrors real Fizzy CLI
+commands for preview/debugging, but it never executes subprocesses:
 
 - `fizzy card list`
-- `fizzy card claim NUMBER`
 - `fizzy card show NUMBER`
+- `fizzy card assign NUMBER --user USER_ID`
+- `fizzy card self-assign NUMBER`
 - `fizzy card column NUMBER --column COLUMN_ID`
 - `fizzy comment create --card NUMBER --body TEXT`
 - `fizzy doctor`
+
+Claim is a `fizzy-symphony` semantic operation composed from the native tracker
+steps above, not a required native `fizzy card claim` command.
 
 ## Key Design Decisions
 
@@ -59,14 +64,19 @@ human-facing `number` because Fizzy CLI commands operate on card numbers.
 
 ### 3. Explicit Tracker Contract
 `tracker.py` defines the minimal adapter contract needed for later dispatch and
-integration work: fetch candidate cards, fetch cards by state, read states,
-create comments, and update states.
+integration work: fetch cards, reconcile by internal IDs, operate on visible
+card numbers, and expose `claim_card(...)` as an orchestration-level composite.
 
 ### 4. Compatibility Without Blocking Progress
 `Board`, `CardAdapter`, and the compatibility command builders remain available
 so the existing demo scaffold and examples still work while Phase 1 introduces a
 more adapter-centric architecture.
 
-### 5. Standard-Library-Only Runtime
+### 5. Explicit Real-Adapter Path
+`fizzy_symphony.adapters.fizzy_openapi` is a non-executing stub that documents
+the future Python adapter path: `basecamp/fizzy-sdk/openapi.json` is the source
+of truth because the official SDK repo does not currently ship a Python SDK.
+
+### 6. Standard-Library-Only Runtime
 The package has zero runtime dependencies. Optional extras (`[dev]`) add pytest
 and pytest-cov for development.

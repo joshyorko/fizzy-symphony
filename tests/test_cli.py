@@ -20,7 +20,8 @@ def test_plan_command_prints_board_plan(capsys):
     assert "work-ai-board" in captured.out
     assert "fizzy" in captured.out
     assert "fizzy doctor" in captured.out
-    assert "fizzy card claim 42 --board work-ai-board" in captured.out
+    assert "fizzy card show 42 --agent --markdown" in captured.out
+    assert "fizzy card column 42 --column 'In Flight' --agent --quiet" in captured.out
     assert "(dry-run mode — no commands were executed)" in captured.out
 
 
@@ -63,12 +64,45 @@ def test_list_command_prints_dry_run_fizzy_command(capsys):
     assert "fizzy card list --board work-ai-board --agent --markdown" in captured.out
 
 
-def test_claim_command_prints_dry_run_fizzy_command(capsys):
+def test_claim_command_prints_composite_dry_run_fizzy_commands(capsys):
     exit_code = main(["claim", "42", "--board", "work-ai-board", "--dry-run"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "fizzy card claim 42 --board work-ai-board --agent --quiet" in captured.out
+    assert "fizzy card show 42 --agent --markdown" in captured.out
+    assert "fizzy card column 42 --column 'In Flight' --agent --quiet" in captured.out
+    assert "fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.'" in captured.out
+    assert "fizzy card claim" not in captured.out
+
+
+def test_claim_command_supports_self_assign(capsys):
+    exit_code = main(["claim", "42", "--self-assign", "--dry-run"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "fizzy card self-assign 42 --agent --quiet" in captured.out
+
+
+def test_claim_command_supports_explicit_assignee_and_custom_values(capsys):
+    exit_code = main(
+        [
+            "claim",
+            "42",
+            "--in-flight-column",
+            "col_123",
+            "--comment-body",
+            "Claimed by custom worker.",
+            "--assignee-id",
+            "user-123",
+            "--dry-run",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "fizzy card assign 42 --user user-123 --agent --quiet" in captured.out
+    assert "fizzy card column 42 --column col_123 --agent --quiet" in captured.out
+    assert "fizzy comment create --card 42 --body 'Claimed by custom worker.'" in captured.out
 
 
 def test_comment_command_prints_dry_run_fizzy_command(capsys):
