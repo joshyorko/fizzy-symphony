@@ -35,7 +35,7 @@ class FizzyWorkItemProducer:
     queue: WorkItemQueue
     board_id: Optional[str]
     prompt_template: str = ""
-    allowed_paths: List[str] | None = None
+    allowed_paths: Optional[List[str]] = None
     handoff_column: str = "Synthesize & Verify"
     runner_command: str = "codex exec --json"
 

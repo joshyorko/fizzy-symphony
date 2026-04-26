@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Protocol, Sequence
+from typing import Dict, List, Optional, Protocol, Sequence
 
 from .models import FizzyCard
 
@@ -39,7 +39,7 @@ class TrackerAdapter(Protocol):
         card_number: int,
         in_flight_column_id: str,
         comment_body: str,
-        assignee_id: str | None = None,
+        assignee_id: Optional[str] = None,
         self_assign: bool = False,
     ) -> List[str]:
         """Perform the orchestration-level composite claim operation."""

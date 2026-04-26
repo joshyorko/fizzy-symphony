@@ -7,7 +7,7 @@ functions available while delegating to the adapter.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .adapters.fizzy_cli import FizzyCLIAdapter
 from .models import Agent, Board, CardAdapter, FizzyConfig
@@ -33,8 +33,8 @@ def build_card_claim_commands(
     config: FizzyConfig,
     *,
     in_flight_column_id: str = "In Flight",
-    comment_body: str | None = None,
-    assignee_id: str | None = None,
+    comment_body: Optional[str] = None,
+    assignee_id: Optional[str] = None,
     self_assign: bool = False,
 ) -> List[str]:
     """Build the composite dry-run claim commands for a single card number."""
