@@ -7,11 +7,14 @@ real Fizzy board and a real Codex CLI login.
 
 This repo includes a devcontainer using `ghcr.io/joshyorko/ror:latest`.
 
-Open the repo in the container, then verify the Python package installed:
+Open the repo in the container. The devcontainer installs RCC with Homebrew and
+prepares the robot environment by running `rcc ht vars`.
+
+You only need these checks when diagnosing setup:
 
 ```bash
-fizzy-symphony version
-python -m pytest -q
+rcc --version
+rcc ht vars -r robots/workitems/robot.yaml --json
 ```
 
 The devcontainer forwards `FIZZY_TOKEN`, `FIZZY_API_URL`, `FIZZY_PROFILE`, and
@@ -47,39 +50,64 @@ fizzy doctor
 fizzy board list
 ```
 
-## 3. Verify RCC Locally
+## 3. Optional Dev Checks
 
 ```bash
 brew tap joshyorko/tools
 brew install joshyorko/tools/rcc
 rcc --version
 rcc ht vars -r robots/workitems/robot.yaml --json
-rcc run -r robots/workitems/robot.yaml -t Doctor --silent
-rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow \
+rcc run -r robots/workitems/robot.yaml --dev -t Doctor --silent
+rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow \
   -e robots/workitems/devdata/env-sqlite.json --silent
 ```
 
 ## 4. Run One Live Card From Your Own Prompt
 
-Create or choose a Fizzy board and card. Get the board id, card number, and the
-real custom column id for your handoff column:
+Create a local env file from the template:
+
+```bash
+cp robots/workitems/devdata/env-prompt-card.example.json env.local.json
+```
+
+The template is set up for a fresh live smoke run. With
+`FIZZY_SYMPHONY_CREATE_BOARD=1` and `FIZZY_SYMPHONY_CREATE_CARD=1`, the robot
+creates a new Fizzy board, adds the default custom columns, creates the prompt
+card, runs Codex through SQLite workitems, comments back, moves the card to
+`Synthesize & Verify`, and prints a cleanup command for the disposable board.
+
+Edit at least:
+
+- `FIZZY_SYMPHONY_WORKSPACE`
+- `FIZZY_SYMPHONY_PROMPT_FILE` if you do not want the sample prompt
+
+Then run:
+
+```bash
+rcc run -r robots/workitems/robot.yaml -t FizzySymphony -e env.local.json --silent
+```
+
+To use an existing board instead, set both create flags to `0`, then provide the
+real board id, card number, and the real custom column id for your handoff
+column:
 
 ```bash
 fizzy column list --board <board id> --agent --quiet
 fizzy card show <card number> --agent --quiet
 ```
 
+Fill:
+
+- `FIZZY_SYMPHONY_BOARD_ID`
+- `FIZZY_SYMPHONY_CARD_NUMBER`
+- `FIZZY_SYMPHONY_WORKSPACE`
+- `FIZZY_SYMPHONY_PROMPT_FILE`
+- `FIZZY_SYMPHONY_HANDOFF_COLUMN_ID`
+
 Then run one card through SQLite workitems and Codex SDK:
 
 ```bash
-export FIZZY_SYMPHONY_BOARD_ID=<board id>
-export FIZZY_SYMPHONY_CARD_NUMBER=<card number>
-export FIZZY_SYMPHONY_WORKSPACE=/absolute/path/to/project
-export FIZZY_SYMPHONY_PROMPT="$(cat prompt.md)"
-export FIZZY_SYMPHONY_HANDOFF_COLUMN_ID=<Synthesize & Verify column id>
-export FIZZY_SYMPHONY_LIVE_FIZZY=1
-
-rcc run -r robots/workitems/robot.yaml -t PromptCardSmoke --silent
+rcc run -r robots/workitems/robot.yaml -t FizzySymphony -e env.local.json --silent
 ```
 
 The robot verifies the board/card, runs Codex with the official Python SDK,
@@ -94,16 +122,10 @@ For a bigger visual board test:
 python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 ```
 
-Copy the printed `smoke_env` values, then run:
+Copy the printed `smoke_env` values into an env JSON file, then run:
 
 ```bash
-export WORKAI_SMOKE_BOARD_ID=<printed board id>
-export WORKAI_SMOKE_CARD_NUMBERS=<printed fixture-to-live mapping>
-export WORKAI_SMOKE_GOLDEN_CARD_NUMBER=<printed golden card number>
-export WORKAI_SMOKE_HANDOFF_COLUMN_ID=<printed handoff column id>
-export WORKAI_SMOKE_LIVE_FIZZY=1
-
-rcc run -r robots/workitems/robot.yaml -t WorkAIProductionSmoke --silent
+rcc run -r robots/workitems/robot.yaml --dev -t WorkAIProductionSmoke -e workai-smoke.env.json --silent
 ```
 
 When finished, delete only the disposable board:
@@ -119,3 +141,19 @@ fizzy board delete <printed board id>
 - Codex sandbox: `workspace-write`
 - RCC adapter: SQLite via `robocorp-adapters-custom`
 - Fizzy system lanes are built in: `Maybe?`, `Not Now`, and `Done`
+
+## Execution Ownership
+
+RCC owns execution. The devcontainer is only the workbench. The Python files are
+robot code that RCC runs inside the holotree environment described by
+`robots/workitems/conda.yaml`.
+
+The user-facing `FizzySymphony` task is a one-command harness around the intended
+producer, worker, and reporter shape:
+
+```text
+env JSON -> producer builds a Fizzy workitem
+SQLite adapter -> worker reserves the item
+Codex SDK -> edits the workspace and returns proof
+reporter -> posts the Fizzy comment/move when live mode is enabled
+```

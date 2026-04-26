@@ -50,6 +50,14 @@ from fizzy_symphony.workitem_queue import FizzyWorkItemPayload, JSONDict, WorkIt
 WORKAI_SMOKE_ROOT = REPO_ROOT / "test-projects" / "workai-smoke"
 WORKAI_FIXTURE_PATH = WORKAI_SMOKE_ROOT / "board.fixture.json"
 WORKAI_SAMPLE_PROJECT = WORKAI_SMOKE_ROOT / "sample_project"
+PROMPT_CARD_DEFAULT_COLUMNS = [
+    "Shaping",
+    "Ready for Agents",
+    "In Flight",
+    "Needs Input",
+    "Synthesize & Verify",
+    "Ready to Ship",
+]
 
 
 class FullSmokeBlocked(RuntimeError):
@@ -376,27 +384,39 @@ def run_prompt_card_smoke(
     prefer_real_adapter: bool = True,
     live_fizzy: bool = False,
     handoff_column_id: Optional[str] = None,
+    create_board: bool = False,
+    create_card: bool = False,
+    board_name: Optional[str] = None,
+    card_title: Optional[str] = None,
     codex_model: Optional[str] = "gpt-5.4-mini",
     codex_approval_policy: Optional[str] = "never",
     codex_sandbox_mode: Optional[str] = "workspace-write",
 ) -> JSONDict:
     """Run one explicit prompt/card through SQLite workitems and Codex SDK."""
 
-    board_id = _require_board_id(
-        board_id,
-        "Prompt card smoke requires FIZZY_SYMPHONY_BOARD_ID.",
-    )
-    if not card_number:
-        raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_CARD_NUMBER.")
-    if not prompt:
-        raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_PROMPT.")
     if workspace is None:
         raise FullSmokeBlocked("Prompt card smoke requires FIZZY_SYMPHONY_WORKSPACE.")
+    prompt = _require_prompt(prompt)
 
     artifacts_dir = resolve_output_dir(output_dir)
     workspace = Path(workspace).resolve()
     if not workspace.is_dir():
         raise FullSmokeBlocked(f"Prompt card workspace does not exist: {workspace}")
+
+    bootstrap = _ensure_prompt_board_and_card(
+        board_id=board_id,
+        card_number=card_number,
+        prompt=prompt,
+        live=live_fizzy,
+        create_board=create_board,
+        create_card=create_card,
+        board_name=board_name,
+        card_title=card_title,
+        handoff_column_id=handoff_column_id,
+    )
+    board_id = str(bootstrap["board_id"])
+    card_number = int(bootstrap["card_number"])
+    handoff_column_id = handoff_column_id or bootstrap.get("handoff_column_id")
 
     sdk_runner, sdk_preflight = _require_sdk_runner(
         runner,
@@ -445,9 +465,11 @@ def run_prompt_card_smoke(
             "id": board_id,
             "url": _board_url(board_id),
             "mutated_fizzy": live_fizzy,
+            "cleanup_command": bootstrap.get("cleanup_command"),
         },
         "card_number": card_number,
         "workspace": str(workspace),
+        "bootstrap": bootstrap,
         "preflight": {
             "fizzy": fizzy_preflight,
             "sqlite_workitems": {"adapter": adapter_kind, "required": prefer_real_adapter},
@@ -481,6 +503,133 @@ def _require_board_id(board_id: Optional[str], message: str) -> str:
     if not board_id:
         raise FullSmokeBlocked(message)
     return board_id
+
+
+def _ensure_prompt_board_and_card(
+    *,
+    board_id: Optional[str],
+    card_number: Optional[int],
+    prompt: str,
+    live: bool,
+    create_board: bool,
+    create_card: bool,
+    board_name: Optional[str],
+    card_title: Optional[str],
+    handoff_column_id: Optional[str],
+) -> JSONDict:
+    if (create_board or create_card) and not live:
+        raise FullSmokeBlocked(
+            "FIZZY_SYMPHONY_CREATE_BOARD and FIZZY_SYMPHONY_CREATE_CARD require "
+            "FIZZY_SYMPHONY_LIVE_FIZZY=1 because they mutate Fizzy."
+        )
+
+    bootstrap: JSONDict = {
+        "created_board": False,
+        "created_card": False,
+        "columns": {},
+    }
+    resolved_board_id = board_id
+    resolved_card_number = card_number
+    column_ids: Dict[str, str] = {}
+
+    if not resolved_board_id:
+        if not create_board:
+            raise FullSmokeBlocked(
+                "Prompt card smoke requires FIZZY_SYMPHONY_BOARD_ID or "
+                "FIZZY_SYMPHONY_CREATE_BOARD=1."
+            )
+        created_board = _run_json(
+            [
+                "fizzy",
+                "board",
+                "create",
+                "--name",
+                board_name or "Fizzy Symphony Prompt Smoke",
+                "--agent",
+                "--quiet",
+            ]
+        )
+        resolved_board_id = _resource_id(created_board, "fizzy board create")
+        bootstrap["created_board"] = True
+        bootstrap["cleanup_command"] = f"fizzy board delete {shlex.quote(resolved_board_id)}"
+        column_ids = _create_prompt_card_columns(resolved_board_id)
+        bootstrap["columns"] = column_ids
+
+    if not resolved_card_number:
+        if not create_card:
+            raise FullSmokeBlocked(
+                "Prompt card smoke requires FIZZY_SYMPHONY_CARD_NUMBER or "
+                "FIZZY_SYMPHONY_CREATE_CARD=1."
+            )
+        created_card = _run_json(
+            [
+                "fizzy",
+                "card",
+                "create",
+                "--board",
+                resolved_board_id,
+                "--title",
+                card_title or "Fizzy Symphony prompt run",
+                "--description",
+                prompt,
+                "--agent",
+                "--quiet",
+            ]
+        )
+        resolved_card_number = _resource_number(created_card, "fizzy card create")
+        bootstrap["created_card"] = True
+        ready_column_id = column_ids.get("Ready for Agents")
+        if ready_column_id:
+            subprocess.run(
+                ["fizzy", "card", "column", str(resolved_card_number), "--column", ready_column_id],
+                check=True,
+            )
+
+    resolved_handoff_column_id = handoff_column_id or column_ids.get("Synthesize & Verify")
+    if live and not resolved_handoff_column_id:
+        raise FullSmokeBlocked(
+            "Live prompt card smoke requires FIZZY_SYMPHONY_HANDOFF_COLUMN_ID unless the "
+            "robot created a fresh board with the default Synthesize & Verify column."
+        )
+
+    bootstrap["board_id"] = resolved_board_id
+    bootstrap["card_number"] = int(resolved_card_number)
+    bootstrap["handoff_column_id"] = resolved_handoff_column_id
+    return bootstrap
+
+
+def _create_prompt_card_columns(board_id: str) -> Dict[str, str]:
+    column_ids: Dict[str, str] = {}
+    for column in PROMPT_CARD_DEFAULT_COLUMNS:
+        created = _run_json(
+            [
+                "fizzy",
+                "column",
+                "create",
+                "--board",
+                board_id,
+                "--name",
+                column,
+                "--agent",
+                "--quiet",
+            ]
+        )
+        column_ids[column] = _resource_id(created, f"fizzy column create {column}")
+    return column_ids
+
+
+def _resource_id(resource: Mapping[str, object], command_name: str) -> str:
+    value = resource.get("id")
+    if not value:
+        raise FullSmokeBlocked(f"{command_name} did not return an id.")
+    return str(value)
+
+
+def _resource_number(resource: Mapping[str, object], command_name: str) -> int:
+    value = resource.get("number")
+    if not value:
+        raise FullSmokeBlocked(f"{command_name} did not return a card number.")
+    return int(value)
 
 
 def _require_sdk_runner(
@@ -751,7 +900,7 @@ def _report_card_result(
     if live:
         if not handoff_column_id:
             raise FullSmokeBlocked(
-                "Live WorkAI smoke requires WORKAI_SMOKE_HANDOFF_COLUMN_ID for Synthesize & Verify."
+                "Live smoke reporting requires a handoff column id."
             )
         subprocess.run(
             ["fizzy", "comment", "create", "--card", str(card_number), "--body", comment],
@@ -948,6 +1097,41 @@ def _parse_optional_path(raw: Optional[str]) -> Optional[Path]:
     return Path(raw)
 
 
+def _env_bool(raw: Optional[str]) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_prompt(prompt: Optional[str]) -> str:
+    if prompt:
+        return prompt
+    prompt_file = os.getenv("FIZZY_SYMPHONY_PROMPT_FILE")
+    if prompt_file:
+        path = _resolve_robot_file(Path(prompt_file))
+        if not path.is_file():
+            raise FullSmokeBlocked(f"Prompt file does not exist: {path}")
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+        raise FullSmokeBlocked(f"Prompt file is empty: {path}")
+    raise FullSmokeBlocked(
+        "Prompt card smoke requires FIZZY_SYMPHONY_PROMPT or FIZZY_SYMPHONY_PROMPT_FILE."
+    )
+
+
+def _resolve_robot_file(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    candidates = [Path.cwd() / path]
+    robot_root = os.getenv("ROBOT_ROOT")
+    if robot_root:
+        candidates.append(Path(robot_root) / path)
+    candidates.append(Path(__file__).resolve().parent / path)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
 @task
 def Doctor() -> None:
     output_dir = resolve_output_dir()
@@ -972,10 +1156,22 @@ def SmokeSQLiteWorkitemFlow() -> None:
 
 
 @task
+def FizzySymphony() -> None:
+    proof = _run_prompt_card_from_environment()
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+@task
+def RunSymphony() -> None:
+    proof = _run_prompt_card_from_environment()
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+@task
 def WorkAIProductionSmoke() -> None:
     proof = run_workai_production_smoke(
         board_id=os.getenv("WORKAI_SMOKE_BOARD_ID"),
-        live_fizzy=os.getenv("WORKAI_SMOKE_LIVE_FIZZY") == "1",
+        live_fizzy=_env_bool(os.getenv("WORKAI_SMOKE_LIVE_FIZZY")),
         handoff_column_id=os.getenv("WORKAI_SMOKE_HANDOFF_COLUMN_ID"),
         live_card_numbers=_parse_card_number_mapping(os.getenv("WORKAI_SMOKE_CARD_NUMBERS")),
         golden_card_number=_parse_optional_int(os.getenv("WORKAI_SMOKE_GOLDEN_CARD_NUMBER")),
@@ -988,15 +1184,23 @@ def WorkAIProductionSmoke() -> None:
 
 @task
 def PromptCardSmoke() -> None:
-    proof = run_prompt_card_smoke(
+    proof = _run_prompt_card_from_environment()
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+def _run_prompt_card_from_environment() -> JSONDict:
+    return run_prompt_card_smoke(
         board_id=os.getenv("FIZZY_SYMPHONY_BOARD_ID"),
         card_number=_parse_optional_int(os.getenv("FIZZY_SYMPHONY_CARD_NUMBER")),
         prompt=os.getenv("FIZZY_SYMPHONY_PROMPT"),
         workspace=_parse_optional_path(os.getenv("FIZZY_SYMPHONY_WORKSPACE")),
-        live_fizzy=os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY") == "1",
+        live_fizzy=_env_bool(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY")),
         handoff_column_id=os.getenv("FIZZY_SYMPHONY_HANDOFF_COLUMN_ID"),
+        create_board=_env_bool(os.getenv("FIZZY_SYMPHONY_CREATE_BOARD")),
+        create_card=_env_bool(os.getenv("FIZZY_SYMPHONY_CREATE_CARD")),
+        board_name=os.getenv("FIZZY_SYMPHONY_BOARD_NAME"),
+        card_title=os.getenv("FIZZY_SYMPHONY_CARD_TITLE"),
         codex_model=os.getenv("FIZZY_SYMPHONY_CODEX_MODEL") or "gpt-5.4-mini",
         codex_approval_policy=os.getenv("FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY") or "never",
         codex_sandbox_mode=os.getenv("FIZZY_SYMPHONY_CODEX_SANDBOX") or "workspace-write",
     )
-    print(json.dumps(proof, indent=2, sort_keys=True))

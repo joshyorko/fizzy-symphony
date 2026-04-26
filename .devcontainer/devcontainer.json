@@ -11,7 +11,7 @@
   "mounts": [
     "source=${localEnv:HOME}/.config/fizzy,target=/home/vscode/.config/fizzy,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "brew tap joshyorko/tools && brew install joshyorko/tools/rcc && python -m pip install -e '.[dev,workitems,codex-sdk]' && rcc ht vars -r robots/workitems/robot.yaml --json",
+  "postCreateCommand": "brew tap joshyorko/tools && brew install joshyorko/tools/rcc && rcc ht vars -r robots/workitems/robot.yaml --json",
   "customizations": {
     "vscode": {
       "extensions": [
