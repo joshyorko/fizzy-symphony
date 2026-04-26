@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from fizzy_symphony.adapters.fizzy_cli import FizzyCLIAdapter
+from fizzy_symphony.adapters.fizzy_openapi import FizzyOpenAPIAdapter
 from fizzy_symphony.models import FizzyConfig
 
 
@@ -30,9 +31,43 @@ def test_build_column_commands_use_existing_board():
     )
 
 
-def test_build_claim_command_uses_card_number_and_board():
-    cmd = _make_adapter().build_claim_command(42, "work-ai-board")
-    assert cmd == "fizzy card claim 42 --board work-ai-board --agent --quiet"
+def test_build_claim_commands_returns_composite_sequence_without_assignment():
+    commands = _make_adapter().build_claim_commands(42, "in-flight", "Claimed by fizzy-symphony worker.")
+    assert commands == [
+        "fizzy card show 42 --agent --markdown",
+        "fizzy card column 42 --column in-flight --agent --quiet",
+        "fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet",
+    ]
+
+
+def test_build_claim_commands_can_include_self_assign():
+    commands = _make_adapter().build_claim_commands(42, "in-flight", "Claimed by worker.", self_assign=True)
+    assert commands == [
+        "fizzy card show 42 --agent --markdown",
+        "fizzy card self-assign 42 --agent --quiet",
+        "fizzy card column 42 --column in-flight --agent --quiet",
+        "fizzy comment create --card 42 --body 'Claimed by worker.' --agent --quiet",
+    ]
+
+
+def test_build_claim_commands_can_include_explicit_assignee():
+    commands = _make_adapter().build_claim_commands(
+        42,
+        "in-flight",
+        "Claimed by worker.",
+        assignee_id="user-123",
+    )
+    assert commands == [
+        "fizzy card show 42 --agent --markdown",
+        "fizzy card assign 42 --user user-123 --agent --quiet",
+        "fizzy card column 42 --column in-flight --agent --quiet",
+        "fizzy comment create --card 42 --body 'Claimed by worker.' --agent --quiet",
+    ]
+
+
+def test_claim_card_never_emits_fake_single_claim_command():
+    commands = _make_adapter().claim_card(42, "in-flight", "Claimed by worker.")
+    assert "fizzy card claim" not in "\n".join(commands)
 
 
 def test_build_comment_command_quotes_body():
@@ -55,3 +90,31 @@ def test_build_list_command_can_fall_back_to_fizzy_yaml(tmp_path, monkeypatch):
 def test_adapter_rejects_non_dry_run():
     with pytest.raises(ValueError, match="dry-run only"):
         _make_adapter(dry_run=False, board="work-ai-board").build_list_command()
+
+
+def test_build_claim_commands_reject_non_dry_run():
+    with pytest.raises(ValueError, match="dry-run only"):
+        _make_adapter(dry_run=False).build_claim_commands(42, "in-flight", "Claimed by worker.")
+
+
+def test_claim_card_does_not_execute_subprocesses(monkeypatch):
+    import subprocess
+
+    def _fail(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("subprocess execution is not allowed")
+
+    monkeypatch.setattr(subprocess, "run", _fail)
+    commands = _make_adapter().claim_card(42, "in-flight", "Claimed by worker.")
+    assert commands[0] == "fizzy card show 42 --agent --markdown"
+
+
+def test_openapi_adapter_is_explicit_future_stub_and_does_not_execute_http(monkeypatch):
+    import urllib.request
+
+    def _fail(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("HTTP execution is not allowed")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fail)
+    adapter = FizzyOpenAPIAdapter()
+    assert adapter.sdk_repository == "https://github.com/basecamp/fizzy-sdk"
+    assert "Future real API-backed tracker adapter" in adapter.__doc__
