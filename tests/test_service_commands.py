@@ -50,13 +50,58 @@ def test_setup_writes_local_config_and_env_file(tmp_path, capsys):
 
     assert config["robot_path"] == "robots/workitems/robot.yaml"
     assert config["rcc_bin"] == "rcc"
+    assert config["output_dir"] == str(config_dir / "output")
     assert env["FIZZY_SYMPHONY_WORKSPACE"] == str(workspace)
     assert env["FIZZY_SYMPHONY_PROMPT_FILE"] == "devdata/rails-todo.prompt.md"
     assert env["FIZZY_SYMPHONY_BOARD_ID"] == ""
     assert env["FIZZY_SYMPHONY_CARD_NUMBER"] == ""
 
 
-def test_start_detached_launches_rcc_and_writes_run_file(tmp_path, monkeypatch, capsys):
+def test_start_launches_detached_by_default_and_writes_run_file(tmp_path, monkeypatch, capsys):
+    config_dir = tmp_path / ".fizzy-symphony"
+    main(
+        [
+            "setup",
+            "--config-dir",
+            str(config_dir),
+            "--workspace",
+            str(tmp_path / "rails-todo"),
+            "--prompt-file",
+            "devdata/rails-todo.prompt.md",
+        ]
+    )
+    launched = {}
+
+    def fake_popen(command, **kwargs):
+        launched["command"] = command
+        launched["kwargs"] = kwargs
+        return _FakePopen(command, **kwargs)
+
+    monkeypatch.setattr("fizzy_symphony.service_commands.subprocess.Popen", fake_popen)
+
+    exit_code = main(["start", "--config-dir", str(config_dir)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Started Fizzy Symphony" in captured.out
+    assert launched["command"] == [
+        "rcc",
+        "run",
+        "-r",
+        "robots/workitems/robot.yaml",
+        "-t",
+        "FizzySymphony",
+        "-e",
+        str(config_dir / "env.json"),
+        "--silent",
+    ]
+    run_state = json.loads((config_dir / "run.json").read_text(encoding="utf-8"))
+    assert run_state["pid"] == 42424
+    assert run_state["command"] == launched["command"]
+    assert Path(run_state["log_path"]).name == "service.log"
+
+
+def test_start_detach_flag_remains_accepted(tmp_path, monkeypatch, capsys):
     config_dir = tmp_path / ".fizzy-symphony"
     main(
         [
@@ -83,7 +128,36 @@ def test_start_detached_launches_rcc_and_writes_run_file(tmp_path, monkeypatch, 
 
     assert exit_code == 0
     assert "Started Fizzy Symphony" in captured.out
-    assert launched["command"] == [
+    assert launched["command"][-1] == "--silent"
+
+
+def test_start_foreground_runs_rcc_without_detaching(tmp_path, monkeypatch, capsys):
+    config_dir = tmp_path / ".fizzy-symphony"
+    main(
+        [
+            "setup",
+            "--config-dir",
+            str(config_dir),
+            "--workspace",
+            str(tmp_path / "rails-todo"),
+            "--prompt-file",
+            "devdata/rails-todo.prompt.md",
+        ]
+    )
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr("fizzy_symphony.service_commands.subprocess.run", fake_run)
+
+    exit_code = main(["start", "--config-dir", str(config_dir), "--foreground"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "foreground" in captured.out
+    assert calls[0][0] == [
         "rcc",
         "run",
         "-r",
@@ -94,10 +168,6 @@ def test_start_detached_launches_rcc_and_writes_run_file(tmp_path, monkeypatch, 
         str(config_dir / "env.json"),
         "--silent",
     ]
-    run_state = json.loads((config_dir / "run.json").read_text(encoding="utf-8"))
-    assert run_state["pid"] == 42424
-    assert run_state["command"] == launched["command"]
-    assert Path(run_state["log_path"]).name == "service.log"
 
 
 def test_status_reports_configured_board_and_latest_artifact(tmp_path, capsys):

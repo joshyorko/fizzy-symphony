@@ -80,16 +80,16 @@ fizzy-symphony setup \
   --run-mode once
 ```
 
-Start the orchestration in the foreground:
+Start the orchestration in the background:
 
 ```bash
 fizzy-symphony start
 ```
 
-Or start it detached so your terminal returns immediately:
+For foreground debugging, use:
 
 ```bash
-fizzy-symphony start --detach
+fizzy-symphony start --foreground --verbose
 fizzy-symphony status
 tail -f .fizzy-symphony/service.log
 ```
