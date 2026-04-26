@@ -7,16 +7,38 @@ JSON output expected from agent-friendly commands.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import Any, List, Mapping, Optional, Union
 
 
 class FizzyLiveClientError(RuntimeError):
     """Raised when the live Fizzy CLI command fails or returns invalid output."""
 
 
+DEFAULT_FIZZY_TIMEOUT_SECONDS = 30.0
+FIZZY_TIMEOUT_ENV = "FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS"
 CardNumber = Union[int, str]
+
+
+def parse_fizzy_timeout_seconds(raw: Optional[str], *, default: float = DEFAULT_FIZZY_TIMEOUT_SECONDS) -> float:
+    """Return a positive Fizzy CLI timeout in seconds."""
+
+    if raw is None or raw == "":
+        return default
+    try:
+        timeout = float(raw)
+    except ValueError as error:
+        raise ValueError(f"{FIZZY_TIMEOUT_ENV} must be a positive number of seconds.") from error
+    if timeout <= 0:
+        raise ValueError(f"{FIZZY_TIMEOUT_ENV} must be a positive number of seconds.")
+    return timeout
+
+
+def fizzy_timeout_seconds_from_environment(env: Optional[Mapping[str, str]] = None) -> float:
+    values = os.environ if env is None else env
+    return parse_fizzy_timeout_seconds(values.get(FIZZY_TIMEOUT_ENV))
 
 
 @dataclass(frozen=True)
@@ -24,6 +46,7 @@ class FizzyLiveClient:
     """Execute live Fizzy CLI commands and parse JSON responses when expected."""
 
     fizzy_bin: str = "fizzy"
+    timeout_seconds: float = DEFAULT_FIZZY_TIMEOUT_SECONDS
 
     def doctor(self) -> Any:
         return self._run_json(["doctor"])
@@ -106,7 +129,18 @@ class FizzyLiveClient:
     def _run(self, args: List[str]) -> subprocess.CompletedProcess:
         command = [self.fizzy_bin] + args
         try:
-            completed = subprocess.run(command, text=True, capture_output=True, check=False)
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise FizzyLiveClientError(
+                f"{self._display_command(command)} timed out after "
+                f"{self._format_timeout(self.timeout_seconds)} seconds."
+            ) from error
         except OSError as error:
             raise FizzyLiveClientError(
                 f"Unable to run Fizzy CLI command {self._display_command(command)}. "
@@ -128,6 +162,10 @@ class FizzyLiveClient:
     @staticmethod
     def _display_command(command: List[str]) -> str:
         return " ".join(command)
+
+    @staticmethod
+    def _format_timeout(timeout_seconds: float) -> str:
+        return f"{timeout_seconds:g}"
 
     @staticmethod
     def _ensure_value(name: str, value: str) -> None:

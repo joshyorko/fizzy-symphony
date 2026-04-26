@@ -7,6 +7,7 @@ from fizzy_symphony.runners import (
     CodexRunRequest,
     CodexSdkRunner,
     CodexWorkItemRunner,
+    _CodexAppServerJsonRpcClient,
     _CodexPythonSdkClient,
     create_codex_runner,
 )
@@ -347,6 +348,54 @@ def test_sdk_runner_uses_agent_message_delta_when_final_item_missing(tmp_path):
 
     assert result.success is True
     assert result.final_response == "Hello there"
+
+
+def test_json_rpc_client_preserves_request_ids_and_notifications():
+    client = _CodexAppServerJsonRpcClient(
+        command=_python_snippet(
+            r"""
+import json
+import sys
+
+for raw in sys.stdin:
+    message = json.loads(raw)
+    request_id = message.get("id")
+    if request_id is None:
+        continue
+    method = message.get("method")
+    if method == "initialize":
+        print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": {"server": "ok"}}), flush=True)
+    elif method == "thread/start":
+        print(json.dumps({"jsonrpc": "2.0", "method": "agent/message/delta", "params": {"threadId": "thread-1", "turnId": "turn-1", "delta": "queued "}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": {"thread": {"id": "thread-1"}}}), flush=True)
+    elif method == "turn/start":
+        print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": {"turn": {"id": "turn-1"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1", "item": {"type": "agentMessage", "text": "final text"}}}), flush=True)
+        print(json.dumps({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "items": []}}}), flush=True)
+"""
+        ),
+        timeout_seconds=1,
+    )
+
+    with client:
+        assert client.initialize() == {"server": "ok"}
+        assert client.start_thread({"cwd": "/tmp"}) == {"thread": {"id": "thread-1"}}
+        assert client.start_turn({"threadId": "thread-1"}) == {"turn": {"id": "turn-1"}}
+        result = client.wait_for_turn("thread-1", "turn-1")
+
+    assert result["turn"]["items"] == [{"type": "agentMessage", "text": "final text"}]
+    assert result["notifications"][0]["method"] == "agent/message/delta"
+
+
+def test_json_rpc_client_timeout_message_is_stable():
+    client = _CodexAppServerJsonRpcClient(
+        command=_python_snippet("import time; time.sleep(1)"),
+        timeout_seconds=0.01,
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for Codex app-server response."):
+        with client:
+            client.initialize()
 
 
 def test_sdk_runner_returns_clean_unavailable_failure(tmp_path):

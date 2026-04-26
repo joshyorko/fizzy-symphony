@@ -34,6 +34,9 @@ SRC_ROOT = REPO_ROOT / "src"
 if SRC_ROOT.is_dir() and str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from fizzy_symphony.live_fizzy import (
+    fizzy_timeout_seconds_from_environment,
+)
 from fizzy_symphony.models import FizzyCard
 from fizzy_symphony.robocorp_adapter import (
     RobocorpWorkitemConfig,
@@ -633,7 +636,7 @@ def run_fizzy_symphony_from_environment(
     card_number = _parse_optional_int(os.getenv("FIZZY_SYMPHONY_CARD_NUMBER"))
     prompt = _prompt_from_environment()
     workspace = _workspace_from_environment(artifacts_dir)
-    live_fizzy = _env_bool_default(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY"), default=True)
+    live_fizzy = _env_bool_default(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY"), default=False)
 
     return run_board_native_fizzy_symphony(
         board_id=board_id,
@@ -1213,10 +1216,10 @@ def _ensure_symphony_board_and_seed_card(
         ]
     )
     golden_number = _resource_number(golden_card, "fizzy card create golden ticket")
-    subprocess.run(["fizzy", "card", "golden", str(golden_number)], check=True)
+    _run_live_fizzy(["fizzy", "card", "golden", str(golden_number)], check=True)
     for tag in SYMPHONY_GOLDEN_TAGS:
-        subprocess.run(["fizzy", "card", "tag", str(golden_number), "--tag", tag], check=True)
-    subprocess.run(
+        _run_live_fizzy(["fizzy", "card", "tag", str(golden_number), "--tag", tag], check=True)
+    _run_live_fizzy(
         ["fizzy", "card", "column", str(golden_number), "--column", ready_column_id],
         check=True,
     )
@@ -1239,7 +1242,7 @@ def _ensure_symphony_board_and_seed_card(
             ]
         )
         work_number = _resource_number(work_card, "fizzy card create work card")
-        subprocess.run(
+        _run_live_fizzy(
             ["fizzy", "card", "column", str(work_number), "--column", ready_column_id],
             check=True,
         )
@@ -1344,7 +1347,7 @@ def _discover_symphony_board(
     if not live:
         raise FullSmokeBlocked("FizzySymphony discovery requires live Fizzy CLI reads.")
 
-    completed = subprocess.run(["fizzy", "doctor"], text=True, capture_output=True, check=False)
+    completed = _run_live_fizzy(["fizzy", "doctor"], text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise FullSmokeBlocked(f"fizzy doctor failed: {completed.stderr or completed.stdout}")
 
@@ -1658,7 +1661,7 @@ def _ensure_prompt_board_and_card(
         bootstrap["created_card"] = True
         ready_column_id = column_ids.get("Ready for Agents")
         if ready_column_id:
-            subprocess.run(
+            _run_live_fizzy(
                 ["fizzy", "card", "column", str(resolved_card_number), "--column", ready_column_id],
                 check=True,
             )
@@ -1988,17 +1991,17 @@ def _report_card_result(
             raise FullSmokeBlocked(
                 "Live reporting requires a destination column id for move-on-complete."
             )
-        subprocess.run(
+        _run_live_fizzy(
             ["fizzy", "comment", "create", "--card", str(card_number), "--body", comment],
             check=True,
         )
         if action == "move":
-            subprocess.run(
+            _run_live_fizzy(
                 ["fizzy", "card", "column", str(card_number), "--column", handoff_column_id],
                 check=True,
             )
         elif action == "close":
-            subprocess.run(["fizzy", "card", "close", str(card_number)], check=True)
+            _run_live_fizzy(["fizzy", "card", "close", str(card_number)], check=True)
     return {
         "mode": "live" if live else "dry-run",
         "comment": comment,
@@ -2045,7 +2048,7 @@ def _run_fizzy_preflight(
         raise FullSmokeBlocked("Live WorkAI smoke requires WORKAI_SMOKE_GOLDEN_CARD_NUMBER.")
     if not live_card_numbers:
         raise FullSmokeBlocked("Live WorkAI smoke requires WORKAI_SMOKE_CARD_NUMBERS.")
-    completed = subprocess.run(["fizzy", "doctor"], text=True, capture_output=True, check=False)
+    completed = _run_live_fizzy(["fizzy", "doctor"], text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise FullSmokeBlocked(f"fizzy doctor failed: {completed.stderr or completed.stdout}")
 
@@ -2089,7 +2092,7 @@ def _run_prompt_card_fizzy_preflight(
             "board_check": f"fizzy board show {board_id} --agent --quiet",
             "card_check": f"fizzy card show {card_number} --agent --quiet",
         }
-    completed = subprocess.run(["fizzy", "doctor"], text=True, capture_output=True, check=False)
+    completed = _run_live_fizzy(["fizzy", "doctor"], text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise FullSmokeBlocked(f"fizzy doctor failed: {completed.stderr or completed.stdout}")
     board = _run_json(["fizzy", "board", "show", board_id, "--agent", "--quiet"])
@@ -2106,8 +2109,21 @@ def _run_prompt_card_fizzy_preflight(
     }
 
 
+def _run_live_fizzy(command: List[str], **kwargs) -> subprocess.CompletedProcess:
+    try:
+        timeout_seconds = fizzy_timeout_seconds_from_environment()
+    except ValueError as error:
+        raise FullSmokeBlocked(f"{error}") from error
+    try:
+        return subprocess.run(command, timeout=timeout_seconds, **kwargs)
+    except subprocess.TimeoutExpired as error:
+        raise FullSmokeBlocked(
+            f"{_join_command(command)} timed out after {timeout_seconds:g} seconds."
+        ) from error
+
+
 def _run_json(command: List[str]) -> JSONDict:
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    completed = _run_live_fizzy(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise FullSmokeBlocked(completed.stderr or completed.stdout or f"Command failed: {command}")
     try:
@@ -2122,7 +2138,7 @@ def _run_json(command: List[str]) -> JSONDict:
 
 
 def _run_json_list(command: List[str]) -> List[JSONDict]:
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    completed = _run_live_fizzy(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise FullSmokeBlocked(completed.stderr or completed.stdout or f"Command failed: {command}")
     try:

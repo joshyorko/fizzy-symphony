@@ -437,7 +437,7 @@ def test_prompt_card_smoke_can_create_missing_board_and_card(tmp_path, monkeypat
     assert any(call[:3] == ["fizzy", "comment", "create"] for call in calls)
 
 
-def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monkeypatch):
+def test_fizzy_symphony_defaults_to_no_live_bootstrap_from_small_env(tmp_path, monkeypatch):
     sample_project = tmp_path / "sample_project"
     shutil.copytree(WORKAI_SAMPLE, sample_project)
     calls = _patch_fake_fizzy(monkeypatch)
@@ -453,26 +453,14 @@ def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monk
     ):
         monkeypatch.delenv(key, raising=False)
 
-    summary = run_fizzy_symphony_from_environment(
-        output_dir=tmp_path / "output",
-        runner=_ScriptedPromptSdkRunner(),
-        prefer_real_adapter=False,
-    )
+    with pytest.raises(FullSmokeBlocked, match="requires FIZZY_SYMPHONY_LIVE_FIZZY=1"):
+        run_fizzy_symphony_from_environment(
+            output_dir=tmp_path / "output",
+            runner=_ScriptedPromptSdkRunner(),
+            prefer_real_adapter=False,
+        )
 
-    assert summary["status"] == "PASS"
-    assert summary["board"]["id"] == "board_auto"
-    assert summary["bootstrap"]["created_board"] is True
-    assert summary["bootstrap"]["created_card"] is True
-    assert summary["bootstrap"]["golden_ticket_created"] is True
-    assert summary["bootstrap"]["golden_ticket_number"] == 320
-    assert summary["bootstrap"]["work_card_number"] == 321
-    assert summary["discovery"]["golden_tickets"][0]["card_number"] == 320
-    assert summary["card_number"] == 321
-    assert summary["preflight"]["sqlite_workitems"]["adapter"] == "in-memory"
-    assert summary["report_back"]["mode"] == "live"
-    assert any(call[:3] == ["fizzy", "board", "create"] for call in calls)
-    assert any(call[:3] == ["fizzy", "card", "golden"] for call in calls)
-    assert any(call[:3] == ["fizzy", "card", "tag"] and "--tag" in call for call in calls)
+    assert calls == []
 
 
 def test_fizzy_symphony_prompt_sections_create_and_run_multiple_cards(
@@ -495,6 +483,7 @@ def test_fizzy_symphony_prompt_sections_create_and_run_multiple_cards(
             ]
         ),
     )
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
     monkeypatch.delenv("FIZZY_SYMPHONY_CARD_NUMBER", raising=False)
 
     summary = run_fizzy_symphony_from_environment(
@@ -525,6 +514,7 @@ def test_fizzy_symphony_creates_missing_local_workspace(tmp_path, monkeypatch):
     calls = _patch_fake_fizzy(monkeypatch)
     monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(workspace))
     monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
 
     summary = run_fizzy_symphony_from_environment(
         output_dir=tmp_path / "output",
@@ -547,6 +537,7 @@ def test_fizzy_symphony_writes_worker_running_status_before_codex_returns(
     monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
     monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
     monkeypatch.setenv("FIZZY_SYMPHONY_HEARTBEAT_SECONDS", "0")
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
     runner = _StatusInspectingPromptSdkRunner(tmp_path / "output")
 
     summary = run_fizzy_symphony_from_environment(
@@ -596,6 +587,7 @@ def test_fizzy_symphony_existing_board_requires_golden_ticket(tmp_path, monkeypa
     monkeypatch.setenv("FIZZY_SYMPHONY_BOARD_ID", "board_existing")
     monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
     monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
 
     with pytest.raises(FullSmokeBlocked, match="No golden ticket"):
         run_fizzy_symphony_from_environment(
@@ -629,6 +621,7 @@ def test_fizzy_symphony_interactive_prompt_can_fill_missing_inputs(tmp_path, mon
         return default or ""
 
     monkeypatch.setattr(task_module, "_read_interactive_value", fake_read)
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
 
     summary = run_fizzy_symphony_from_environment(
         output_dir=tmp_path / "output",
@@ -659,6 +652,7 @@ def test_fizzy_symphony_can_clone_git_workspace_ref(tmp_path, monkeypatch):
     monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", source_repo.as_uri())
     monkeypatch.setenv("FIZZY_SYMPHONY_GIT_REF", "feature")
     monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+    monkeypatch.setenv("FIZZY_SYMPHONY_LIVE_FIZZY", "1")
 
     summary = run_fizzy_symphony_from_environment(
         output_dir=tmp_path / "output",
