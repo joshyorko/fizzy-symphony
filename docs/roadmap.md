@@ -9,6 +9,7 @@
 - [ ] Phase 2: Golden-ticket discovery from Fizzy cards
 - [ ] Phase 3: Fizzy producer -> workitems queue CLI command
 - [ ] Phase 4: Codex SDK/app-server workitem runner and RCC task wrappers
-- [ ] Phase 5: reporter/observability back to Fizzy
-- [ ] Phase 6: polling reconciler and orphan recovery
-- [ ] Phase 7: hardened safety model
+- [ ] Phase 5: SDK-backed production smoke agent over the WorkAI fixture
+- [ ] Phase 6: reporter/observability back to Fizzy
+- [ ] Phase 7: polling reconciler and orphan recovery
+- [ ] Phase 8: hardened safety model
