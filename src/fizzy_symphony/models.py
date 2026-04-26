@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional, Sequence
 
 
 class CardStatus(str, Enum):
@@ -38,6 +38,117 @@ class AgentCapability(str, Enum):
     TESTING = "testing"
     DOCUMENTATION = "documentation"
     REFACTORING = "refactoring"
+
+
+BACKEND_TAGS = ("codex", "claude", "opencode", "anthropic", "openai")
+AGENT_INSTRUCTIONS_TAG = "agent-instructions"
+DEFAULT_AGENT_BACKEND = "codex"
+DEFAULT_COMPLETION_POLICY = "comment"
+
+
+@dataclass(frozen=True)
+class GoldenTicket:
+    """Board-native routing contract parsed from a Fizzy instruction card.
+
+    A golden ticket is a Fizzy card tagged ``#agent-instructions`` that lives in
+    the column it configures. Fizzy remains the source of truth for the card;
+    this model only captures the routing policy the orchestrator needs.
+    """
+
+    card_id: str
+    card_number: int
+    column_id: str
+    column_name: str
+    prompt: str = ""
+    steps: List[str] = field(default_factory=list)
+    backend: str = DEFAULT_AGENT_BACKEND
+    completion_policy: str = DEFAULT_COMPLETION_POLICY
+
+    def __post_init__(self) -> None:
+        if not self.card_id:
+            raise ValueError("GoldenTicket.card_id must not be empty.")
+        if self.card_number < 1:
+            raise ValueError("GoldenTicket.card_number must be >= 1.")
+        if not self.column_id:
+            raise ValueError("GoldenTicket.column_id must not be empty.")
+        if not self.column_name:
+            raise ValueError("GoldenTicket.column_name must not be empty.")
+        if not self.backend:
+            raise ValueError("GoldenTicket.backend must not be empty.")
+        if not self.completion_policy:
+            raise ValueError("GoldenTicket.completion_policy must not be empty.")
+
+
+def parse_golden_ticket_card(
+    card: Mapping[str, Any],
+    *,
+    default_backend: str = DEFAULT_AGENT_BACKEND,
+) -> Optional[GoldenTicket]:
+    """Parse a Fizzy card-shaped mapping into a :class:`GoldenTicket`.
+
+    This is a deliberately small spec stub. It accepts the card shape returned
+    by the CLI/API enough to define semantics, but it does not perform network
+    calls or mutate Fizzy.
+    """
+    tags = [_normalize_tag(tag) for tag in card.get("tags", [])]
+    if AGENT_INSTRUCTIONS_TAG not in tags:
+        return None
+
+    column = card.get("column")
+    if not isinstance(column, Mapping):
+        return None
+
+    column_id = str(column.get("id") or "")
+    column_name = str(column.get("name") or "")
+    if not column_id or not column_name:
+        return None
+
+    return GoldenTicket(
+        card_id=str(card.get("id") or ""),
+        card_number=int(card.get("number") or 0),
+        column_id=column_id,
+        column_name=column_name,
+        prompt=str(card.get("description") or ""),
+        steps=_parse_step_contents(card.get("steps", [])),
+        backend=_resolve_backend(tags, default_backend=default_backend),
+        completion_policy=_resolve_completion_policy(tags),
+    )
+
+
+def _normalize_tag(tag: object) -> str:
+    return str(tag).strip().lower().lstrip("#")
+
+
+def _resolve_backend(tags: Sequence[str], *, default_backend: str) -> str:
+    for tag in tags:
+        if tag in BACKEND_TAGS:
+            return tag
+    return default_backend
+
+
+def _resolve_completion_policy(tags: Sequence[str]) -> str:
+    for tag in tags:
+        if tag == "close-on-complete":
+            return "close"
+        if tag.startswith("move-to-"):
+            column_name = tag.removeprefix("move-to-").replace("-", " ")
+            return f"move:{column_name}"
+    return DEFAULT_COMPLETION_POLICY
+
+
+def _parse_step_contents(raw_steps: object) -> List[str]:
+    if not isinstance(raw_steps, list):
+        return []
+
+    steps: List[str] = []
+    for step in raw_steps:
+        if isinstance(step, Mapping):
+            content = str(step.get("content") or "").strip()
+        else:
+            content = str(step).strip()
+        if content:
+            steps.append(content)
+    return steps
 
 
 @dataclass

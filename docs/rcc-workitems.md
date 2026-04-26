@@ -5,9 +5,9 @@ Josh's `robocorp_adapters_custom` already provide the right execution substrate:
 reserve, release, output chaining, backend switching, and orphan recovery.
 
 This keeps the project aligned with OpenAI Symphony without copying its daemon
-implementation directly. Upstream Symphony keeps claimed/running/retry state in
-the orchestrator process; this project can persist that same state in Robocorp
-workitems so RCC tasks, local workers, and future services can share it safely.
+implementation directly. Fizzy still stores the work truth. Robocorp workitems
+store execution custody: leases, retries, outputs, artifacts, and report-back
+handoffs that should survive process death.
 
 ## Target Shape
 
@@ -16,6 +16,8 @@ workitems so RCC tasks, local workers, and future services can share it safely.
 - `robocorp_adapters_custom` supplies SQLite, Redis, DocumentDB, or Yorko Control
   Room storage.
 - Codex runs inside a worker task and reports proof through work item outputs.
+- The worker should eventually prefer the Codex SDK/app-server over raw shelling
+  out, with CLI execution kept as a fallback.
 - A reporter task consumes worker outputs and updates Fizzy comments/states.
 - `fizzy-symphony` owns all Symphony-specific semantics: board columns,
   `WORKFLOW.md`, per-card workspaces, runner policy, and report formatting.

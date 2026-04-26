@@ -13,6 +13,11 @@ project diverges by using Robocorp workitems as durable queue plumbing for
 claimed/running/result state instead of treating one daemon process as the only
 owner of orchestration state.
 
+This repository uses `basecamp/fizzy-popper` as prior art for the simple
+board-native loop, but it is only worth keeping if it also supports a durable
+distributed mode for many workers, many Codex accounts/runtimes, and
+crash-safe handoffs.
+
 Boundary:
 
 - `fizzy-symphony` owns board semantics, workflow state, Codex runner policy,
@@ -23,6 +28,8 @@ Boundary:
 ## Core Domain Model
 
 - `FizzyCard`: canonical normalized tracker card.
+- `GoldenTicket`: board-native routing contract parsed from a Fizzy card tagged
+  `#agent-instructions`.
 - `Agent`: worker execution persona and limits.
 - `CardAdapter`: compatibility wrapper used by the demo planning scaffold.
 - `Board`: ordered collection of cards for a Fizzy board.
@@ -55,6 +62,32 @@ The canonical `FizzyCard` fields are:
 `number` is the visible card number and is the identifier used by Fizzy CLI card
 commands. `id` remains the internal stable tracker identifier.
 
+## Golden Ticket Shape
+
+A golden ticket is a Fizzy card tagged `#agent-instructions` that lives in the
+column it configures. It is inspired by `fizzy-popper`, but this scaffold treats
+it as routing policy only; it does not execute the card by itself.
+
+The `GoldenTicket` fields are:
+
+- `card_id`
+- `card_number`
+- `column_id`
+- `column_name`
+- `prompt`
+- `steps`
+- `backend`
+- `completion_policy`
+
+Supported backend tags start with `#codex`. Future tags may include `#claude`,
+`#opencode`, `#anthropic`, and `#openai`.
+
+Supported completion policies:
+
+- no completion tag: post a comment only
+- `#close-on-complete`: post a comment, then close the card
+- `#move-to-<column-name>`: post a comment, then move to the named custom column
+
 ## Tracker Adapter Contract
 
 A tracker adapter must provide these operations:
@@ -84,7 +117,8 @@ using the card branch name when present and a deterministic fallback when not.
 ## Active States
 
 Active states are the states in which a card is eligible for worker activity or
-already under active execution:
+already under active execution. These are custom workflow columns, not Fizzy's
+immutable system lanes:
 
 - `Ready for Agents`
 - `In Flight`
@@ -95,7 +129,7 @@ already under active execution:
 ## Recommended Board Columns
 
 Fizzy Symphony expects an existing board by default. `fizzy-symphony init-board`
-prints dry-run commands to add any missing recommended columns:
+prints dry-run commands to add any missing recommended custom columns:
 
 - `Shaping`
 - `Ready for Agents`
@@ -103,7 +137,14 @@ prints dry-run commands to add any missing recommended columns:
 - `Needs Input`
 - `Synthesize & Verify`
 - `Ready to Ship`
-- `Done`
+
+Fizzy's built-in system lanes are always represented separately:
+
+- `Maybe?` / pseudo column `maybe` / API stream or triage view
+- `Not Now` / pseudo column `not-now` / API `not_now`
+- `Done` / pseudo column `done` / API `closed`
+
+Do not create, delete, or treat those system lanes as custom columns.
 
 ## Terminal States
 
@@ -111,6 +152,29 @@ Terminal states indicate no more automated work should occur:
 
 - `Done`
 - `Not Now`
+
+## Codex Runner Strategy
+
+The early scaffold previews Codex work with dry-run command strings only. Future
+runtime work should use OpenAI's Codex harness rather than building a custom
+coding-agent harness here.
+
+Preferred runner:
+
+- `CodexSdkRunner`: controls local Codex agents through the official Codex
+  SDK/app-server.
+
+Fallback runner:
+
+- `CodexCliRunner`: uses non-interactive `codex` CLI execution when the SDK path
+  is unavailable or too immature for the current environment.
+
+Non-goal:
+
+- Do not build a custom shell/apply-patch/tool harness with the OpenAI Agents
+  SDK. The intended worker is Codex itself acting as a coding agent over a
+  repository. Direct OpenAI model calls may still be useful for narrow helper
+  tasks, but they are not the main card-execution runtime.
 
 ## Handoff States
 
@@ -149,5 +213,7 @@ passes, and preserve the card as the source of truth for scope and status.
 - Workers claim exactly one card at a time.
 - Claim is modeled as a composite orchestration operation, not a required native
   Fizzy `card claim` command.
+- Workitems may hold execution custody, but Fizzy remains the source of truth
+  for human workflow state.
 - Workers may edit only approved paths for the claimed card.
 - Card comments and state updates must reflect actual proof of work.
