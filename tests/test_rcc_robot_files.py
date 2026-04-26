@@ -326,6 +326,24 @@ def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monk
     assert any(call[:3] == ["fizzy", "card", "tag"] and "--tag" in call for call in calls)
 
 
+def test_fizzy_symphony_creates_missing_local_workspace(tmp_path, monkeypatch):
+    workspace = tmp_path / "fresh_workspace"
+    calls = _patch_fake_fizzy(monkeypatch)
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(workspace))
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+    )
+
+    assert summary["status"] == "PASS"
+    assert workspace.is_dir()
+    assert (workspace / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+    assert any(call[:3] == ["fizzy", "board", "create"] for call in calls)
+
+
 def test_fizzy_symphony_writes_worker_running_status_before_codex_returns(
     tmp_path, monkeypatch, capsys
 ):
