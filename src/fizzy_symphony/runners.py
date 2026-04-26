@@ -485,7 +485,7 @@ class _CodexPythonSdkClient:
             "cwd": params.get("cwd"),
             "model": params.get("model"),
             "approval_policy": params.get("approvalPolicy"),
-            "sandbox_policy": params.get("sandboxPolicy"),
+            "sandbox_policy": self._coerce_sdk_sandbox_policy(params.get("sandboxPolicy")),
         }
         clean_kwargs = {key: value for key, value in kwargs.items() if value is not None}
         self._turn_kwargs = dict(clean_kwargs)
@@ -551,6 +551,32 @@ class _CodexPythonSdkClient:
         if self._thread is None:
             raise RuntimeError("Codex Python SDK thread has not started.")
         return self._thread
+
+    @staticmethod
+    def _coerce_sdk_sandbox_policy(value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        try:
+            from codex_app_server.generated.v2_all import (
+                FullAccessReadOnlyAccess,
+                ReadOnlyAccess,
+                SandboxPolicy,
+                WorkspaceWriteSandboxPolicy,
+            )
+        except ImportError:
+            return value
+        if value.get("type") == "workspaceWrite":
+            return SandboxPolicy(
+                root=WorkspaceWriteSandboxPolicy(
+                    type="workspaceWrite",
+                    writableRoots=list(value.get("writableRoots") or []),
+                    networkAccess=bool(value.get("networkAccess")),
+                    readOnlyAccess=ReadOnlyAccess(
+                        root=FullAccessReadOnlyAccess(type="fullAccess")
+                    ),
+                )
+            )
+        return SandboxPolicy.model_validate(value)
 
 
 class _CodexAppServerJsonRpcClient:

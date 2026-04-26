@@ -8,6 +8,7 @@ from fizzy_symphony.runners import CodexCliRunner, CodexRunResult
 from robots.workitems.tasks import (
     FullSmokeBlocked,
     InMemoryWorkItemAdapter,
+    run_prompt_card_smoke,
     run_smoke_sqlite_workitem_flow,
     run_workai_production_smoke,
 )
@@ -32,6 +33,7 @@ def test_robot_yaml_exposes_expected_tasks():
     assert "WorkitemsEnv:" in robot_yaml
     assert "SmokeSQLiteWorkitemFlow:" in robot_yaml
     assert "WorkAIProductionSmoke:" in robot_yaml
+    assert "PromptCardSmoke:" in robot_yaml
     assert "robocorp.tasks" in robot_yaml
 
 
@@ -132,6 +134,32 @@ def test_workai_production_smoke_live_mode_requires_real_card_mapping(tmp_path):
         )
 
 
+def test_prompt_card_smoke_runs_one_prompt_with_sdk_runner(tmp_path):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    runner = _ScriptedPromptSdkRunner()
+
+    summary = run_prompt_card_smoke(
+        board_id="board_prompt",
+        card_number=42,
+        prompt="Create prompt-proof.txt",
+        workspace=sample_project,
+        output_dir=tmp_path / "output",
+        runner=runner,
+        prefer_real_adapter=False,
+        live_fizzy=False,
+    )
+
+    assert summary["status"] == "PASS"
+    assert summary["board"]["mutated_fizzy"] is False
+    assert summary["card_number"] == 42
+    assert summary["preflight"]["sqlite_workitems"]["adapter"] == "in-memory"
+    assert summary["sdk"]["thread_id"] == "thread-card-42"
+    assert summary["report_back"]["mode"] == "dry-run"
+    assert (sample_project / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+    assert Path(summary["artifacts"]["summary_path"]).is_file()
+
+
 class _ScriptedSdkRunner:
     runner_kind = "codex_sdk"
 
@@ -178,6 +206,29 @@ class _UnavailableSdkRunner:
 
     def __call__(self, request):  # noqa: ARG002
         raise RuntimeError("Codex SDK runner is not implemented yet")
+
+
+class _ScriptedPromptSdkRunner(_ScriptedSdkRunner):
+    def __call__(self, request):
+        if request.metadata.get("preflight"):
+            return super().__call__(request)
+
+        card_number = int(request.card_number)
+        self.card_numbers.append(card_number)
+        workspace = Path(str(request.workspace))
+        (workspace / "prompt-proof.txt").write_text("ok", encoding="utf-8")
+        return CodexRunResult(
+            success=True,
+            final_response="Prompt card completed with SDK runner.",
+            thread_id=f"thread-card-{card_number}",
+            artifacts={"changed_files": ["prompt-proof.txt"]},
+            raw_metadata={
+                "runner": "codex_sdk",
+                "thread_id": f"thread-card-{card_number}",
+                "run_id": f"run-card-{card_number}",
+                "card_number": card_number,
+            },
+        )
 
 
 def _apply_scripted_card_change(workspace: Path, card_number: int):

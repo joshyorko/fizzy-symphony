@@ -144,6 +144,9 @@ def test_live_with_board_id_executes_configure_commands(monkeypatch, capsys):
     assert '"board_id": "board_123"' in captured.out
     assert '"cleanup_command": "fizzy board delete board_123"' in captured.out
     assert '"marked_golden": true' in captured.out
+    assert '"WORKAI_SMOKE_CARD_NUMBERS": "1=987,2=987,3=987,4=987,5=987,6=987,7=987,8=987"' in captured.out
+    assert '"WORKAI_SMOKE_GOLDEN_CARD_NUMBER": "987"' in captured.out
+    assert '"WORKAI_SMOKE_HANDOFF_COLUMN_ID": "col-Synthesize & Verify"' in captured.out
     assert all(call[1] is True for call in calls)
     assert ["fizzy", "column", "list", "--board", "board_123", "--agent", "--quiet"] in [
         call[0] for call in calls
