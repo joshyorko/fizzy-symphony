@@ -78,6 +78,32 @@ contract checks runnable independently in CI or from a devcontainer. The older
 `robots/workitems/` robot remains as the shared Python task implementation and
 compatibility path.
 
+## Per-Suite RCC Proof Commands
+
+Use the suite-local `robot.yaml` files for benchmark proof and troubleshooting:
+
+```bash
+rcc ht vars -r robot_tests/env_resolve/robot.yaml --json
+rcc run -r robot_tests/env_resolve/robot.yaml --dev -t EnvResolve --silent
+rcc run -r robot_tests/sqlite_workitem_flow/robot.yaml --dev -t SmokeSQLiteWorkitemFlow --silent
+rcc run -r robot_tests/fizzy_contract/robot.yaml --dev -t FizzySymphonyContractTest --silent
+rcc run -r robot_tests/fizzy_parity/robot.yaml --dev -t FizzySymphonyParityContract --silent
+```
+
+The live-adjacent smokes are intentionally manual/gated and their GitHub
+Actions callers are `workflow_dispatch` only:
+
+```bash
+FIZZY_SYMPHONY_WORKSPACE="$PWD/tmp/prompt-card-workspace" \
+FIZZY_SYMPHONY_PROMPT="Make a tiny safe change and report proof." \
+FIZZY_SYMPHONY_BOARD_ID="board_disposable" \
+FIZZY_SYMPHONY_CARD_NUMBER="42" \
+rcc run -r robot_tests/prompt_card_smoke/robot.yaml --dev -t PromptCardSmoke --silent
+
+WORKAI_SMOKE_BOARD_ID="board_disposable" \
+rcc run -r robot_tests/workai_production_smoke/robot.yaml --dev -t WorkAIProductionSmoke --silent
+```
+
 ## Current Code
 
 - `fizzy_symphony.workitem_queue.WorkItemQueue` wraps Robocorp-compatible
@@ -89,19 +115,22 @@ compatibility path.
 - `FizzyWorkItemReporter` consumes one result and calls the tracker comment/state
   contract.
 
-## Current Gaps
+## Current Status and Gaps
 
-- CI proof pending: Python, uv, and RCC workflow files exist, and the automatic
-  RCC suites pass locally, but hosted Actions still need to prove the matrix on
-  GitHub.
-- RCC expansion pending: the current suite roots cover environment resolution,
-  SQLite workitems, Fizzy contract, Fizzy parity, prompt-card smoke, and WorkAI
-  production smoke. Prompt-card and WorkAI remain manual/gated until real
-  Codex/Fizzy credentials are available.
+- Hosted proof current: uv and the automatic RCC suites have passing GitHub
+  Actions proof.
+- Python matrix red: the Python OS/version matrix remains red until its
+  portability failure is fixed.
+- RCC expansion current: the suite roots cover environment resolution, SQLite
+  workitems, Fizzy contract, Fizzy parity, prompt-card smoke, and WorkAI
+  production smoke. Prompt-card and WorkAI remain manual/gated
+  `workflow_dispatch` runs until real Codex/Fizzy credentials are available.
 - Live smoke gated: live Fizzy mutation must stay opt-in and require explicit
   board/card configuration plus cleanup proof.
-- Production daemon not implemented: there is no always-on scheduler,
-  reconciler, or orphan-recovery service.
+- Prototype reconciler/status helpers exist: one-shot/watch reconciliation and
+  JSON status snapshots are implemented for local proof.
+- Production daemon not implemented: there is no hardened always-on scheduler,
+  daemon supervision, or orphan-recovery service.
 - Webhook receiver not implemented: polling/reconciliation must become reliable
   before webhook ingestion is added.
 

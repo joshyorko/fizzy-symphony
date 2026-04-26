@@ -69,29 +69,34 @@ Basecamp reference implementation.
 > **Status:** Pre-alpha, but the runner and RCC smoke paths now execute.
 > Tracker-facing CLI flows remain dry-run-first unless explicitly guarded as
 > live smoke commands.
+> The current hosted proof is mixed: `uv` and the automatic RCC suites have
+> passed in GitHub Actions, while the Python OS/version matrix is red until its
+> portability failure is fixed. Prompt-card and WorkAI smokes remain
+> manual/gated `workflow_dispatch` runs.
 
 ## Proof Status
 
 | Capability | Status |
 | --- | --- |
 | pip editable install | Locally passing |
-| uv editable install | Workflow file present; hosted proof pending |
-| pytest | Locally passing; GitHub matrix workflow present |
-| compileall | Covered by Python workflow |
+| uv editable install | Hosted GitHub Actions proof passing |
+| pytest | Locally passing; Python matrix workflow red until fixed |
+| compileall | Covered by Python matrix workflow; red until fixed |
 | CLI dry-run | Locally passing |
 | Golden-ticket routing | Unit-tested |
 | Fake Fizzy/Codex contract | Unit-tested and RCC suite present |
-| RCC environment resolution | Local RCC run passing; workflow caller present |
-| SQLite workitem Robot smoke | Local RCC run passing; workflow caller present |
-| Fizzy contract Robot smoke | Local RCC run passing; workflow caller present |
-| Fizzy parity Robot smoke | Local RCC run passing; workflow caller present |
-| Prompt-card smoke | Manual/gated RCC suite only |
-| WorkAI production smoke | Manual/gated RCC suite only |
+| RCC environment resolution | Hosted automatic RCC proof passing |
+| SQLite workitem Robot smoke | Hosted automatic RCC proof passing |
+| Fizzy contract Robot smoke | Hosted automatic RCC proof passing |
+| Fizzy parity Robot smoke | Hosted automatic RCC proof passing |
+| Prompt-card smoke | Manual/gated RCC suite; `workflow_dispatch` only |
+| WorkAI production smoke | Manual/gated RCC suite; `workflow_dispatch` only |
 | Live Fizzy disposable smoke | Manual/gated, no public CI proof yet |
 | Live Codex SDK/app-server smoke | Manual/gated, no public CI proof yet |
+| Prototype reconciler/status helpers | Implemented and unit-tested |
 | Webhook endpoint | Not implemented |
 | HTTP status/health endpoint | Not implemented |
-| Full Symphony daemon parity | Not implemented |
+| Hardened daemon scheduling/orphan recovery | Pending |
 
 ---
 
@@ -347,9 +352,27 @@ python -m pip install -e ".[dev]"
 python -m compileall src
 python -m pytest
 
-# Optional RCC smoke with SQLite workitems
-rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow \
-  -e robots/workitems/devdata/env-sqlite.json --silent
+# Automatic RCC suites, each runnable on its own
+rcc ht vars -r robot_tests/env_resolve/robot.yaml --json
+rcc run -r robot_tests/env_resolve/robot.yaml --dev -t EnvResolve --silent
+rcc run -r robot_tests/sqlite_workitem_flow/robot.yaml --dev -t SmokeSQLiteWorkitemFlow --silent
+rcc run -r robot_tests/fizzy_contract/robot.yaml --dev -t FizzySymphonyContractTest --silent
+rcc run -r robot_tests/fizzy_parity/robot.yaml --dev -t FizzySymphonyParityContract --silent
+```
+
+Prompt-card and WorkAI production smokes are intentionally excluded from
+automatic PR CI. Run them manually through their `workflow_dispatch` callers or
+from a configured operator environment:
+
+```bash
+FIZZY_SYMPHONY_WORKSPACE="$PWD/tmp/prompt-card-workspace" \
+FIZZY_SYMPHONY_PROMPT="Make a tiny safe change and report proof." \
+FIZZY_SYMPHONY_BOARD_ID="board_disposable" \
+FIZZY_SYMPHONY_CARD_NUMBER="42" \
+rcc run -r robot_tests/prompt_card_smoke/robot.yaml --dev -t PromptCardSmoke --silent
+
+WORKAI_SMOKE_BOARD_ID="board_disposable" \
+rcc run -r robot_tests/workai_production_smoke/robot.yaml --dev -t WorkAIProductionSmoke --silent
 ```
 
 For a live visual Fizzy smoke board, create a disposable board and cards:

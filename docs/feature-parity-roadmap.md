@@ -16,15 +16,16 @@ Implemented and locally tested:
 - Independent RCC suite projects for environment resolution, SQLite workitems,
   Fizzy contract, Fizzy parity, manual prompt-card smoke, and manual WorkAI
   production smoke under `robot_tests/<suite>/`.
-- GitHub Actions workflow files for Python, uv, and RCC suite execution.
+- Hosted GitHub Actions proof for uv and the automatic RCC suites.
+- Prototype reconciler and status snapshot helpers.
 
 Still pending:
 
-- Hosted CI proof for the newly added GitHub Actions workflows.
+- Python OS/version matrix is red until its portability failure is fixed.
 - Live Fizzy smoke runs, which remain gated behind explicit env and operator
   cleanup.
-- Production daemon behavior: no hardened scheduler, polling loop, lease
-  reconciler, or background service is implemented yet.
+- Production daemon behavior: no hardened scheduler, daemon loop, orphan
+  recovery, or background service is implemented yet.
 - Webhook receiver behavior: webhooks are future acceleration only, not current
   correctness machinery.
 
@@ -32,20 +33,48 @@ Still pending:
 
 | Capability | Status |
 | --- | --- |
-| Python editable install | Locally passing; matrix workflow present |
-| uv editable install | Workflow file present; hosted proof pending |
-| pytest and compileall | Workflow file present |
+| Python editable install | Matrix workflow red until fixed |
+| uv editable install | Hosted GitHub Actions proof passing |
+| pytest and compileall | Locally passing; Python matrix red until fixed |
 | CLI dry-run claim/list/comment/move | Locally passing |
 | Board contract and routing | Unit-tested |
 | Fake Fizzy/Codex contract | Unit-tested and RCC suite present |
-| RCC env resolve | Local RCC run passing; workflow caller present |
-| RCC SQLite workitem flow | Local RCC run passing; workflow caller present |
-| RCC Fizzy contract | Local RCC run passing; workflow caller present |
-| RCC Fizzy parity | Local RCC run passing; workflow caller present |
-| Prompt-card smoke | Manual/gated suite and workflow_dispatch caller |
-| WorkAI production smoke | Manual/gated suite and workflow_dispatch caller |
+| RCC env resolve | Hosted automatic RCC proof passing |
+| RCC SQLite workitem flow | Hosted automatic RCC proof passing |
+| RCC Fizzy contract | Hosted automatic RCC proof passing |
+| RCC Fizzy parity | Hosted automatic RCC proof passing |
+| Prompt-card smoke | Manual/gated suite; `workflow_dispatch` only |
+| WorkAI production smoke | Manual/gated suite; `workflow_dispatch` only |
 | Live Fizzy/Codex proof | Manual suites fail closed without explicit inputs; not public CI-proven |
+| Prototype reconciler/status helpers | Implemented and unit-tested |
+| Hardened daemon scheduling/orphan recovery | Pending |
 | Webhook/server/dashboard breadth | Deferred |
+
+## RCC Proof Commands
+
+Prefer per-suite RCC commands when proving or debugging benchmark behavior:
+
+```bash
+rcc ht vars -r robot_tests/env_resolve/robot.yaml --json
+rcc run -r robot_tests/env_resolve/robot.yaml --dev -t EnvResolve --silent
+rcc run -r robot_tests/sqlite_workitem_flow/robot.yaml --dev -t SmokeSQLiteWorkitemFlow --silent
+rcc run -r robot_tests/fizzy_contract/robot.yaml --dev -t FizzySymphonyContractTest --silent
+rcc run -r robot_tests/fizzy_parity/robot.yaml --dev -t FizzySymphonyParityContract --silent
+```
+
+The prompt-card and WorkAI production suites are manual gates, not automatic PR
+proof:
+
+```bash
+FIZZY_SYMPHONY_WORKSPACE="$PWD/tmp/prompt-card-workspace" \
+FIZZY_SYMPHONY_PROMPT="Make a tiny safe change and report proof." \
+FIZZY_SYMPHONY_BOARD_ID="board_disposable" \
+FIZZY_SYMPHONY_CARD_NUMBER="42" \
+rcc run -r robot_tests/prompt_card_smoke/robot.yaml --dev -t PromptCardSmoke --silent
+
+WORKAI_SMOKE_BOARD_ID="board_disposable" \
+rcc run -r robot_tests/workai_production_smoke/robot.yaml --dev -t WorkAIProductionSmoke --silent
+```
 
 ## Product Shape
 

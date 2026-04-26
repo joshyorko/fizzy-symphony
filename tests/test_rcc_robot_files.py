@@ -31,6 +31,13 @@ EXPECTED_RCC_SUITES = {
     "prompt_card_smoke": "PromptCardSmoke",
     "workai_production_smoke": "WorkAIProductionSmoke",
 }
+AUTOMATIC_RCC_SUITES = (
+    "env_resolve",
+    "sqlite_workitem_flow",
+    "fizzy_contract",
+    "fizzy_parity",
+)
+MANUAL_RCC_SUITES = ("prompt_card_smoke", "workai_production_smoke")
 
 
 def test_rcc_workitem_robot_files_exist_during_suite_split():
@@ -92,6 +99,19 @@ def test_github_actions_cover_python_uv_and_rcc_suites():
     assert "runner.temp" not in reusable
     assert "rcc ht vars" in reusable
     assert "rcc run" in reusable
+    assert "RCC_VERSION: v18.17.3" in reusable
+    assert "rcc-linux64" in reusable
+    assert "rcc-windows64.exe" in reusable
+    assert (
+        "b1244cd6f8c9415e5f24f98f972620475bdced1c24590b3e823ade8e04acb62e"
+        in reusable
+    )
+    assert (
+        "2b54e8075ff3cb3275e761ab7bd8ca642870bad7306533791b11397eec96d13c"
+        in reusable
+    )
+    assert "sha256sum --check -" in reusable
+    assert "/releases/latest" not in reusable
     assert "actions/upload-artifact" in reusable
 
     for workflow_name, required_text in expected_workflows.items():
@@ -109,6 +129,26 @@ def test_github_actions_cover_python_uv_and_rcc_suites():
     assert "push:" not in (
         WORKFLOWS_ROOT / "rcc-workai-production-smoke.yml"
     ).read_text(encoding="utf-8")
+
+
+def test_automatic_rcc_suite_environments_stay_slim():
+    for suite_name in AUTOMATIC_RCC_SUITES:
+        conda_yaml = (ROBOT_TESTS_ROOT / suite_name / "conda.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        assert "nodejs" not in conda_yaml
+        assert "codex-app-server-sdk" not in conda_yaml
+
+
+def test_manual_rcc_suites_keep_codex_sdk_runtime_dependencies():
+    for suite_name in MANUAL_RCC_SUITES:
+        conda_yaml = (ROBOT_TESTS_ROOT / suite_name / "conda.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        assert "nodejs=24" in conda_yaml
+        assert "codex-app-server-sdk @ git+" in conda_yaml
 
 
 def test_robot_yaml_exposes_expected_tasks():

@@ -77,77 +77,35 @@ jobs:
         id: install-rcc
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           RCC_REPOSITORY: joshyorko/rcc
+          RCC_VERSION: v18.17.3
+          RCC_LINUX_SHA256: b1244cd6f8c9415e5f24f98f972620475bdced1c24590b3e823ade8e04acb62e
+          RCC_WINDOWS_SHA256: 2b54e8075ff3cb3275e761ab7bd8ca642870bad7306533791b11397eec96d13c
         run: |
           set -euo pipefail
 
-          release_json="${RUNNER_TEMP}/rcc-release.json"
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            "https://api.github.com/repos/${RCC_REPOSITORY}/releases/latest" \
-            -o "${release_json}"
+          case "${RUNNER_OS}" in
+            Linux)
+              asset_name="rcc-linux64"
+              expected_sha256="${RCC_LINUX_SHA256}"
+              ;;
+            Windows)
+              asset_name="rcc-windows64.exe"
+              expected_sha256="${RCC_WINDOWS_SHA256}"
+              ;;
+            *)
+              echo "Unsupported RCC runner OS: ${RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
 
-          asset_url_file="${RUNNER_TEMP}/rcc-asset-url.txt"
-          asset_name_file="${RUNNER_TEMP}/rcc-asset-name.txt"
-          python - \
-            "${release_json}" \
-            "${RUNNER_OS}" \
-            "${asset_url_file}" \
-            "${asset_name_file}" <<'PY'
-          import json
-          import sys
-
-          args = sys.argv[1:]
-          release_path, runner_os, asset_url_path, asset_name_path = args
-          release = json.load(open(release_path, encoding="utf-8"))
-          os_token = {"Linux": "linux", "Windows": "windows"}[runner_os]
-          arch_tokens = ("amd64", "x86_64", "x64")
-          blocked_tokens = (".sha", "checksum", "checksums", ".json", ".txt")
-
-          best = None
-          best_score = -1
-          for asset in release.get("assets", []):
-              name = asset.get("name", "")
-              lower_name = name.lower()
-              if any(token in lower_name for token in blocked_tokens):
-                  continue
-              if os_token not in lower_name:
-                  continue
-
-              score = 10
-              if any(token in lower_name for token in arch_tokens):
-                  score += 5
-              if lower_name.endswith((".zip", ".tar.gz", ".tgz", ".exe")):
-                  score += 3
-              if "rcc" in lower_name:
-                  score += 1
-
-              if score > best_score:
-                  best = asset
-                  best_score = score
-
-          if not best:
-              names = ", ".join(
-                  asset.get("name", "") for asset in release.get("assets", [])
-              )
-              msg = f"No RCC release asset matched {runner_os}. Assets: {names}"
-              raise SystemExit(msg)
-
-          with open(asset_url_path, "w", encoding="utf-8") as output:
-              output.write(best["browser_download_url"])
-          with open(asset_name_path, "w", encoding="utf-8") as output:
-              output.write(best["name"])
-          PY
-
-          asset_url="$(cat "${asset_url_file}")"
-          asset_name="$(cat "${asset_name_file}")"
+          asset_url="https://github.com/${RCC_REPOSITORY}/releases/download/${RCC_VERSION}/${asset_name}"
           asset_path="${RUNNER_TEMP}/${asset_name}"
           install_dir="${RUNNER_TEMP}/rcc-install"
           bin_dir="${RUNNER_TEMP}/rcc-bin"
           mkdir -p "${install_dir}" "${bin_dir}"
           curl -fL "${asset_url}" -o "${asset_path}"
+          echo "${expected_sha256}  ${asset_path}" | sha256sum --check -
 
           case "${asset_path,,}" in
             *.zip)
