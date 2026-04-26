@@ -146,6 +146,28 @@ def test_rcc_conda_uses_focused_robocorp_packages():
     )
 
 
+def test_prompt_file_resolution_accepts_robot_local_and_repo_relative_paths(monkeypatch):
+    monkeypatch.chdir(ROBOT_ROOT)
+    monkeypatch.setenv("ROBOT_ROOT", str(ROBOT_ROOT))
+
+    robot_local = task_module._resolve_robot_file(Path("devdata/rails-todo.prompt.md"))
+    repo_relative = task_module._resolve_robot_file(
+        Path("robots/workitems/devdata/rails-todo.prompt.md")
+    )
+
+    assert robot_local == ROBOT_ROOT / "devdata" / "rails-todo.prompt.md"
+    assert repo_relative == ROBOT_ROOT / "devdata" / "rails-todo.prompt.md"
+
+
+def test_workspace_resolution_treats_relative_paths_as_repo_relative(monkeypatch, tmp_path):
+    monkeypatch.chdir(ROBOT_ROOT)
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", "tmp/rails-todo-live")
+
+    workspace = task_module._workspace_from_environment(tmp_path)
+
+    assert workspace == ROOT / "tmp" / "rails-todo-live"
+
+
 def test_smoke_helper_runs_with_in_memory_adapter(tmp_path):
     adapter = InMemoryWorkItemAdapter()
 

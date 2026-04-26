@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 JSONDict = Dict[str, Any]
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_DIR = ".fizzy-symphony"
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_ENV_FILE = "env.json"
@@ -23,6 +24,12 @@ DEFAULT_LOG_FILE = "service.log"
 DEFAULT_ROBOT_PATH = "robots/workitems/robot.yaml"
 DEFAULT_OUTPUT_DIR = ".fizzy-symphony/output"
 DEFAULT_TASK = "FizzySymphony"
+DEFAULT_WORKSPACE = "tmp/rails-todo-live"
+DEFAULT_PROMPT_FILE = "devdata/rails-todo.prompt.md"
+DEFAULT_BOARD_NAME = "Fizzy Symphony Rails Todo"
+DEFAULT_CARD_TITLE = "Build a simple Rails todo app"
+DEFAULT_CODEX_MODEL = "gpt-5.4-mini"
+DEFAULT_RESULT_QUEUE_NAME = "fizzy_codex_results"
 
 
 def setup_command(args: object) -> int:
@@ -32,15 +39,17 @@ def setup_command(args: object) -> int:
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / DEFAULT_CONFIG_FILE
     env_path = config_dir / DEFAULT_ENV_FILE
+    existing_config = _read_json(config_path)
+    existing_env = _read_json(env_path)
 
     config = {
         "created_at": _now_iso(),
         "rcc_bin": str(getattr(args, "rcc_bin", "rcc") or "rcc"),
         "robot_path": str(getattr(args, "robot_path", DEFAULT_ROBOT_PATH) or DEFAULT_ROBOT_PATH),
         "task": DEFAULT_TASK,
-        "output_dir": str(_setup_output_dir(args, config_dir)),
+        "output_dir": str(_setup_output_dir(args, config_dir, existing_config)),
     }
-    env = _build_env(args)
+    env = _build_env(args, existing_env)
 
     _write_json(config_path, config)
     _write_json(env_path, env)
@@ -65,12 +74,17 @@ def start_command(args: object) -> int:
         print(f"error: missing env file: {env_path}", file=sys.stderr)
         return 2
 
-    command = _rcc_command(config, env_path, silent=not bool(getattr(args, "verbose", False)))
+    foreground = bool(getattr(args, "foreground", False))
+    command = _rcc_command(
+        config,
+        env_path,
+        silent=foreground and not bool(getattr(args, "verbose", False)),
+    )
     if bool(getattr(args, "dry_run", False)):
         print(" ".join(command))
         return 0
 
-    if not bool(getattr(args, "foreground", False)):
+    if not foreground:
         return _start_detached(config_dir, command)
 
     print("Starting Fizzy Symphony watcher in foreground. Press Ctrl-C to stop.")
@@ -84,19 +98,23 @@ def status_command(args: object) -> int:
     config_dir = _config_dir(args)
     config = _load_config(config_dir, required=False)
     run_state = _read_json(config_dir / DEFAULT_RUN_FILE)
-    output_dir = Path(str(config.get("output_dir") or DEFAULT_OUTPUT_DIR))
-    status = _read_json(output_dir / "fizzy-symphony-status.json")
-    queue = _queue_summary(output_dir / "fizzy-symphony-smoke.db")
+    output_dir, status = _latest_status(config)
+    queue = _queue_summary(output_dir / "fizzy-symphony-smoke.db") if output_dir else []
+
+    process = _process_status(run_state)
+    effective_status = _effective_status(status, process)
 
     if bool(getattr(args, "json", False)):
         print(
             json.dumps(
                 {
-                    "process": _process_status(run_state),
+                    "process": process,
                     "run": run_state,
                     "status": status,
+                    "effective_status": effective_status,
                     "queue": queue,
                     "config": config,
+                    "artifact_dir": str(output_dir) if output_dir else "",
                 },
                 indent=2,
                 sort_keys=True,
@@ -104,13 +122,12 @@ def status_command(args: object) -> int:
         )
         return 0
 
-    process = _process_status(run_state)
     print("Fizzy Symphony Status")
     print(f"process: {process['state']}" + (f" pid={process['pid']}" if process.get("pid") else ""))
     if run_state.get("log_path"):
         print(f"log: {run_state['log_path']}")
     if status:
-        print(f"status: {status.get('status') or status.get('health') or 'unknown'}")
+        print(f"status: {effective_status}")
         if status.get("phase"):
             print(f"phase: {status['phase']}")
         if status.get("board_id"):
@@ -135,7 +152,9 @@ def status_command(args: object) -> int:
     if queue:
         print("queue:")
         for item in queue:
-            print(f"  {item['queue_name']} {item['state']}: {item['count']}")
+            print(
+                f"  {item['queue_name']} {_queue_state_label(item)}: {item['count']}"
+            )
     return 0
 
 
@@ -187,20 +206,71 @@ def default_command(config_dir: Optional[str] = None) -> str:
     return "setup"
 
 
-def _build_env(args: object) -> JSONDict:
-    workspace = str(getattr(args, "workspace", "") or "")
-    prompt = str(getattr(args, "prompt", "") or "")
-    prompt_file = str(getattr(args, "prompt_file", "") or "")
-    env = {
-        "FIZZY_SYMPHONY_WORKSPACE": workspace,
-        "FIZZY_SYMPHONY_PROMPT": prompt,
-        "FIZZY_SYMPHONY_PROMPT_FILE": prompt_file,
-        "FIZZY_SYMPHONY_BOARD_NAME": str(getattr(args, "board_name", "") or ""),
-        "FIZZY_SYMPHONY_CARD_TITLE": str(getattr(args, "card_title", "") or ""),
-        "FIZZY_SYMPHONY_RUN_MODE": str(getattr(args, "run_mode", "once") or "once"),
-        "FIZZY_SYMPHONY_BOARD_ID": str(getattr(args, "board_id", "") or ""),
-        "FIZZY_SYMPHONY_CARD_NUMBER": str(getattr(args, "card_number", "") or ""),
+def _build_env(args: object, existing_env: Optional[Mapping[str, Any]] = None) -> JSONDict:
+    existing_env = existing_env or {}
+    workspace = _workspace_setup_value(args, existing_env)
+    prompt = _setup_value(args, "prompt", existing_env, "FIZZY_SYMPHONY_PROMPT", "")
+    prompt_file = _setup_value(
+        args,
+        "prompt_file",
+        existing_env,
+        "FIZZY_SYMPHONY_PROMPT_FILE",
+        DEFAULT_PROMPT_FILE,
+    )
+    env: JSONDict = {
+        str(key): str(value)
+        for key, value in existing_env.items()
+        if str(value) != ""
     }
+    env.update(
+        {
+            "FIZZY_SYMPHONY_WORKSPACE": workspace,
+            "FIZZY_SYMPHONY_PROMPT": prompt,
+            "FIZZY_SYMPHONY_PROMPT_FILE": prompt_file,
+            "FIZZY_SYMPHONY_BOARD_NAME": _setup_value(
+                args,
+                "board_name",
+                existing_env,
+                "FIZZY_SYMPHONY_BOARD_NAME",
+                DEFAULT_BOARD_NAME,
+            ),
+            "FIZZY_SYMPHONY_CARD_TITLE": _setup_value(
+                args,
+                "card_title",
+                existing_env,
+                "FIZZY_SYMPHONY_CARD_TITLE",
+                DEFAULT_CARD_TITLE,
+            ),
+            "FIZZY_SYMPHONY_CODEX_MODEL": _setup_value(
+                args,
+                "codex_model",
+                existing_env,
+                "FIZZY_SYMPHONY_CODEX_MODEL",
+                DEFAULT_CODEX_MODEL,
+            ),
+            "FIZZY_SYMPHONY_RUN_MODE": _setup_value(
+                args,
+                "run_mode",
+                existing_env,
+                "FIZZY_SYMPHONY_RUN_MODE",
+                "once",
+            ),
+            "FIZZY_SYMPHONY_BOARD_ID": _setup_value(
+                args,
+                "board_id",
+                existing_env,
+                "FIZZY_SYMPHONY_BOARD_ID",
+                "",
+            ),
+            "FIZZY_SYMPHONY_CARD_NUMBER": _setup_value(
+                args,
+                "card_number",
+                existing_env,
+                "FIZZY_SYMPHONY_CARD_NUMBER",
+                "",
+            ),
+        }
+    )
     return {key: value for key, value in env.items() if value != "" or key in {"FIZZY_SYMPHONY_BOARD_ID", "FIZZY_SYMPHONY_CARD_NUMBER"}}
 
 
@@ -222,7 +292,7 @@ def _rcc_command(config: Mapping[str, Any], env_path: Path, *, silent: bool) -> 
 
 def _start_detached(config_dir: Path, command: Sequence[str]) -> int:
     log_path = config_dir / DEFAULT_LOG_FILE
-    log_file = log_path.open("ab")
+    log_file = log_path.open("wb")
     process = subprocess.Popen(
         list(command),
         stdout=log_file,
@@ -250,9 +320,84 @@ def _config_dir(args: object) -> Path:
     return Path(str(getattr(args, "config_dir", None) or DEFAULT_CONFIG_DIR))
 
 
-def _setup_output_dir(args: object, config_dir: Path) -> Path:
+def _setup_output_dir(
+    args: object,
+    config_dir: Path,
+    existing_config: Optional[Mapping[str, Any]] = None,
+) -> Path:
     raw_output_dir = str(getattr(args, "output_dir", "") or "")
-    return Path(raw_output_dir) if raw_output_dir else config_dir / "output"
+    if raw_output_dir:
+        return Path(raw_output_dir)
+    existing_output_dir = str((existing_config or {}).get("output_dir") or "")
+    return Path(existing_output_dir) if existing_output_dir else config_dir / "output"
+
+
+def _setup_value(
+    args: object,
+    attribute: str,
+    existing_env: Mapping[str, Any],
+    env_key: str,
+    default: str,
+) -> str:
+    explicit = str(getattr(args, attribute, "") or "")
+    if explicit:
+        return explicit
+    existing = str(existing_env.get(env_key) or "")
+    return existing or default
+
+
+def _workspace_setup_value(args: object, existing_env: Mapping[str, Any]) -> str:
+    workspace = _setup_value(
+        args,
+        "workspace",
+        existing_env,
+        "FIZZY_SYMPHONY_WORKSPACE",
+        DEFAULT_WORKSPACE,
+    )
+    return _resolve_workspace_for_env(workspace)
+
+
+def _resolve_workspace_for_env(workspace: str) -> str:
+    value = str(workspace or "").strip()
+    if not value or _looks_like_git_workspace(value):
+        return value
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str((REPO_ROOT / path).resolve())
+
+
+def _looks_like_git_workspace(value: str) -> bool:
+    return (
+        value.startswith(("http://", "https://", "ssh://", "git@"))
+        or value.endswith(".git")
+    )
+
+
+def _latest_status(config: Mapping[str, Any]) -> tuple[Optional[Path], JSONDict]:
+    for output_dir in _candidate_output_dirs(config):
+        status = _read_json(output_dir / "fizzy-symphony-status.json")
+        if status:
+            return output_dir, status
+    first_output_dir = next(iter(_candidate_output_dirs(config)), None)
+    return first_output_dir, {}
+
+
+def _candidate_output_dirs(config: Mapping[str, Any]) -> Iterable[Path]:
+    seen: set[Path] = set()
+    raw_output_dir = str(config.get("output_dir") or DEFAULT_OUTPUT_DIR)
+    for output_dir in [Path(raw_output_dir), _robot_artifact_dir(config)]:
+        output_dir = output_dir.expanduser()
+        if output_dir not in seen:
+            seen.add(output_dir)
+            yield output_dir
+
+
+def _robot_artifact_dir(config: Mapping[str, Any]) -> Path:
+    robot_path = Path(str(config.get("robot_path") or DEFAULT_ROBOT_PATH))
+    if not robot_path.is_absolute():
+        robot_path = REPO_ROOT / robot_path
+    return robot_path.parent / "output"
 
 
 def _load_config(config_dir: Path, *, required: bool = True) -> JSONDict:
@@ -285,6 +430,13 @@ def _process_status(run_state: Mapping[str, Any]) -> JSONDict:
     return {"state": "running" if _pid_alive(pid) else "stopped", "pid": pid}
 
 
+def _effective_status(status: Mapping[str, Any], process: Mapping[str, Any]) -> str:
+    raw_status = str(status.get("status") or status.get("health") or "unknown")
+    if raw_status == "RUNNING" and process.get("state") == "stopped":
+        return "STALE/RUNNING"
+    return raw_status
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -309,6 +461,14 @@ def _queue_summary(db_path: Path) -> List[JSONDict]:
         {"queue_name": str(queue), "state": str(state), "count": int(count)}
         for queue, state, count in rows
     ]
+
+
+def _queue_state_label(item: Mapping[str, Any]) -> str:
+    queue_name = str(item.get("queue_name") or "")
+    state = str(item.get("state") or "")
+    if queue_name == DEFAULT_RESULT_QUEUE_NAME and state == "PENDING":
+        return "ARTIFACT"
+    return state
 
 
 def _configured_board_ids(config_dir: Path) -> List[str]:
