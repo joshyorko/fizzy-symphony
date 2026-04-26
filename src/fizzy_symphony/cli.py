@@ -15,6 +15,14 @@ from .robocorp_adapter import (
     adapter_package_available,
     format_workitem_env,
 )
+from .service_commands import (
+    boards_command,
+    default_command,
+    setup_command,
+    start_command,
+    status_command,
+    stop_command,
+)
 from .symphony import FizzyCustomColumn, format_init_board_plan, format_mapping_table
 
 DEFAULT_CLAIM_COMMENT_BODY = "Claimed by fizzy-symphony worker."
@@ -213,9 +221,40 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
-    sub.required = True
+    sub.required = False
 
     sub.add_parser("version", help="Print the package version.")
+
+    setup_p = sub.add_parser("setup", help="Create or update local Fizzy Symphony config.")
+    setup_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
+    setup_p.add_argument("--workspace", default="", help="Workspace path or Git URL for Codex work.")
+    setup_p.add_argument("--prompt", default="", help="Inline prompt for the seed work card.")
+    setup_p.add_argument("--prompt-file", default="", help="Prompt file path, resolved by the RCC robot.")
+    setup_p.add_argument("--board-id", default="", help="Existing Fizzy board id; blank creates a disposable board.")
+    setup_p.add_argument("--card-number", default="", help="Existing Fizzy card number for one-card runs.")
+    setup_p.add_argument("--board-name", default="Fizzy Symphony", help="Disposable board name.")
+    setup_p.add_argument("--card-title", default="Run Fizzy Symphony", help="Seed work card title.")
+    setup_p.add_argument("--run-mode", default="once", choices=["once", "watch"], help="Run mode env value.")
+    setup_p.add_argument("--rcc-bin", default="rcc", help="RCC executable.")
+    setup_p.add_argument("--robot-path", default="robots/workitems/robot.yaml", help="RCC robot.yaml path.")
+    setup_p.add_argument("--output-dir", default="robots/workitems/output", help="RCC artifact output directory.")
+
+    start_p = sub.add_parser("start", help="Start the RCC-backed Fizzy Symphony watcher.")
+    start_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
+    start_p.add_argument("--detach", action="store_true", help="Start in the background and return immediately.")
+    start_p.add_argument("--dry-run", action="store_true", help="Print the RCC command without running it.")
+    start_p.add_argument("--verbose", action="store_true", help="Do not pass --silent to RCC.")
+
+    status_p = sub.add_parser("status", help="Show process, queue, and latest run status.")
+    status_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
+    status_p.add_argument("--json", action="store_true", help="Print machine-readable status JSON.")
+
+    boards_p = sub.add_parser("boards", help="List Fizzy boards and configured board columns.")
+    boards_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
+    boards_p.add_argument("--fizzy-bin", default="fizzy", help="Fizzy executable.")
+
+    stop_p = sub.add_parser("stop", help="Stop a detached Fizzy Symphony process.")
+    stop_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
 
     plan_p = sub.add_parser("plan", help="Display the dry-run execution plan for a tracker board.")
     _add_common_command_options(plan_p)
@@ -344,6 +383,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     dispatch = {
         "version": _cmd_version,
+        "setup": setup_command,
+        "start": start_command,
+        "status": status_command,
+        "boards": boards_command,
+        "stop": stop_command,
         "plan": _cmd_plan,
         "doctor": _cmd_doctor,
         "init-board": _cmd_init_board,
@@ -354,7 +398,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "move": _cmd_move,
     }
 
-    handler = dispatch.get(args.command)
+    command = args.command or default_command()
+    if args.command is None:
+        args.command = command
+    handler = dispatch.get(command)
     if handler is None:
         parser.print_help()
         return 1
