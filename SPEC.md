@@ -27,7 +27,8 @@ Boundary:
 - `CardAdapter`: compatibility wrapper used by the demo planning scaffold.
 - `Board`: ordered collection of cards for a Fizzy board.
 - `TrackerAdapter`: contract for reading cards and writing comments/state updates.
-- `FizzyCLIAdapter`: dry-run adapter that builds Fizzy CLI commands.
+- `FizzyCLIAdapter`: dry-run adapter that builds Fizzy CLI commands for preview/debugging.
+- `FizzyOpenAPIAdapter`: future real adapter to be implemented from `basecamp/fizzy-sdk/openapi.json`.
 - `SymphonyColumn`: recommended tracker column for the upstream-inspired flow.
 - `RobocorpWorkitemConfig`: environment contract for the published adapter
   package.
@@ -58,14 +59,21 @@ commands. `id` remains the internal stable tracker identifier.
 
 A tracker adapter must provide these operations:
 
+- `get_card(card_number)`
 - `fetch_candidate_cards()`
 - `fetch_cards_by_states(states)`
 - `fetch_card_states_by_ids(card_ids)`
-- `create_comment(card_id, body)`
-- `update_card_state(card_id, state_name)`
+- `create_comment(card_number, body)`
+- `move_card_to_column(card_number, column_id)`
+- `assign_card(card_number, user_id)`
+- `self_assign_card(card_number)`
+- `claim_card(card_number, in_flight_column_id, comment_body, assignee_id=None, self_assign=False)`
 
-These operations are intentionally small so future dispatch logic can stay
-tracker-agnostic.
+These operations intentionally separate native tracker capabilities from
+`fizzy-symphony` orchestration semantics. `claim_card(...)` is composite: at
+minimum it moves the visible card number into the in-flight column and leaves a
+worker-identity comment. Assignment is optional for MVP, and a dedicated bot
+user is not required to validate the loop.
 
 ## Workspace Model
 
@@ -132,11 +140,14 @@ passes, and preserve the card as the source of truth for scope and status.
 ## Safety Invariants
 
 - Phase 0 is dry-run only; no subprocess execution is allowed.
-- No direct HTTP or API behavior is allowed in the scaffold.
+- No direct HTTP or API behavior is allowed in the scaffold beyond the explicit
+  future OpenAPI stub.
 - No daemon/background loop behavior is allowed yet.
 - The system must not create a hidden board by default; it configures or checks
   an existing Fizzy board unless the user explicitly opts into creation later.
 - Fizzy CLI mutations must target the visible card `number`, not only the internal `id`.
 - Workers claim exactly one card at a time.
+- Claim is modeled as a composite orchestration operation, not a required native
+  Fizzy `card claim` command.
 - Workers may edit only approved paths for the claimed card.
 - Card comments and state updates must reflect actual proof of work.

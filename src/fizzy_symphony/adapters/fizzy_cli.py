@@ -60,16 +60,7 @@ class FizzyCLIAdapter:
         parts.extend(self.config.extra_flags)
         return " ".join(parts)
 
-    def build_claim_command(self, card_number: int, board: Optional[str] = None) -> str:
-        """Build the Fizzy CLI command used to claim a card by number."""
-        self._validate_card_number(card_number)
-        parts: List[str] = [quote(self.config.fizzy_bin), "card", "claim", str(card_number)]
-        parts.extend(self._board_flag_parts(board))
-        parts.extend(self._agent_quiet_parts())
-        parts.extend(self.config.extra_flags)
-        return " ".join(parts)
-
-    def build_show_command(self, card_number: int) -> str:
+    def build_get_card_command(self, card_number: int) -> str:
         """Build the Fizzy CLI command used to show a card by number."""
         self._validate_card_number(card_number)
         parts: List[str] = [quote(self.config.fizzy_bin), "card", "show", str(card_number)]
@@ -77,7 +68,11 @@ class FizzyCLIAdapter:
         parts.extend(self.config.extra_flags)
         return " ".join(parts)
 
-    def build_move_command(self, card_number: int, column_id: str) -> str:
+    def build_show_command(self, card_number: int) -> str:
+        """Build the Fizzy CLI command used to show a card by number."""
+        return self.build_get_card_command(card_number)
+
+    def build_move_to_column_command(self, card_number: int, column_id: str) -> str:
         """Build the Fizzy CLI command used to move a card to a column."""
         self._validate_card_number(card_number)
         if not column_id:
@@ -94,7 +89,11 @@ class FizzyCLIAdapter:
         parts.extend(self.config.extra_flags)
         return " ".join(parts)
 
-    def build_comment_command(self, card_number: int, body: str) -> str:
+    def build_move_command(self, card_number: int, column_id: str) -> str:
+        """Build the Fizzy CLI command used to move a card to a column."""
+        return self.build_move_to_column_command(card_number, column_id)
+
+    def build_create_comment_command(self, card_number: int, body: str) -> str:
         """Build the Fizzy CLI command used to comment on a card."""
         self._validate_card_number(card_number)
         if not body:
@@ -111,6 +110,73 @@ class FizzyCLIAdapter:
         parts.extend(self._agent_quiet_parts())
         parts.extend(self.config.extra_flags)
         return " ".join(parts)
+
+    def build_comment_command(self, card_number: int, body: str) -> str:
+        """Build the Fizzy CLI command used to comment on a card."""
+        return self.build_create_comment_command(card_number, body)
+
+    def build_assign_card_command(self, card_number: int, user_id: str) -> str:
+        """Build the Fizzy CLI command used to assign a card to a user."""
+        self._validate_card_number(card_number)
+        if not user_id:
+            raise ValueError("user_id must not be empty.")
+        parts: List[str] = [
+            quote(self.config.fizzy_bin),
+            "card",
+            "assign",
+            str(card_number),
+            "--user",
+            quote(user_id),
+        ]
+        parts.extend(self._agent_quiet_parts())
+        parts.extend(self.config.extra_flags)
+        return " ".join(parts)
+
+    def build_self_assign_card_command(self, card_number: int) -> str:
+        """Build the Fizzy CLI command used to self-assign a card."""
+        self._validate_card_number(card_number)
+        parts: List[str] = [quote(self.config.fizzy_bin), "card", "self-assign", str(card_number)]
+        parts.extend(self._agent_quiet_parts())
+        parts.extend(self.config.extra_flags)
+        return " ".join(parts)
+
+    def build_claim_commands(
+        self,
+        card_number: int,
+        in_flight_column_id: str,
+        comment_body: str,
+        assignee_id: Optional[str] = None,
+        self_assign: bool = False,
+    ) -> List[str]:
+        """Build the dry-run command sequence used to claim a card."""
+        if assignee_id and self_assign:
+            raise ValueError("assignee_id and self_assign are mutually exclusive.")
+
+        commands = [self.build_get_card_command(card_number)]
+        if self_assign:
+            commands.append(self.build_self_assign_card_command(card_number))
+        elif assignee_id:
+            commands.append(self.build_assign_card_command(card_number, assignee_id))
+        commands.append(self.build_move_to_column_command(card_number, in_flight_column_id))
+        commands.append(self.build_create_comment_command(card_number, comment_body))
+        return commands
+
+    def claim_card(
+        self,
+        card_number: int,
+        in_flight_column_id: str,
+        comment_body: str,
+        assignee_id: Optional[str] = None,
+        self_assign: bool = False,
+    ) -> List[str]:
+        """Return the composite dry-run command sequence for claiming a card."""
+        return self.build_claim_commands(
+            card_number,
+            in_flight_column_id,
+            comment_body,
+            assignee_id=assignee_id,
+            self_assign=self_assign,
+        )
 
     def _board_flag_parts(self, board: Optional[str]) -> List[str]:
         self._ensure_dry_run()

@@ -107,11 +107,12 @@ class FizzyWorkItemReporter:
         try:
             payload = item.payload
             card_id = str(payload["card_id"])
+            card_number = int(payload["card_number"])
             comment = str(payload.get("comment") or "Codex work item completed.")
             handoff_state = str(payload.get("handoff_state") or "Synthesize & Verify")
 
-            self.tracker.create_comment(card_id, comment)
-            self.tracker.update_card_state(card_id, handoff_state)
+            self.tracker.create_comment(card_number, comment)
+            self.tracker.move_card_to_column(card_number, handoff_state)
             self.queue.complete(item.id, {"reported": True, "card_id": card_id})
         except Exception as exc:
             self.queue.fail(item.id, message=str(exc), code=self.failure_code)

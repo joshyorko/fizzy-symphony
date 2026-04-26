@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from . import __version__
 from .adapters.fizzy_cli import FizzyCLIAdapter
@@ -16,6 +16,9 @@ from .robocorp_adapter import (
     format_workitem_env,
 )
 from .symphony import format_init_board_plan, format_mapping_table
+
+DEFAULT_CLAIM_COMMENT_BODY = "Claimed by fizzy-symphony worker."
+DEFAULT_IN_FLIGHT_COLUMN_ID = "In Flight"
 
 
 def _build_demo_board() -> Board:
@@ -66,8 +69,9 @@ def _config_from_args(args: argparse.Namespace) -> FizzyConfig:
     )
 
 
-def _print_dry_run_command(command: str) -> int:
-    print(command)
+def _print_dry_run_commands(commands: Sequence[str]) -> int:
+    for command in commands:
+        print(command)
     print("(dry-run mode — no commands were executed)")
     return 0
 
@@ -129,22 +133,30 @@ def _cmd_workitems_env(args: argparse.Namespace) -> int:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     adapter = FizzyCLIAdapter(config=_config_from_args(args))
-    return _print_dry_run_command(adapter.build_list_command(args.board))
+    return _print_dry_run_commands([adapter.build_list_command(args.board)])
 
 
 def _cmd_claim(args: argparse.Namespace) -> int:
     adapter = FizzyCLIAdapter(config=_config_from_args(args))
-    return _print_dry_run_command(adapter.build_claim_command(args.card_number, args.board))
+    return _print_dry_run_commands(
+        adapter.claim_card(
+            args.card_number,
+            args.in_flight_column,
+            args.comment_body,
+            assignee_id=args.assignee_id,
+            self_assign=args.self_assign,
+        )
+    )
 
 
 def _cmd_comment(args: argparse.Namespace) -> int:
     adapter = FizzyCLIAdapter(config=_config_from_args(args))
-    return _print_dry_run_command(adapter.build_comment_command(args.card_number, args.body))
+    return _print_dry_run_commands([adapter.build_comment_command(args.card_number, args.body)])
 
 
 def _cmd_move(args: argparse.Namespace) -> int:
     adapter = FizzyCLIAdapter(config=_config_from_args(args))
-    return _print_dry_run_command(adapter.build_move_command(args.card_number, args.column))
+    return _print_dry_run_commands([adapter.build_move_command(args.card_number, args.column)])
 
 
 def _add_common_command_options(parser: argparse.ArgumentParser, *, include_board: bool = False) -> None:
@@ -251,9 +263,36 @@ def _build_parser() -> argparse.ArgumentParser:
     list_p = sub.add_parser("list", help="Print the Fizzy CLI command for listing cards on a board.")
     _add_common_command_options(list_p, include_board=True)
 
-    claim_p = sub.add_parser("claim", help="Print the Fizzy CLI command for claiming a card.")
+    claim_p = sub.add_parser("claim", help="Print the composite dry-run claim commands for a card.")
     claim_p.add_argument("card_number", type=int, metavar="CARD_NUMBER", help="Visible Fizzy card number.")
-    _add_common_command_options(claim_p, include_board=True)
+    _add_common_command_options(claim_p)
+    claim_p.add_argument(
+        "--board",
+        metavar="BOARD",
+        help="Accepted for compatibility; composite claim preview does not require board context.",
+    )
+    claim_p.add_argument(
+        "--in-flight-column",
+        default=DEFAULT_IN_FLIGHT_COLUMN_ID,
+        metavar="COLUMN_ID",
+        help="Column ID used for the claim move step (default: In Flight).",
+    )
+    claim_p.add_argument(
+        "--comment-body",
+        default=DEFAULT_CLAIM_COMMENT_BODY,
+        help="Comment body used for the claim comment step.",
+    )
+    claim_group = claim_p.add_mutually_exclusive_group()
+    claim_group.add_argument(
+        "--self-assign",
+        action="store_true",
+        help="Include a self-assign step before moving the card.",
+    )
+    claim_group.add_argument(
+        "--assignee-id",
+        metavar="USER_ID",
+        help="Include an explicit assign step before moving the card.",
+    )
 
     comment_p = sub.add_parser("comment", help="Print the Fizzy CLI command for commenting on a card.")
     comment_p.add_argument("card_number", type=int, metavar="CARD_NUMBER", help="Visible Fizzy card number.")

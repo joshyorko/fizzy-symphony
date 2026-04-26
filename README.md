@@ -24,7 +24,7 @@ It provides:
 | Layer | Description |
 |---|---|
 | **Models** | Pure Python dataclasses (`FizzyCard`, `Agent`, `CardAdapter`, `Board`, `FizzyConfig`) |
-| **Adapter** | A dry-run `FizzyCLIAdapter` that builds real Fizzy CLI commands without executing them |
+| **Adapter** | A dry-run `FizzyCLIAdapter` for command preview/debugging plus a future `FizzyOpenAPIAdapter` stub for real tracker reads/writes |
 | **CLI** | `fizzy-symphony` entry points for board bootstrap, setup checks, dry-run list/claim/comment/move flows, and a demo plan |
 | **Workitems** | Robocorp-compatible queue payloads, adapter env helpers, and producer/worker/reporter helpers |
 
@@ -71,6 +71,9 @@ fizzy-symphony list --board work-ai-board --dry-run
 
 # Claim a card in dry-run mode
 fizzy-symphony claim 42 --board work-ai-board --dry-run
+
+# Preview a composite claim with an explicit in-flight column/comment
+fizzy-symphony claim 42 --in-flight-column in-flight --comment-body "Claimed by fizzy-symphony worker." --dry-run
 
 # Comment on a card in dry-run mode
 fizzy-symphony comment 42 --body "Validated the change." --dry-run
@@ -134,11 +137,32 @@ fizzy-symphony list --board work-ai-board --dry-run
 
 ### `fizzy-symphony claim`
 
-Prints the Fizzy CLI command that would claim exactly one visible card number.
+Prints the composite dry-run commands that would claim exactly one visible card
+number. Claim is a `fizzy-symphony` orchestration concept, not a native single
+Fizzy CLI operation, so the preview is:
+
+- show the card
+- optionally assign/self-assign
+- move the card to the in-flight column
+- add a claim comment
 
 ```bash
 fizzy-symphony claim 42 --board work-ai-board --dry-run
-# fizzy card claim 42 --board work-ai-board --agent --quiet
+# fizzy card show 42 --agent --markdown
+# fizzy card column 42 --column 'In Flight' --agent --quiet
+# fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet
+
+fizzy-symphony claim 42 --self-assign --dry-run
+# fizzy card show 42 --agent --markdown
+# fizzy card self-assign 42 --agent --quiet
+# fizzy card column 42 --column 'In Flight' --agent --quiet
+# fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet
+
+fizzy-symphony claim 42 --assignee-id user-123 --in-flight-column ready --comment-body "Claimed by fizzy-symphony worker." --dry-run
+# fizzy card show 42 --agent --markdown
+# fizzy card assign 42 --user user-123 --agent --quiet
+# fizzy card column 42 --column ready --agent --quiet
+# fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet
 ```
 
 ### `fizzy-symphony comment`
@@ -185,7 +209,8 @@ fizzy-symphony/
 ├── src/
 │   └── fizzy_symphony/
 │       ├── adapters/
-│       │   └── fizzy_cli.py        # Dry-run Fizzy CLI adapter
+│       │   ├── fizzy_cli.py        # Dry-run Fizzy CLI adapter
+│       │   └── fizzy_openapi.py    # Future OpenAPI-backed adapter stub
 │       ├── __init__.py
 │       ├── cli.py                  # CLI entry point
 │       ├── commands.py             # Compatibility wrappers over the adapter
@@ -226,6 +251,19 @@ python -m pytest
 - `prompts/worker-agent.md` guides a worker to claim exactly one card, stay within allowed paths, and report proof of work.
 - `docs/openai-symphony-alignment.md` explains how this maps to the upstream OpenAI Symphony model.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
+
+## Adapter Strategy
+
+- `FizzyCLIAdapter` is for dry-run command preview, debugging, and
+  operator/agent workflows. It never executes subprocesses.
+- `FizzyOpenAPIAdapter` is the explicit future real tracker adapter. The
+  official SDK repo is `basecamp/fizzy-sdk`; it does not currently ship a
+  Python SDK, so `openapi.json` is the source of truth for a future Python
+  implementation.
+- Robocorp workitems remain the durable queue, lease, retry, and result-handoff
+  layer. Fizzy is still the human-visible tracker layer.
+- Assignment is optional for MVP claim previews; a dedicated Codex/Fizzy
+  Symphony user can be added later without blocking the orchestration loop.
 
 ---
 

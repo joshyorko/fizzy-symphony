@@ -8,6 +8,7 @@ import pytest
 from fizzy_symphony.commands import (
     build_board_plan,
     build_card_claim_command,
+    build_card_claim_commands,
     build_card_column_command,
     build_card_command,
     build_card_list_command,
@@ -68,9 +69,18 @@ class TestCommandBuilders:
         with pytest.raises(ValueError, match="Board context"):
             build_card_list_command(_make_board(board_id=None), cfg)
 
-    def test_build_card_claim_command_uses_card_number(self):
+    def test_build_card_claim_commands_use_card_number(self):
+        commands = build_card_claim_commands(_make_board(), _make_card(number=42), _make_config())
+        assert commands == [
+            "fizzy card show 42 --agent --markdown",
+            "fizzy card column 42 --column 'In Flight' --agent --quiet",
+            "fizzy comment create --card 42 --body 'Do something' --agent --quiet",
+        ]
+
+    def test_build_card_claim_command_keeps_compatibility_string_output(self):
         cmd = build_card_claim_command(_make_board(), _make_card(number=42), _make_config())
-        assert cmd == "fizzy card claim 42 --board work-ai-board --agent --quiet"
+        assert "fizzy card show 42 --agent --markdown" in cmd
+        assert "fizzy card claim" not in cmd
 
     def test_build_card_show_command_uses_card_number(self):
         cmd = build_card_show_command(_make_agent(), _make_card(number=42), _make_config())
@@ -135,6 +145,7 @@ class TestBuildBoardPlan:
             assert "doctor_command" in entry
             assert "list_command" in entry
             assert "claim_command" in entry
+            assert "claim_commands" in entry
             assert "show_command" in entry
             assert "column_command" in entry
             assert "comment_command" in entry
@@ -211,7 +222,8 @@ class TestFormatPlanAsText:
         text = format_plan_as_text(self._plan())
         assert "fizzy doctor" in text
         assert "fizzy card list" in text
-        assert "fizzy card claim 101" in text
+        assert "fizzy card show 101" in text
+        assert "fizzy card column 101 --column 'In Flight'" in text
         assert "fizzy card show 101" in text
         assert "fizzy card column 101" in text
         assert "fizzy comment create --card 101" in text

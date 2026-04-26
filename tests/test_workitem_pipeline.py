@@ -43,7 +43,10 @@ class FakeTracker:
     def __init__(self, cards=None):
         self.cards = cards or []
         self.comments = []
-        self.states = []
+        self.columns = []
+
+    def get_card(self, card_number):  # noqa: ARG002
+        raise NotImplementedError
 
     def fetch_candidate_cards(self):
         return self.cards
@@ -54,11 +57,20 @@ class FakeTracker:
     def fetch_card_states_by_ids(self, card_ids):  # noqa: ARG002
         return {}
 
-    def create_comment(self, card_id, body):
-        self.comments.append((card_id, body))
+    def create_comment(self, card_number, body):
+        self.comments.append((card_number, body))
 
-    def update_card_state(self, card_id, state_name):
-        self.states.append((card_id, state_name))
+    def move_card_to_column(self, card_number, column_id):
+        self.columns.append((card_number, column_id))
+
+    def assign_card(self, card_number, user_id):  # noqa: ARG002
+        raise NotImplementedError
+
+    def self_assign_card(self, card_number):  # noqa: ARG002
+        raise NotImplementedError
+
+    def claim_card(self, card_number, in_flight_column_id, comment_body, assignee_id=None, self_assign=False):  # noqa: ARG002
+        raise NotImplementedError
 
 
 def _card(number=579):
@@ -146,14 +158,14 @@ def test_reporter_posts_comment_and_updates_state_from_result_item():
     result = FizzyWorkItemReporter(queue=WorkItemQueue(adapter), tracker=tracker).report_one()
 
     assert result.reported is True
-    assert tracker.comments == [("card-579", "Proof attached")]
-    assert tracker.states == [("card-579", "Synthesize & Verify")]
+    assert tracker.comments == [(579, "Proof attached")]
+    assert tracker.columns == [(579, "Synthesize & Verify")]
     assert adapter.releases == [("item-1", WorkItemState.DONE, None)]
 
 
 def test_reporter_failure_releases_result_item_as_failed():
     class BrokenTracker(FakeTracker):
-        def create_comment(self, card_id, body):  # noqa: ARG002
+        def create_comment(self, card_number, body):  # noqa: ARG002
             raise RuntimeError("fizzy write failed")
 
     adapter = FakeAdapter()

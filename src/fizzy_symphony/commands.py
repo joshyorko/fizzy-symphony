@@ -27,9 +27,30 @@ def build_card_list_command(board: Board, config: FizzyConfig) -> str:
     return _adapter(config).build_list_command(board.board_id)
 
 
+def build_card_claim_commands(
+    board: Board,
+    card: CardAdapter,
+    config: FizzyConfig,
+    *,
+    in_flight_column_id: str = "In Flight",
+    comment_body: str | None = None,
+    assignee_id: str | None = None,
+    self_assign: bool = False,
+) -> List[str]:
+    """Build the composite dry-run claim commands for a single card number."""
+    _ = board
+    return _adapter(config).build_claim_commands(
+        card.number,
+        in_flight_column_id,
+        comment_body or card.comment_body or card.title,
+        assignee_id=assignee_id,
+        self_assign=self_assign,
+    )
+
+
 def build_card_claim_command(board: Board, card: CardAdapter, config: FizzyConfig) -> str:
-    """Build the Fizzy CLI claim command for a single card number."""
-    return _adapter(config).build_claim_command(card.number, board.board_id)
+    """Build a compatibility string for the composite claim preview."""
+    return "\n".join(build_card_claim_commands(board, card, config))
 
 
 def build_card_show_command(
@@ -78,6 +99,7 @@ def build_board_plan(
     doctor_command = build_doctor_command(config)
     board_context = config.board or board.board_id or ".fizzy.yaml"
     for card in board.cards:
+        claim_commands = build_card_claim_commands(board, card, config)
         plan.append(
             {
                 "board": board.name,
@@ -90,7 +112,8 @@ def build_board_plan(
                 "labels": ", ".join(card.labels),
                 "doctor_command": doctor_command,
                 "list_command": list_command,
-                "claim_command": build_card_claim_command(board, card, config),
+                "claim_command": "\n".join(claim_commands),
+                "claim_commands": claim_commands,
                 "show_command": build_card_show_command(card.agent, card, config),
                 "column_command": build_card_column_command(card, config),
                 "comment_command": build_comment_create_command(card, config),
@@ -118,7 +141,9 @@ def format_plan_as_text(plan: List[Dict[str, str]]) -> str:
         if entry["labels"]:
             lines.append(f"  Labels         : {entry['labels']}")
         lines.append(f"  List command   : {entry['list_command']}")
-        lines.append(f"  Claim command  : {entry['claim_command']}")
+        lines.append("  Claim commands :")
+        for command in entry["claim_commands"]:
+            lines.append(f"    - {command}")
         lines.append(f"  Show command   : {entry['show_command']}")
         lines.append(f"  Move command   : {entry['column_command']}")
         lines.append(f"  Comment command: {entry['comment_command']}")

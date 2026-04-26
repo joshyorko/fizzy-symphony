@@ -20,6 +20,10 @@ workitems so RCC tasks, local workers, and future services can share it safely.
 - `fizzy-symphony` owns all Symphony-specific semantics: board columns,
   `WORKFLOW.md`, per-card workspaces, runner policy, and report formatting.
 
+That includes composite claim semantics: Robocorp workitems keep durable queue
+state, while Fizzy updates remain explicit tracker operations such as move,
+comment, and optional assignment.
+
 ## Pipeline
 
 ```text
