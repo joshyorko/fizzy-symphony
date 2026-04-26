@@ -10,6 +10,8 @@ import shutil
 import shlex
 import subprocess
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -740,10 +742,24 @@ def run_board_native_fizzy_symphony(
     )
     queue = WorkItemQueue(selected_adapter)
     input_id = queue.enqueue_input(payload)
-    worker_result = CodexWorkItemWorker(
-        queue=queue,
-        runner=CodexWorkItemRunner(sdk_runner),
-    ).work_one()
+    summary_path = artifacts_dir / "fizzy-symphony-summary.json"
+    status_path = artifacts_dir / "fizzy-symphony-status.json"
+    running_status = _worker_running_status(
+        board_id=board_id,
+        card_number=card_number,
+        workspace=workspace,
+        input_id=input_id,
+        adapter_kind=adapter_kind,
+        sdk_preflight=sdk_preflight,
+        summary_path=summary_path,
+        status_path=status_path,
+    )
+    _write_fizzy_symphony_progress(status_path, running_status)
+    with _worker_heartbeat(status_path, running_status):
+        worker_result = CodexWorkItemWorker(
+            queue=queue,
+            runner=CodexWorkItemRunner(sdk_runner),
+        ).work_one()
     output_payload = _load_output_payload(selected_adapter, worker_result.output_id)
     report_back = _report_card_result(
         output_payload,
@@ -780,8 +796,6 @@ def run_board_native_fizzy_symphony(
         "report_back": report_back,
         "artifacts": {},
     }
-    summary_path = artifacts_dir / "fizzy-symphony-summary.json"
-    status_path = artifacts_dir / "fizzy-symphony-status.json"
     summary["artifacts"]["summary_path"] = str(summary_path)
     summary["artifacts"]["status_path"] = str(status_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
@@ -2033,6 +2047,7 @@ def _run_json_list(command: List[str]) -> List[JSONDict]:
 def _write_fizzy_symphony_status(path: Path, summary: JSONDict) -> None:
     status = {
         "status": summary.get("status"),
+        "phase": "complete",
         "board_id": summary.get("board", {}).get("id"),
         "card_number": summary.get("card_number"),
         "golden_tickets": summary.get("discovery", {}).get("golden_tickets", []),
@@ -2042,6 +2057,89 @@ def _write_fizzy_symphony_status(path: Path, summary: JSONDict) -> None:
         "summary_path": summary.get("artifacts", {}).get("summary_path"),
     }
     path.write_text(json.dumps(status, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _worker_running_status(
+    *,
+    board_id: str,
+    card_number: int,
+    workspace: Path,
+    input_id: str,
+    adapter_kind: str,
+    sdk_preflight: JSONDict,
+    summary_path: Path,
+    status_path: Path,
+) -> JSONDict:
+    return {
+        "status": "RUNNING",
+        "phase": "worker_running",
+        "board_id": board_id,
+        "card_number": card_number,
+        "workspace": str(workspace),
+        "worker": {
+            "input_id": input_id,
+            "state": "RESERVED",
+        },
+        "queue": {
+            "adapter": adapter_kind,
+            "input_queue": "fizzy_codex_input",
+            "state": "RESERVED",
+        },
+        "sdk": {
+            "runner": sdk_preflight.get("runner"),
+            "preflight_thread_id": sdk_preflight.get("thread_id"),
+            "preflight_run_id": sdk_preflight.get("run_id"),
+        },
+        "summary_path": str(summary_path),
+        "status_path": str(status_path),
+    }
+
+
+def _write_fizzy_symphony_progress(path: Path, status: JSONDict) -> None:
+    heartbeat = dict(status)
+    heartbeat["heartbeat_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    path.write_text(json.dumps(heartbeat, indent=2, sort_keys=True), encoding="utf-8")
+    print(
+        "fizzy-symphony "
+        f"{heartbeat.get('phase')} card={heartbeat.get('card_number')} "
+        f"queue={heartbeat.get('queue', {}).get('state')} status_path={path}",
+        flush=True,
+    )
+
+
+class _worker_heartbeat:
+    def __init__(self, path: Path, status: JSONDict) -> None:
+        self.path = path
+        self.status = dict(status)
+        self.interval = _heartbeat_interval_seconds()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self) -> "_worker_heartbeat":
+        if self.interval <= 0:
+            return self
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            _write_fizzy_symphony_progress(self.path, self.status)
+
+
+def _heartbeat_interval_seconds() -> float:
+    raw = os.getenv("FIZZY_SYMPHONY_HEARTBEAT_SECONDS")
+    if raw is None or raw == "":
+        return 30.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 30.0
 
 
 def _verify_live_card_on_board(card: JSONDict, *, board_id: str, expected_golden: bool) -> None:

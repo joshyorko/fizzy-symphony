@@ -326,6 +326,32 @@ def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monk
     assert any(call[:3] == ["fizzy", "card", "tag"] and "--tag" in call for call in calls)
 
 
+def test_fizzy_symphony_writes_worker_running_status_before_codex_returns(
+    tmp_path, monkeypatch, capsys
+):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    _patch_fake_fizzy(monkeypatch)
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+    monkeypatch.setenv("FIZZY_SYMPHONY_HEARTBEAT_SECONDS", "0")
+    runner = _StatusInspectingPromptSdkRunner(tmp_path / "output")
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=runner,
+        prefer_real_adapter=False,
+    )
+    captured = capsys.readouterr()
+
+    assert summary["status"] == "PASS"
+    assert runner.running_status["status"] == "RUNNING"
+    assert runner.running_status["phase"] == "worker_running"
+    assert runner.running_status["card_number"] == 321
+    assert runner.running_status["worker"]["input_id"]
+    assert "worker_running card=321" in captured.out
+
+
 def test_fizzy_symphony_existing_board_requires_golden_ticket(tmp_path, monkeypatch):
     sample_project = tmp_path / "sample_project"
     shutil.copytree(WORKAI_SAMPLE, sample_project)
@@ -482,6 +508,45 @@ class _UnavailableSdkRunner:
 
     def __call__(self, request):  # noqa: ARG002
         raise RuntimeError("Codex SDK runner is not implemented yet")
+
+
+class _StatusInspectingPromptSdkRunner:
+    runner_kind = "codex_sdk"
+
+    def __init__(self, output_dir):
+        self.output_dir = Path(output_dir)
+        self.running_status = {}
+
+    def __call__(self, request):
+        if request.metadata.get("preflight"):
+            return CodexRunResult(
+                success=True,
+                final_response="SDK preflight OK",
+                thread_id="thread-preflight",
+                raw_metadata={
+                    "runner": "codex_sdk",
+                    "thread_id": "thread-preflight",
+                    "run_id": "run-preflight",
+                    "raw": {"model": "fake-sdk"},
+                },
+            )
+
+        status_path = self.output_dir / "fizzy-symphony-status.json"
+        self.running_status = json.loads(status_path.read_text(encoding="utf-8"))
+        workspace = Path(str(request.workspace))
+        (workspace / "prompt-proof.txt").write_text("ok", encoding="utf-8")
+        return CodexRunResult(
+            success=True,
+            final_response="Prompt card completed with SDK runner.",
+            thread_id="thread-card-321",
+            raw_metadata={
+                "runner": "codex_sdk",
+                "thread_id": "thread-card-321",
+                "run_id": "run-card-321",
+                "card_number": 321,
+                "raw": {"changed_files": ["prompt-proof.txt"]},
+            },
+        )
 
 
 def _patch_fake_fizzy(monkeypatch):
