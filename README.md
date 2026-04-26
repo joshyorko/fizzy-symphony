@@ -19,10 +19,9 @@ main divergence is implementation plumbing: this project can use Robocorp
 workitems as the durable claimed/running/result queue instead of keeping that
 state only inside a long-running daemon.
 
-The closest Fizzy-native prior art is
-[`basecamp/fizzy-popper`](https://github.com/basecamp/fizzy-popper). This repo
-borrows its golden-ticket board pattern, but keeps a separate Python/RCC lane for
-larger asynchronous execution.
+The closest Fizzy-native prior art is Basecamp's reference implementation. This
+repo borrows its golden-ticket board pattern, but keeps a separate Python/RCC
+lane for larger asynchronous execution.
 
 It provides:
 
@@ -35,7 +34,7 @@ It provides:
 
 ## Operating Modes
 
-Simple mode should stay as clean as `fizzy-popper`:
+Simple mode should stay clean:
 
 ```text
 Fizzy board -> polling -> Codex -> comment/move card
@@ -50,7 +49,8 @@ Fizzy board -> producer -> workitem lease -> RCC/Codex worker -> reporter -> Fiz
 Fizzy stores the work truth: card content, comments, tags, visible lanes, and
 proof. Workitems store execution custody: leases, retries, worker outputs,
 artifacts, and reporter handoff. If durable mode does not provide real
-multi-worker or crash-recovery value, operators should prefer `fizzy-popper`.
+multi-worker or crash-recovery value, operators should prefer the simpler
+Basecamp reference implementation.
 
 ## Main Mapping
 
@@ -309,7 +309,7 @@ python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 - `prompts/program-lead.md` guides the lead agent on board coordination and state transitions.
 - `prompts/worker-agent.md` guides a worker to claim exactly one card, stay within allowed paths, and report proof of work.
 - `docs/openai-symphony-alignment.md` explains how this maps to the upstream OpenAI Symphony model.
-- `docs/prior-art-fizzy-popper.md` compares this repo with Basecamp's Fizzy-native implementation.
+- `docs/prior-art-basecamp-reference.md` compares this repo with Basecamp's Fizzy-native implementation.
 - `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
 - `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
 - `docs/production-smoke-agent.md` defines the SDK-backed release smoke gate.

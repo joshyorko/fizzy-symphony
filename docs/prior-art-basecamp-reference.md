@@ -1,14 +1,14 @@
-# Prior Art: fizzy-popper
+# Prior Art: Basecamp Reference
 
 ## Summary
 
-Basecamp's `fizzy-popper` is the clearest Fizzy-native implementation of the
+Basecamp's reference service is the clearest Fizzy-native implementation of the
 OpenAI Symphony idea: a Fizzy board becomes an agent dispatch surface. A card
 tagged `#agent-instructions` sits in a column as a golden ticket, work cards
 enter that column, a long-running Node/TypeScript service launches an agent,
 posts a result, and optionally moves or closes the card.
 
-As of April 26, 2026, `fizzy-popper` is small and intentionally direct:
+As of April 26, 2026, the reference service is small and intentionally direct:
 
 - Node/TypeScript daemon.
 - Polling plus optional webhook ingestion.
@@ -22,7 +22,7 @@ That is a strong simple-mode design. It should shape this repository.
 
 ## What It Does Better Today
 
-`fizzy-popper` has a better immediate product loop:
+The reference service has a better immediate product loop:
 
 1. Configure a board with golden tickets.
 2. Start one watcher.
@@ -34,7 +34,7 @@ wizard, status endpoint, webhook receiver, polling reconciler, backend
 detection, prompt assembly, and supervisor lifecycle are all in one repo.
 
 If `fizzy-symphony` cannot preserve a clean simple mode, operators should use
-or fork `fizzy-popper` instead.
+or fork the simpler reference service instead.
 
 ## Where fizzy-symphony Differs
 
@@ -68,7 +68,7 @@ scale beyond one local daemon process.
 
 ## Why Durable Mode Can Be Stickier
 
-For one person or a small board, `fizzy-popper` is likely enough.
+For one person or a small board, the simpler reference service is likely enough.
 
 For a large board with many agents, multiple Codex accounts, RCC containers, or
 several worker machines, `fizzy-symphony` can provide a stronger operating
@@ -84,7 +84,7 @@ model:
 - Backpressure and metrics can come from the queue instead of the board alone.
 
 This is the real value proposition. Without that distributed-execution story,
-the project should collapse back toward `fizzy-popper`.
+the project should collapse back toward the simpler reference service.
 
 ## Concepts To Borrow
 
@@ -108,7 +108,7 @@ the project should collapse back toward `fizzy-popper`.
 
 ## Codex Runner Implication
 
-`fizzy-popper` shells out to supported agent backends. `fizzy-symphony` should
+The reference service shells out to supported agent backends. `fizzy-symphony` should
 not assume raw CLI subprocesses are the final Codex story. The official Codex
 SDK/app-server is a better long-term fit for durable mode because the
 orchestrator can keep structured run/thread identity while workitems keep the
@@ -120,9 +120,9 @@ report-back.
 
 ## Stop Conditions
 
-Stop investing in `fizzy-symphony` and prefer `fizzy-popper` if:
+Stop investing in `fizzy-symphony` and prefer the simpler reference service if:
 
-- simple mode becomes harder to explain than `fizzy-popper`;
+- simple mode becomes harder to explain than the simpler reference service;
 - Robocorp/RCC cannot stay optional;
 - durable mode does not demonstrate crash recovery, retry, or multi-worker
   coordination;
@@ -130,7 +130,7 @@ Stop investing in `fizzy-symphony` and prefer `fizzy-popper` if:
 
 Continue investing if:
 
-- simple mode remains Popper-like;
+- simple mode remains board-native and easy to explain;
 - durable mode proves useful for many workers or many Codex accounts;
 - Fizzy remains the visible source of truth;
 - workitems remain boring execution plumbing.
