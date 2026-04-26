@@ -1,0 +1,32 @@
+---
+# yamllint disable rule:line-length
+# Manual prompt/card smoke suite.
+# Run from the repo root with explicit env:
+#   rcc run -r robot_tests/prompt_card_smoke/robot.yaml --dev -t PromptCardSmoke --silent
+
+tasks:
+  PromptCardSmoke:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t PromptCardSmoke
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  PromptCardSmoke:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t PromptCardSmoke
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore

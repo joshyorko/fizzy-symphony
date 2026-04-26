@@ -1,0 +1,32 @@
+---
+# yamllint disable rule:line-length
+# Manual WorkAI production-smoke suite.
+# Run from the repo root with explicit disposable-board env:
+#   rcc run -r robot_tests/workai_production_smoke/robot.yaml --dev -t WorkAIProductionSmoke --silent
+
+tasks:
+  WorkAIProductionSmoke:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t WorkAIProductionSmoke
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  WorkAIProductionSmoke:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t WorkAIProductionSmoke
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore

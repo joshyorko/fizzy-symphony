@@ -12,6 +12,27 @@ name: RCC Robot
         description: RCC task name to run from the suite robot.yaml.
         required: true
         type: string
+    secrets:
+      FIZZY_SYMPHONY_BOARD_ID:
+        required: false
+      FIZZY_SYMPHONY_CARD_NUMBER:
+        required: false
+      FIZZY_SYMPHONY_PROMPT:
+        required: false
+      FIZZY_SYMPHONY_WORKSPACE:
+        required: false
+      FIZZY_SYMPHONY_LIVE_FIZZY:
+        required: false
+      WORKAI_SMOKE_BOARD_ID:
+        required: false
+      WORKAI_SMOKE_LIVE_FIZZY:
+        required: false
+      WORKAI_SMOKE_HANDOFF_COLUMN_ID:
+        required: false
+      WORKAI_SMOKE_CARD_NUMBERS:
+        required: false
+      WORKAI_SMOKE_GOLDEN_CARD_NUMBER:
+        required: false
 
 permissions:
   contents: read
@@ -26,6 +47,20 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
+    env:
+      ROBOCORP_HOME: ${{ runner.temp }}/robocorp/${{ inputs.suite }}
+      RCC_HOME: ${{ runner.temp }}/rcc/${{ inputs.suite }}
+      PYTHONUNBUFFERED: "1"
+      FIZZY_SYMPHONY_BOARD_ID: ${{ secrets.FIZZY_SYMPHONY_BOARD_ID }}
+      FIZZY_SYMPHONY_CARD_NUMBER: ${{ secrets.FIZZY_SYMPHONY_CARD_NUMBER }}
+      FIZZY_SYMPHONY_PROMPT: ${{ secrets.FIZZY_SYMPHONY_PROMPT }}
+      FIZZY_SYMPHONY_WORKSPACE: ${{ secrets.FIZZY_SYMPHONY_WORKSPACE }}
+      FIZZY_SYMPHONY_LIVE_FIZZY: ${{ secrets.FIZZY_SYMPHONY_LIVE_FIZZY }}
+      WORKAI_SMOKE_BOARD_ID: ${{ secrets.WORKAI_SMOKE_BOARD_ID }}
+      WORKAI_SMOKE_LIVE_FIZZY: ${{ secrets.WORKAI_SMOKE_LIVE_FIZZY }}
+      WORKAI_SMOKE_HANDOFF_COLUMN_ID: ${{ secrets.WORKAI_SMOKE_HANDOFF_COLUMN_ID }}
+      WORKAI_SMOKE_CARD_NUMBERS: ${{ secrets.WORKAI_SMOKE_CARD_NUMBERS }}
+      WORKAI_SMOKE_GOLDEN_CARD_NUMBER: ${{ secrets.WORKAI_SMOKE_GOLDEN_CARD_NUMBER }}
 
     steps:
       - name: Check out repository
