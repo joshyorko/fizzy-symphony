@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 from pathlib import Path
 
@@ -61,6 +60,7 @@ def test_setup_writes_local_config_and_env_file(tmp_path, capsys):
     assert env["FIZZY_SYMPHONY_BOARD_ID"] == ""
     assert env["FIZZY_SYMPHONY_CARD_NUMBER"] == ""
     assert env["FIZZY_SYMPHONY_CODEX_MODEL"] == "gpt-5.5"
+    assert env["FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS"] == "30"
 
 
 def test_setup_without_arguments_writes_runnable_demo_defaults(tmp_path):
@@ -97,6 +97,7 @@ def test_setup_without_arguments_preserves_existing_values(tmp_path):
                 "FIZZY_SYMPHONY_BOARD_ID": "board-1",
                 "FIZZY_SYMPHONY_CARD_NUMBER": "12",
                 "FIZZY_SYMPHONY_LIVE_FIZZY": "1",
+                "FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS": "9",
             }
         ),
         encoding="utf-8",
@@ -116,6 +117,7 @@ def test_setup_without_arguments_preserves_existing_values(tmp_path):
     assert env["FIZZY_SYMPHONY_BOARD_ID"] == "board-1"
     assert env["FIZZY_SYMPHONY_CARD_NUMBER"] == "12"
     assert env["FIZZY_SYMPHONY_LIVE_FIZZY"] == "1"
+    assert env["FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS"] == "9"
 
 
 def test_start_launches_detached_by_default_and_writes_run_file(tmp_path, monkeypatch, capsys):
@@ -232,7 +234,7 @@ def test_start_foreground_runs_rcc_without_detaching(tmp_path, monkeypatch, caps
     ]
 
 
-def test_status_reports_configured_board_and_latest_artifact(tmp_path, capsys):
+def test_status_reports_configured_board_and_latest_artifact(tmp_path, monkeypatch, capsys):
     config_dir = tmp_path / ".fizzy-symphony"
     output_dir = tmp_path / "output"
     output_dir.mkdir()
@@ -265,6 +267,7 @@ def test_status_reports_configured_board_and_latest_artifact(tmp_path, capsys):
         json.dumps({"pid": 999999, "command": ["rcc"], "log_path": str(config_dir / "service.log")}),
         encoding="utf-8",
     )
+    monkeypatch.setattr("fizzy_symphony.service_commands._pid_alive", lambda pid: False)
 
     exit_code = main(["status", "--config-dir", str(config_dir)])
     captured = capsys.readouterr()
@@ -319,7 +322,7 @@ def test_status_labels_pending_result_workitems_as_artifacts(tmp_path, capsys):
     assert "fizzy_codex_results PENDING" not in captured.out
 
 
-def test_status_reports_running_worker_phase(tmp_path, capsys):
+def test_status_reports_running_worker_phase(tmp_path, monkeypatch, capsys):
     config_dir = tmp_path / ".fizzy-symphony"
     output_dir = tmp_path / "output"
     output_dir.mkdir()
@@ -347,9 +350,10 @@ def test_status_reports_running_worker_phase(tmp_path, capsys):
         encoding="utf-8",
     )
     (config_dir / "run.json").write_text(
-        json.dumps({"pid": os.getpid(), "command": ["rcc"], "log_path": str(config_dir / "service.log")}),
+        json.dumps({"pid": 42424, "command": ["rcc"], "log_path": str(config_dir / "service.log")}),
         encoding="utf-8",
     )
+    monkeypatch.setattr("fizzy_symphony.service_commands._pid_alive", lambda pid: True)
 
     exit_code = main(["status", "--config-dir", str(config_dir)])
     captured = capsys.readouterr()
@@ -362,7 +366,7 @@ def test_status_reports_running_worker_phase(tmp_path, capsys):
     assert "heartbeat: 2026-04-26T16:10:00Z" in captured.out
 
 
-def test_status_marks_running_artifact_stale_when_process_stopped(tmp_path, capsys):
+def test_status_marks_running_artifact_stale_when_process_stopped(tmp_path, monkeypatch, capsys):
     config_dir = tmp_path / ".fizzy-symphony"
     output_dir = tmp_path / "output"
     output_dir.mkdir()
@@ -379,6 +383,7 @@ def test_status_marks_running_artifact_stale_when_process_stopped(tmp_path, caps
         json.dumps({"pid": 999999, "command": ["rcc"]}),
         encoding="utf-8",
     )
+    monkeypatch.setattr("fizzy_symphony.service_commands._pid_alive", lambda pid: False)
 
     exit_code = main(["status", "--config-dir", str(config_dir)])
     captured = capsys.readouterr()
@@ -434,4 +439,20 @@ def test_boards_runs_fizzy_board_list(monkeypatch, capsys):
 
     assert exit_code == 0
     assert calls[0][0] == ["fizzy", "board", "list", "--markdown"]
+    assert calls[0][1]["timeout"] == 30.0
     assert "Board: Example" in captured.out
+
+
+def test_boards_reports_timeout_as_stderr_and_nonzero(monkeypatch, capsys):
+    def fake_run_timeout(command, **kwargs):
+        import subprocess
+
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("fizzy_symphony.service_commands.subprocess.run", fake_run_timeout)
+
+    exit_code = main(["boards"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 124
+    assert "fizzy board list --markdown timed out after 30 seconds" in captured.err

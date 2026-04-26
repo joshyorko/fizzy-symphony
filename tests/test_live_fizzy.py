@@ -14,13 +14,14 @@ def _client(**kwargs):
 def _recording_run(monkeypatch, stdout='{"ok": true}'):
     calls = []
 
-    def fake_run(command, text, capture_output, check):
+    def fake_run(command, text, capture_output, check, timeout):
         calls.append(
             {
                 "command": command,
                 "text": text,
                 "capture_output": capture_output,
                 "check": check,
+                "timeout": timeout,
             }
         )
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
@@ -53,6 +54,7 @@ def test_read_commands_parse_json_and_use_agent_quiet(monkeypatch):
     assert all(call["text"] is True for call in calls)
     assert all(call["capture_output"] is True for call in calls)
     assert all(call["check"] is False for call in calls)
+    assert all(call["timeout"] == 30.0 for call in calls)
 
 
 def test_create_commands_parse_json_and_use_local_cli_flags(monkeypatch):
@@ -163,12 +165,13 @@ def test_card_mutations_accept_positive_ascii_visible_numbers(monkeypatch, card_
             "text": True,
             "capture_output": True,
             "check": False,
+            "timeout": 30.0,
         }
     ]
 
 
 def test_nonzero_exit_raises_clear_error(monkeypatch):
-    def fake_run(command, text, capture_output, check):
+    def fake_run(command, text, capture_output, check, timeout):
         return subprocess.CompletedProcess(command, 17, stdout="", stderr="nope")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -188,7 +191,7 @@ def test_nonzero_exit_raises_clear_error(monkeypatch):
     ],
 )
 def test_subprocess_setup_errors_raise_clear_client_error(monkeypatch, error, match):
-    def fake_run(command, text, capture_output, check):
+    def fake_run(command, text, capture_output, check, timeout):
         raise error
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -202,3 +205,24 @@ def test_invalid_json_raises_clear_error(monkeypatch):
 
     with pytest.raises(FizzyLiveClientError, match="Invalid JSON from fizzy board list --all"):
         _client().board_list()
+
+
+def test_custom_timeout_threads_to_subprocess(monkeypatch):
+    calls = _recording_run(monkeypatch, stdout='{"ok": true}')
+
+    assert _client(timeout_seconds=7.5).doctor() == {"ok": True}
+
+    assert calls[0]["timeout"] == 7.5
+
+
+def test_timeout_raises_clear_client_error(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout):
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(
+        FizzyLiveClientError,
+        match="fizzy doctor --agent --quiet timed out after 30 seconds",
+    ):
+        _client().doctor()

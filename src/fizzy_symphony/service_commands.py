@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from .live_fizzy import (
+    FIZZY_TIMEOUT_ENV,
+    fizzy_timeout_seconds_from_environment,
+)
+
 
 JSONDict = Dict[str, Any]
 
@@ -30,6 +35,7 @@ DEFAULT_BOARD_NAME = "Fizzy Symphony Rails Todo"
 DEFAULT_CARD_TITLE = "Build a simple Rails todo app"
 DEFAULT_CODEX_MODEL = "gpt-5.4-mini"
 DEFAULT_RESULT_QUEUE_NAME = "fizzy_codex_results"
+DEFAULT_FIZZY_TIMEOUT_VALUE = "30"
 
 
 def setup_command(args: object) -> int:
@@ -162,8 +168,13 @@ def boards_command(args: object) -> int:
     """List Fizzy boards, then configured board columns when available."""
 
     fizzy_bin = str(getattr(args, "fizzy_bin", "fizzy") or "fizzy")
+    try:
+        timeout_seconds = fizzy_timeout_seconds_from_environment()
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     command = [fizzy_bin, "board", "list", "--markdown"]
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    completed = _run_fizzy_cli(command, timeout_seconds=timeout_seconds)
     if completed.returncode != 0:
         print(completed.stderr or completed.stdout or "fizzy board list failed", file=sys.stderr)
         return completed.returncode
@@ -172,7 +183,7 @@ def boards_command(args: object) -> int:
     board_ids = _configured_board_ids(_config_dir(args))
     for board_id in board_ids:
         column_command = [fizzy_bin, "column", "list", "--board", board_id, "--markdown"]
-        columns = subprocess.run(column_command, text=True, capture_output=True, check=False)
+        columns = _run_fizzy_cli(column_command, timeout_seconds=timeout_seconds)
         if columns.returncode == 0 and columns.stdout:
             print("")
             print(columns.stdout, end="")
@@ -255,6 +266,13 @@ def _build_env(args: object, existing_env: Optional[Mapping[str, Any]] = None) -
                 "FIZZY_SYMPHONY_RUN_MODE",
                 "once",
             ),
+            FIZZY_TIMEOUT_ENV: _setup_value(
+                args,
+                "fizzy_timeout_seconds",
+                existing_env,
+                FIZZY_TIMEOUT_ENV,
+                DEFAULT_FIZZY_TIMEOUT_VALUE,
+            ),
             "FIZZY_SYMPHONY_BOARD_ID": _setup_value(
                 args,
                 "board_id",
@@ -272,6 +290,24 @@ def _build_env(args: object, existing_env: Optional[Mapping[str, Any]] = None) -
         }
     )
     return {key: value for key, value in env.items() if value != "" or key in {"FIZZY_SYMPHONY_BOARD_ID", "FIZZY_SYMPHONY_CARD_NUMBER"}}
+
+
+def _run_fizzy_cli(command: List[str], *, timeout_seconds: float) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            stdout="",
+            stderr=f"{' '.join(command)} timed out after {timeout_seconds:g} seconds.",
+        )
 
 
 def _rcc_command(config: Mapping[str, Any], env_path: Path, *, silent: bool) -> List[str]:

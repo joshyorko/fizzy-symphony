@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import select
 import shlex
 import shutil
 import subprocess
@@ -13,7 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Union
+from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, TextIO, Union
 
 from .workitem_queue import FizzyWorkItemPayload, JSONDict
 
@@ -592,11 +591,13 @@ class _CodexAppServerJsonRpcClient:
         self.timeout_seconds = timeout_seconds
         self.env = dict(env) if env is not None else None
         self._process: Optional[subprocess.Popen[str]] = None
+        self._stdout_queue: Optional[queue.Queue[str]] = None
+        self._stdout_reader: Optional[threading.Thread] = None
         self._next_id = 1
         self._notifications: List[JSONDict] = []
 
     def __enter__(self) -> "_CodexAppServerJsonRpcClient":
-        self._process = subprocess.Popen(
+        process = subprocess.Popen(
             self.command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -604,6 +605,16 @@ class _CodexAppServerJsonRpcClient:
             text=True,
             env=self.env,
         )
+        if process.stdout is None:
+            raise RuntimeError("Codex app-server stdout is unavailable.")
+        self._process = process
+        self._stdout_queue = queue.Queue()
+        self._stdout_reader = threading.Thread(
+            target=self._read_stdout_lines,
+            args=(process.stdout, self._stdout_queue),
+            daemon=True,
+        )
+        self._stdout_reader.start()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -731,13 +742,14 @@ class _CodexAppServerJsonRpcClient:
 
     def _read_message(self, deadline: Optional[float]) -> JSONDict:
         process = self._require_process()
-        if process.stdout is None:
+        stdout_queue = self._stdout_queue
+        if stdout_queue is None:
             raise RuntimeError("Codex app-server stdout is unavailable.")
         wait_seconds = _seconds_until(deadline)
-        ready, _, _ = select.select([process.stdout], [], [], wait_seconds)
-        if not ready:
-            raise TimeoutError("Timed out waiting for Codex app-server response.")
-        line = process.stdout.readline()
+        try:
+            line = stdout_queue.get(timeout=wait_seconds)
+        except queue.Empty as exc:
+            raise TimeoutError("Timed out waiting for Codex app-server response.") from exc
         if line == "":
             stderr = _read_completed_stderr(process)
             raise RuntimeError(f"Codex app-server exited before responding. {stderr}".strip())
@@ -748,6 +760,15 @@ class _CodexAppServerJsonRpcClient:
         if not isinstance(message, Mapping):
             raise RuntimeError(f"Codex app-server emitted non-object JSON: {message!r}")
         return dict(message)
+
+    def _read_stdout_lines(
+        self,
+        stdout: TextIO,
+        stdout_queue: "queue.Queue[str]",
+    ) -> None:
+        for line in stdout:
+            stdout_queue.put(line)
+        stdout_queue.put("")
 
     def _require_process(self) -> subprocess.Popen[str]:
         if self._process is None:

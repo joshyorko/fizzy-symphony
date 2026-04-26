@@ -236,6 +236,11 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_p.add_argument("--card-title", default="", help="Seed work card title.")
     setup_p.add_argument("--codex-model", default="", help="Codex model for live worker runs.")
     setup_p.add_argument("--run-mode", default="once", choices=["once", "watch"], help="Run mode env value.")
+    setup_p.add_argument(
+        "--fizzy-timeout-seconds",
+        default="",
+        help="Live Fizzy CLI timeout for generated env config (default: 30).",
+    )
     setup_p.add_argument("--rcc-bin", default="rcc", help="RCC executable.")
     setup_p.add_argument("--robot-path", default="robots/workitems/robot.yaml", help="RCC robot.yaml path.")
     setup_p.add_argument("--output-dir", default="", help="RCC artifact output directory; defaults to <config-dir>/output.")
