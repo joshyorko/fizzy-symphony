@@ -293,6 +293,7 @@ python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 - `docs/prior-art-fizzy-popper.md` compares this repo with Basecamp's Fizzy-native implementation.
 - `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
 - `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
+- `docs/production-smoke-agent.md` defines the SDK-backed release smoke gate.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
 - `robots/workitems/` contains the RCC SQLite smoke robot.
 - `test-projects/workai-smoke/` contains the disposable Fizzy board fixture and fake project.

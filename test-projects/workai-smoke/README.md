@@ -2,6 +2,11 @@
 
 This directory is a repo-local harness for proving `fizzy-symphony` against a disposable WorkAI/Fizzy board. It is safe by default: `bootstrap_board.py` prints Fizzy CLI commands and does not run them unless `--live` is passed.
 
+The production smoke fixture is intentionally larger than a unit-test toy: it
+creates one real golden ticket plus eight task cards so the dashboard can show
+queueing, claiming, implementation, verification, and report-back across
+several kinds of work.
+
 ## Smoke Loop
 
 1. Create and configure a disposable Fizzy board with `python test-projects/workai-smoke/bootstrap_board.py --live --create-board`.
@@ -25,3 +30,7 @@ python test-projects/workai-smoke/bootstrap_board.py
 ```
 
 The fixture lives in `board.fixture.json`. It intentionally uses generic board/card content and does not include Josh's live board IDs.
+
+The full production smoke agent is specified in
+`docs/production-smoke-agent.md`. It must use the Codex SDK runner, not only the
+CLI fallback.

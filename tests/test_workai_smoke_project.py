@@ -20,8 +20,13 @@ def _load_bootstrap_module():
 
 def test_fixture_describes_disposable_board_and_cards():
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    production_smoke = data["board"]["production_smoke"]
 
     assert data["board"]["name"] == "WorkAI Disposable Smoke"
+    assert production_smoke["requires_codex_sdk"] is True
+    assert production_smoke["requires_rcc_sqlite"] is True
+    assert production_smoke["minimum_task_cards"] == 8
+    assert "Codex SDK run metadata" in production_smoke["expected_artifacts"]
     assert data["board"]["recommended_columns"] == [
         "Shaping",
         "Ready for Agents",
@@ -37,7 +42,8 @@ def test_fixture_describes_disposable_board_and_cards():
         "codex",
         "move-to-synthesize-and-verify",
     ]
-    assert [card["number"] for card in data["task_cards"]] == [1, 2, 3]
+    assert [card["number"] for card in data["task_cards"]] == list(range(1, 9))
+    assert all(card["expected_artifact"] for card in data["task_cards"])
 
 
 def test_bootstrap_generates_dry_run_commands_with_fizzy_boundaries():
@@ -65,6 +71,11 @@ def test_bootstrap_generates_dry_run_commands_with_fizzy_boundaries():
         "fizzy card column '<TASK_1_NUMBER>' --column '<Ready for Agents column id>'"
         in commands
     )
+    assert (
+        "fizzy card create --board board_123 --title 'Add JSON output mode' "
+        "--description 'Add a --json option that prints a JSON object with the "
+        "provided name and greeting.' --agent --quiet"
+    ) in commands
     assert any(command.startswith("fizzy card create --board board_123") for command in commands)
     assert not any("card show" in command or "card column 1" in command for command in commands)
 
