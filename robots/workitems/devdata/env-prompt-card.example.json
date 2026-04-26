@@ -1,0 +1,22 @@
+{
+  "RC_WORKITEM_ADAPTER": "robocorp_adapters_custom._sqlite.SQLiteAdapter",
+  "RC_WORKITEM_QUEUE_NAME": "fizzy_symphony_prompt_input",
+  "RC_WORKITEM_OUTPUT_QUEUE_NAME": "fizzy_symphony_prompt_results",
+  "RC_WORKITEM_DB_PATH": "./output/fizzy-symphony-prompt.db",
+  "RC_WORKITEM_FILES_DIR": "./output/workitem-files",
+
+  "FIZZY_SYMPHONY_CREATE_BOARD": "1",
+  "FIZZY_SYMPHONY_CREATE_CARD": "1",
+  "FIZZY_SYMPHONY_BOARD_NAME": "Fizzy Symphony Prompt Smoke",
+  "FIZZY_SYMPHONY_CARD_TITLE": "Run Codex prompt smoke",
+  "FIZZY_SYMPHONY_BOARD_ID": "",
+  "FIZZY_SYMPHONY_CARD_NUMBER": "",
+  "FIZZY_SYMPHONY_WORKSPACE": "/absolute/path/to/project",
+  "FIZZY_SYMPHONY_PROMPT_FILE": "./devdata/prompt-card.prompt.md",
+  "FIZZY_SYMPHONY_HANDOFF_COLUMN_ID": "",
+  "FIZZY_SYMPHONY_LIVE_FIZZY": "1",
+
+  "FIZZY_SYMPHONY_CODEX_MODEL": "gpt-5.4-mini",
+  "FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY": "never",
+  "FIZZY_SYMPHONY_CODEX_SANDBOX": "workspace-write"
+}

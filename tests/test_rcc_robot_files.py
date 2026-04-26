@@ -1,10 +1,12 @@
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from fizzy_symphony.runners import CodexCliRunner, CodexRunResult
+from robots.workitems import tasks as task_module
 from robots.workitems.tasks import (
     FullSmokeBlocked,
     InMemoryWorkItemAdapter,
@@ -24,16 +26,22 @@ def test_rcc_workitem_robot_files_exist():
     assert (ROBOT_ROOT / "conda.yaml").is_file()
     assert (ROBOT_ROOT / "tasks.py").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-sqlite.json").is_file()
+    assert (ROBOT_ROOT / "devdata" / "env-prompt-card.example.json").is_file()
+    assert (ROBOT_ROOT / "devdata" / "prompt-card.prompt.md").is_file()
 
 
 def test_robot_yaml_exposes_expected_tasks():
     robot_yaml = (ROBOT_ROOT / "robot.yaml").read_text(encoding="utf-8")
 
+    assert "tasks:" in robot_yaml
+    assert "FizzySymphony:" in robot_yaml
+    assert "devTasks:" in robot_yaml
     assert "Doctor:" in robot_yaml
     assert "WorkitemsEnv:" in robot_yaml
     assert "SmokeSQLiteWorkitemFlow:" in robot_yaml
     assert "WorkAIProductionSmoke:" in robot_yaml
     assert "PromptCardSmoke:" in robot_yaml
+    assert "RunSymphony:" in robot_yaml
     assert "robocorp.tasks" in robot_yaml
 
 
@@ -158,6 +166,101 @@ def test_prompt_card_smoke_runs_one_prompt_with_sdk_runner(tmp_path):
     assert summary["report_back"]["mode"] == "dry-run"
     assert (sample_project / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
     assert Path(summary["artifacts"]["summary_path"]).is_file()
+
+
+def test_prompt_card_smoke_can_load_prompt_from_env_file_path(tmp_path, monkeypatch):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("Create prompt-proof.txt from a prompt file", encoding="utf-8")
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT_FILE", str(prompt_path))
+
+    summary = run_prompt_card_smoke(
+        board_id="board_prompt",
+        card_number=42,
+        prompt=None,
+        workspace=sample_project,
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+        live_fizzy=False,
+    )
+
+    assert summary["status"] == "PASS"
+    assert (sample_project / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_prompt_card_smoke_can_create_missing_board_and_card(tmp_path, monkeypatch):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    calls = []
+
+    def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append(command)
+        stdout = ""
+        if command[:2] == ["fizzy", "doctor"]:
+            stdout = "ok\n"
+        elif command[:3] == ["fizzy", "board", "create"]:
+            stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "column", "create"]:
+            column_name = command[command.index("--name") + 1]
+            column_id = f"col_{column_name.lower().replace(' & ', '_').replace(' ', '_')}"
+            stdout = json.dumps({"id": column_id})
+        elif command[:3] == ["fizzy", "card", "create"]:
+            stdout = json.dumps({"id": "card_auto", "number": 321})
+        elif command[:3] == ["fizzy", "board", "show"]:
+            stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "card", "show"]:
+            stdout = json.dumps(
+                {
+                    "id": "card_auto",
+                    "number": 321,
+                    "title": "Run Codex prompt smoke",
+                    "description": "Create prompt-proof.txt",
+                    "golden": False,
+                    "board": {"id": "board_auto"},
+                    "column": {"name": "Ready for Agents"},
+                }
+            )
+        elif command[:3] in (
+            ["fizzy", "card", "column"],
+            ["fizzy", "comment", "create"],
+        ):
+            stdout = ""
+        else:
+            raise AssertionError(f"unexpected command: {command}")
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(task_module.subprocess, "run", fake_run)
+
+    summary = run_prompt_card_smoke(
+        board_id=None,
+        card_number=None,
+        prompt="Create prompt-proof.txt",
+        workspace=sample_project,
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+        live_fizzy=True,
+        create_board=True,
+        create_card=True,
+        board_name="Fizzy Symphony Prompt Smoke",
+        card_title="Run Codex prompt smoke",
+    )
+
+    assert summary["status"] == "PASS"
+    assert summary["board"]["id"] == "board_auto"
+    assert summary["board"]["mutated_fizzy"] is True
+    assert summary["board"]["cleanup_command"] == "fizzy board delete board_auto"
+    assert summary["card_number"] == 321
+    assert summary["bootstrap"]["created_board"] is True
+    assert summary["bootstrap"]["created_card"] is True
+    assert summary["bootstrap"]["handoff_column_id"] == "col_synthesize_verify"
+    assert summary["report_back"]["mode"] == "live"
+    assert (sample_project / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+    assert any(call[:3] == ["fizzy", "board", "create"] for call in calls)
+    assert any(call[:3] == ["fizzy", "card", "create"] for call in calls)
+    assert any(call[:3] == ["fizzy", "comment", "create"] for call in calls)
 
 
 class _ScriptedSdkRunner:

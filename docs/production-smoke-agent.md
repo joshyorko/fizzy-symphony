@@ -92,7 +92,7 @@ The production smoke robot is intentionally guarded:
 
 ```bash
 WORKAI_SMOKE_BOARD_ID=<disposable board id> \
-  rcc run -r robots/workitems/robot.yaml -t WorkAIProductionSmoke
+  rcc run -r robots/workitems/robot.yaml --dev -t WorkAIProductionSmoke
 ```
 
 Set `WORKAI_SMOKE_LIVE_FIZZY=1` only when report-back comments and column moves

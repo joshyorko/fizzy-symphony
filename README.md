@@ -290,7 +290,7 @@ python -m compileall src
 python -m pytest
 
 # Optional RCC smoke with SQLite workitems
-rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow \
+rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow \
   -e robots/workitems/devdata/env-sqlite.json --silent
 ```
 
