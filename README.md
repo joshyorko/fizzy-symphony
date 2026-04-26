@@ -231,6 +231,8 @@ fizzy-symphony/
 │   ├── card-adapter-prompt.txt
 │   ├── program-lead.md
 │   └── worker-agent.md
+├── robots/
+│   └── workitems/                   # RCC SQLite smoke robot
 ├── src/
 │   └── fizzy_symphony/
 │       ├── adapters/
@@ -241,6 +243,7 @@ fizzy-symphony/
 │       ├── commands.py             # Compatibility wrappers over the adapter
 │       ├── models.py               # FizzyCard, Agent, CardAdapter, Board, FizzyConfig
 │       ├── robocorp_adapter.py     # Published adapter package loader/env contract
+│       ├── runners.py              # Codex runner boundary and CLI fallback
 │       ├── symphony.py             # OpenAI Symphony concept mapping and board bootstrap
 │       ├── tracker.py              # Tracker adapter contract
 │       ├── workitem_pipeline.py    # Fizzy/workitems/Codex pipeline helpers
@@ -250,6 +253,8 @@ fizzy-symphony/
 │   ├── test_cli.py
 │   ├── test_commands.py
 │   └── test_models.py
+├── test-projects/
+│   └── workai-smoke/                # Disposable Fizzy board + fake repo smoke harness
 ├── SPEC.md
 ├── WORKFLOW.example.md
 ├── pyproject.toml
@@ -264,6 +269,16 @@ fizzy-symphony/
 python -m pip install -e ".[dev]"
 python -m compileall src
 python -m pytest
+
+# Optional RCC smoke with SQLite workitems
+rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow \
+  -e robots/workitems/devdata/env-sqlite.json --silent
+```
+
+For a live visual Fizzy smoke board, create a disposable board and cards:
+
+```bash
+python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 ```
 
 ---
@@ -279,6 +294,8 @@ python -m pytest
 - `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
 - `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
+- `robots/workitems/` contains the RCC SQLite smoke robot.
+- `test-projects/workai-smoke/` contains the disposable Fizzy board fixture and fake project.
 
 ## Adapter Strategy
 
@@ -295,10 +312,9 @@ python -m pytest
 
 ## Runner Strategy
 
-The current scaffold does not run Codex yet. When runtime execution lands, the
-preferred worker path should be the official Codex SDK/app-server so
-`fizzy-symphony` can control local Codex agents programmatically. Raw
-non-interactive `codex` CLI commands should be a fallback, not the only story.
+The runner boundary now lives in `fizzy_symphony.runners`. `CodexCliRunner`
+is the safe subprocess fallback, `CodexWorkItemRunner` adapts it to durable
+workitems, and the preferred future path remains the official Codex SDK/app-server.
 
 This project should not build its own coding-agent harness. For "let Codex work
 a repo card," use Codex as the harness and keep `fizzy-symphony` focused on

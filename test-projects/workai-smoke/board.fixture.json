@@ -1,0 +1,47 @@
+{
+  "board": {
+    "name": "WorkAI Disposable Smoke",
+    "purpose": "Disposable Fizzy board for proving fizzy-symphony against a safe fake repo.",
+    "recommended_columns": [
+      "Shaping",
+      "Ready for Agents",
+      "In Flight",
+      "Needs Input",
+      "Synthesize & Verify",
+      "Ready to Ship"
+    ]
+  },
+  "golden_tickets": [
+    {
+      "title": "Golden: verify WorkAI smoke loop",
+      "description": "Run the disposable board through RCC workitems and Codex runner, then confirm each task card received a useful update.",
+      "target_column": "Ready for Agents",
+      "golden": true,
+      "tags": [
+        "agent-instructions",
+        "codex",
+        "move-to-synthesize-and-verify"
+      ]
+    }
+  ],
+  "task_cards": [
+    {
+      "number": 1,
+      "title": "Add CLI greeting punctuation",
+      "description": "In sample_project/workai_smoke/cli.py, make the greeting end with an exclamation point. Keep tests green.",
+      "target_column": "Ready for Agents"
+    },
+    {
+      "number": 2,
+      "title": "Document sample usage",
+      "description": "Update sample_project/README.md with a short command example for running the greeting script.",
+      "target_column": "Ready for Agents"
+    },
+    {
+      "number": 3,
+      "title": "Tighten greeting test",
+      "description": "Add or update a test that proves the sample greeting contains the provided name.",
+      "target_column": "Ready for Agents"
+    }
+  ]
+}
