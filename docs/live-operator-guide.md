@@ -132,7 +132,10 @@ rcc run -r robots/workitems/robot.yaml -t FizzySymphony -e env.local.json --sile
 
 The workitem adapter, queue names, SQLite files, Codex model, sandbox, and
 approval policy are internal defaults. You only need to put them in an env file
-when deliberately overriding the robot.
+when deliberately overriding the robot. Live Fizzy mutation is also off by
+default; set `FIZZY_SYMPHONY_LIVE_FIZZY=1` only for an intentional live run.
+Live Fizzy CLI reads and mutations use `FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS`,
+which defaults to 30 seconds.
 
 To use an existing board instead, provide the real board id, card number, and
 the real custom column id for your handoff column:

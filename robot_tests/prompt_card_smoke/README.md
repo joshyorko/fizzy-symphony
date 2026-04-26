@@ -13,4 +13,5 @@ rcc run -r robot_tests/prompt_card_smoke/robot.yaml --dev -t PromptCardSmoke --s
 ```
 
 Live Fizzy mutation remains opt-in through `FIZZY_SYMPHONY_LIVE_FIZZY=1` and
-explicit board/card values.
+explicit board/card values. Live Fizzy CLI calls default to a 30-second timeout;
+override with `FIZZY_SYMPHONY_FIZZY_TIMEOUT_SECONDS` when needed.
