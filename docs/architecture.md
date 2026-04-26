@@ -38,7 +38,7 @@ The scaffold treats **Fizzy as the tracker/board layer**. Tracker items are
 normalized into `FizzyCard` objects, while `CardAdapter` remains a compatibility
 wrapper for the existing demo board plan.
 
-Phase 0 keeps the system dry-run only. The CLI adapter mirrors real Fizzy CLI
+Tracker mutation remains dry-run-first. The CLI adapter mirrors real Fizzy CLI
 commands for preview/debugging, but it never executes subprocesses:
 
 - `fizzy card list`
@@ -55,8 +55,10 @@ steps above, not a required native `fizzy card claim` command.
 ## Key Design Decisions
 
 ### 1. Dry-Run-First
-All functionality is dry-run only. `FizzyCLIAdapter` raises if configured for
-non-dry-run use so Phase 0 cannot accidentally execute real tracker mutations.
+Tracker-facing CLI functionality is dry-run only. `FizzyCLIAdapter` raises if
+configured for non-dry-run use so preview flows cannot accidentally execute real
+tracker mutations. Runner and RCC smoke entry points are separate guarded
+execution paths.
 
 ### 2. Canonical Card Shape
 `FizzyCard` is the normalized tracker model. It keeps both the internal `id` and

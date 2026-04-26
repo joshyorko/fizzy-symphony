@@ -3,6 +3,7 @@
 #   rcc run -r robots/workitems/robot.yaml -t Doctor
 #   rcc run -r robots/workitems/robot.yaml -t WorkitemsEnv
 #   rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow -e robots/workitems/devdata/env-sqlite.json
+#   WORKAI_SMOKE_BOARD_ID=<disposable board id> rcc run -r robots/workitems/robot.yaml -t WorkAIProductionSmoke
 
 tasks:
   Doctor:
@@ -13,6 +14,9 @@ tasks:
 
   SmokeSQLiteWorkitemFlow:
     shell: python -m robocorp.tasks run tasks.py -t SmokeSQLiteWorkitemFlow
+
+  WorkAIProductionSmoke:
+    shell: python -m robocorp.tasks run tasks.py -t WorkAIProductionSmoke
 
 environmentConfigs:
   - conda.yaml

@@ -37,7 +37,15 @@ from .runners import (
     Runner,
     create_codex_runner,
 )
-from .symphony import FizzySystemLane, SymphonyColumn, SymphonyMapping, fizzy_system_lanes
+from .symphony import (
+    FizzyCustomColumn,
+    FizzyLaneTarget,
+    FizzySystemLane,
+    SymphonyColumn,
+    SymphonyMapping,
+    fizzy_system_lanes,
+    resolve_fizzy_lane,
+)
 from .tracker import TrackerAdapter
 from .workitem_pipeline import CodexWorkItemWorker, FizzyWorkItemProducer, FizzyWorkItemReporter
 from .workitem_queue import FizzyWorkItemPayload, ReservedWorkItem, WorkItemQueue, WorkItemState
@@ -49,6 +57,8 @@ __all__ = [
     "FizzyCard",
     "FizzyConfig",
     "FizzyCLIAdapter",
+    "FizzyCustomColumn",
+    "FizzyLaneTarget",
     "FizzyOpenAPIAdapter",
     "FizzyWorkItemPayload",
     "FizzyWorkItemProducer",
@@ -84,4 +94,5 @@ __all__ = [
     "create_codex_runner",
     "fizzy_system_lanes",
     "parse_golden_ticket_card",
+    "resolve_fizzy_lane",
 ]

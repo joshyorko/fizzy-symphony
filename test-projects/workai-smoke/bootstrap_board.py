@@ -188,9 +188,12 @@ def card_number(resource: Mapping[str, object]) -> Optional[str]:
     return str(value) if value else None
 
 
-def configure_live_board(fixture: dict, *, board_id: str) -> None:
+def configure_live_board(fixture: dict, *, board_id: str) -> dict:
     subprocess.run(["fizzy", "doctor"], check=True)
-    subprocess.run(["fizzy", "column", "list", "--board", board_id, "--agent", "--quiet"], check=True)
+    subprocess.run(
+        ["fizzy", "column", "list", "--board", board_id, "--agent", "--quiet"],
+        check=True,
+    )
 
     column_ids: dict[str, str] = {}
     for column in fixture["board"]["recommended_columns"]:
@@ -211,11 +214,30 @@ def configure_live_board(fixture: dict, *, board_id: str) -> None:
         if created_id:
             column_ids[column] = created_id
 
+    golden_tickets = []
     for card in fixture.get("golden_tickets", []):
-        create_and_configure_card(card, board_id=board_id, column_ids=column_ids, golden=True)
+        golden_tickets.append(
+            create_and_configure_card(card, board_id=board_id, column_ids=column_ids, golden=True)
+        )
 
+    task_cards = []
     for card in fixture.get("task_cards", []):
-        create_and_configure_card(card, board_id=board_id, column_ids=column_ids, golden=False)
+        task_cards.append(
+            create_and_configure_card(
+                card,
+                board_id=board_id,
+                column_ids=column_ids,
+                golden=False,
+            )
+        )
+
+    return {
+        "board_id": board_id,
+        "cleanup_command": shell_join(["fizzy", "board", "delete", board_id]),
+        "columns": column_ids,
+        "golden_tickets": golden_tickets,
+        "task_cards": task_cards,
+    }
 
 
 def create_and_configure_card(
@@ -224,7 +246,7 @@ def create_and_configure_card(
     board_id: str,
     column_ids: Mapping[str, str],
     golden: bool,
-) -> None:
+) -> dict:
     created = run_json(
         [
             "fizzy",
@@ -241,19 +263,29 @@ def create_and_configure_card(
         ]
     )
     number = card_number(created)
+    summary = {
+        "title": card["title"],
+        "number": number,
+        "golden": bool(card.get("golden")),
+        "target_column": card.get("target_column"),
+        "tags": list(card.get("tags", [])),
+        "marked_golden": False,
+    }
     if not number:
-        return
+        return summary
 
     for tag in card.get("tags", []):
         subprocess.run(["fizzy", "card", "tag", number, "--tag", tag], check=True)
 
     if card.get("golden"):
         subprocess.run(["fizzy", "card", "golden", number], check=True)
+        summary["marked_golden"] = True
 
     target_column = card.get("target_column")
     column_id = column_ids.get(str(target_column)) if target_column else None
     if column_id:
         subprocess.run(["fizzy", "card", "column", number, "--column", column_id], check=True)
+    return summary
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -265,7 +297,11 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="With --live, create the disposable board before configuring it.",
     )
-    parser.add_argument("--live", action="store_true", help="Run Fizzy commands instead of printing them.")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Run Fizzy commands instead of printing them.",
+    )
     args = parser.parse_args(argv)
 
     fixture = load_fixture(args.fixture)
@@ -277,14 +313,16 @@ def main(argv: List[str] | None = None) -> int:
         print("# Create a disposable board, export its id, then run the setup commands:")
         for command in commands:
             print(command)
+        print("# When the smoke is complete, delete only the disposable board:")
+        print(shell_join(["fizzy", "board", "delete", board_id]))
         return 0
 
     if not args.board_id and not args.create_board:
         parser.error("--live requires --board-id or --create-board")
 
     live_board_id = args.board_id or create_board(fixture)
-    configure_live_board(fixture, board_id=live_board_id)
-    print(json.dumps({"board_id": live_board_id}, indent=2, sort_keys=True))
+    summary = configure_live_board(fixture, board_id=live_board_id)
+    print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 
 

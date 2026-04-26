@@ -9,8 +9,8 @@ OpenAI documents a Codex SDK for programmatic control of local Codex agents:
 
 - TypeScript package: `@openai/codex-sdk`
 - Python SDK: experimental, controls the local Codex app-server over JSON-RPC,
-  requires Python 3.10+, and currently expects a local checkout of the
-  open-source Codex repo
+  requires Python 3.10+, and is installed here from the official OpenAI
+  `sdk/python` subdirectory until the packaging story is stable.
 - Non-interactive `codex exec --json` remains a useful fallback because it emits
   structured JSONL events, but the SDK gives a cleaner thread/resume/run API.
 
@@ -41,22 +41,26 @@ CodexRunResult
   raw_metadata
 ```
 
-Then implement runners in this order:
+Runner implementation order:
 
-1. `CodexSdkRunner` spike using the official SDK/app-server.
-2. `CodexCliRunner` fallback for non-interactive `codex` CLI execution.
+1. `CodexSdkRunner` uses the official Codex app-server JSON-RPC protocol.
+2. `CodexCliRunner` remains the fallback for non-interactive `codex` CLI execution.
 3. Optional TypeScript sidecar if the TypeScript SDK stays more stable than the
    experimental Python SDK.
 
 The workitem worker should depend on the runner contract, not the concrete SDK.
-Do not add a default dependency on either SDK until a local spike proves the
-auth, app-server, and packaging path works in Josh's Bluefin/devcontainer setup.
+Do not add a default dependency on either SDK until the auth, app-server, and
+packaging path is proven in Josh's Bluefin/devcontainer setup.
 
 Current implementation status: the repo now has a payload-agnostic runner
-boundary in `fizzy_symphony.runners`. `CodexCliRunner` is the safe fallback for
-local subprocess execution, `CodexWorkItemRunner` adapts that boundary to the
-durable workitem worker, and the SDK path intentionally fails clearly until the
-optional Codex SDK/app-server spike is implemented.
+boundary in `fizzy_symphony.runners`. `CodexSdkRunner` prefers the official
+`codex_app_server` Python SDK when installed, starts a one-turn Codex app-server
+thread in an isolated `cwd`, captures final answer/proof text and thread/turn
+metadata, and returns a clean failed `CodexRunResult` when the local Codex
+runtime or auth is unavailable. If the Python SDK import is unavailable, it can
+fall back to the same app-server JSON-RPC protocol directly. `CodexCliRunner`
+remains the safe subprocess fallback, and `CodexWorkItemRunner` adapts the
+runner contract to the durable workitem worker.
 
 ## How This Fits Durable Mode
 
