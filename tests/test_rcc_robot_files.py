@@ -10,6 +10,7 @@ from robots.workitems import tasks as task_module
 from robots.workitems.tasks import (
     FullSmokeBlocked,
     InMemoryWorkItemAdapter,
+    run_fizzy_symphony_from_environment,
     run_prompt_card_smoke,
     run_smoke_sqlite_workitem_flow,
     run_workai_production_smoke,
@@ -25,6 +26,7 @@ def test_rcc_workitem_robot_files_exist():
     assert (ROBOT_ROOT / "robot.yaml").is_file()
     assert (ROBOT_ROOT / "conda.yaml").is_file()
     assert (ROBOT_ROOT / "tasks.py").is_file()
+    assert (ROBOT_ROOT / "run_fizzy_symphony.py").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-sqlite.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-prompt-card.example.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "prompt-card.prompt.md").is_file()
@@ -263,6 +265,104 @@ def test_prompt_card_smoke_can_create_missing_board_and_card(tmp_path, monkeypat
     assert any(call[:3] == ["fizzy", "comment", "create"] for call in calls)
 
 
+def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monkeypatch):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    calls = _patch_fake_fizzy(monkeypatch)
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+    for key in (
+        "FIZZY_SYMPHONY_CREATE_BOARD",
+        "FIZZY_SYMPHONY_CREATE_CARD",
+        "FIZZY_SYMPHONY_LIVE_FIZZY",
+        "RC_WORKITEM_ADAPTER",
+        "RC_WORKITEM_DB_PATH",
+        "RC_WORKITEM_FILES_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+    )
+
+    assert summary["status"] == "PASS"
+    assert summary["board"]["id"] == "board_auto"
+    assert summary["bootstrap"]["created_board"] is True
+    assert summary["bootstrap"]["created_card"] is True
+    assert summary["preflight"]["sqlite_workitems"]["adapter"] == "in-memory"
+    assert summary["report_back"]["mode"] == "live"
+    assert any(call[:3] == ["fizzy", "board", "create"] for call in calls)
+
+
+def test_fizzy_symphony_interactive_prompt_can_fill_missing_inputs(tmp_path, monkeypatch):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    _patch_fake_fizzy(monkeypatch)
+    for key in (
+        "FIZZY_SYMPHONY_WORKSPACE",
+        "FIZZY_SYMPHONY_PROMPT",
+        "FIZZY_SYMPHONY_PROMPT_FILE",
+        "FIZZY_SYMPHONY_BOARD_ID",
+        "FIZZY_SYMPHONY_CARD_NUMBER",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(task_module, "_can_prompt_interactively", lambda: True)
+
+    def fake_read(label, *, default=None, required=False):  # noqa: ANN001, ARG001
+        if label == "Prompt":
+            return "Create prompt-proof.txt"
+        if label == "Workspace":
+            return str(sample_project)
+        return default or ""
+
+    monkeypatch.setattr(task_module, "_read_interactive_value", fake_read)
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+    )
+
+    assert summary["status"] == "PASS"
+    assert summary["workspace"] == str(sample_project.resolve())
+    assert (sample_project / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_fizzy_symphony_can_clone_git_workspace_ref(tmp_path, monkeypatch):
+    if shutil.which("git") is None:
+        pytest.skip("git is not available")
+    source_repo = tmp_path / "source-repo"
+    _git(["git", "init", str(source_repo)])
+    _git(["git", "-C", str(source_repo), "config", "user.email", "test@example.test"])
+    _git(["git", "-C", str(source_repo), "config", "user.name", "Test User"])
+    (source_repo / "README.md").write_text("main\n", encoding="utf-8")
+    _git(["git", "-C", str(source_repo), "add", "README.md"])
+    _git(["git", "-C", str(source_repo), "commit", "-m", "initial"])
+    _git(["git", "-C", str(source_repo), "checkout", "-b", "feature"])
+    (source_repo / "README.md").write_text("feature\n", encoding="utf-8")
+    _git(["git", "-C", str(source_repo), "commit", "-am", "feature"])
+
+    _patch_fake_fizzy(monkeypatch)
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", source_repo.as_uri())
+    monkeypatch.setenv("FIZZY_SYMPHONY_GIT_REF", "feature")
+    monkeypatch.setenv("FIZZY_SYMPHONY_PROMPT", "Create prompt-proof.txt")
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=_ScriptedPromptSdkRunner(),
+        prefer_real_adapter=False,
+    )
+
+    workspace = Path(summary["workspace"])
+    assert summary["status"] == "PASS"
+    assert workspace != source_repo
+    assert workspace.parent == tmp_path / "output" / "workspaces"
+    assert (workspace / "README.md").read_text(encoding="utf-8") == "feature\n"
+    assert (workspace / "prompt-proof.txt").read_text(encoding="utf-8") == "ok"
+
+
 class _ScriptedSdkRunner:
     runner_kind = "codex_sdk"
 
@@ -309,6 +409,59 @@ class _UnavailableSdkRunner:
 
     def __call__(self, request):  # noqa: ARG002
         raise RuntimeError("Codex SDK runner is not implemented yet")
+
+
+def _patch_fake_fizzy(monkeypatch):
+    calls = []
+    real_run = subprocess.run
+
+    def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if command and command[0] == "git":
+            return real_run(command, *args, **kwargs)
+        calls.append(command)
+        stdout = ""
+        if command[:2] == ["fizzy", "doctor"]:
+            stdout = "ok\n"
+        elif command[:3] == ["fizzy", "board", "create"]:
+            stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "column", "create"]:
+            column_name = command[command.index("--name") + 1]
+            column_id = f"col_{column_name.lower().replace(' & ', '_').replace(' ', '_')}"
+            stdout = json.dumps({"id": column_id})
+        elif command[:3] == ["fizzy", "card", "create"]:
+            stdout = json.dumps({"id": "card_auto", "number": 321})
+        elif command[:3] == ["fizzy", "board", "show"]:
+            stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "card", "show"]:
+            stdout = json.dumps(
+                {
+                    "id": "card_auto",
+                    "number": 321,
+                    "title": "Run Codex prompt smoke",
+                    "description": "Create prompt-proof.txt",
+                    "golden": False,
+                    "board": {"id": "board_auto"},
+                    "column": {"name": "Ready for Agents"},
+                }
+            )
+        elif command[:3] in (
+            ["fizzy", "card", "column"],
+            ["fizzy", "comment", "create"],
+        ):
+            stdout = ""
+        else:
+            raise AssertionError(f"unexpected command: {command}")
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(task_module.subprocess, "run", fake_run)
+    return calls
+
+
+def _git(command):
+    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr or completed.stdout)
+    return completed
 
 
 class _ScriptedPromptSdkRunner(_ScriptedSdkRunner):

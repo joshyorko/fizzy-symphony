@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -177,7 +178,13 @@ def install_adapter_config_shim() -> None:
 
 
 def resolve_output_dir(explicit: Optional[Path] = None) -> Path:
-    path = explicit or Path(get_output_dir())
+    if explicit is not None:
+        path = explicit
+    else:
+        try:
+            path = Path(get_output_dir())
+        except Exception:
+            path = Path(os.getenv("ROBOT_ARTIFACTS", "output"))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -489,6 +496,49 @@ def run_prompt_card_smoke(
     summary["artifacts"]["summary_path"] = str(summary_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
+
+
+def run_fizzy_symphony_from_environment(
+    *,
+    output_dir: Optional[Path] = None,
+    adapter=None,
+    runner=None,
+    prefer_real_adapter: bool = True,
+) -> JSONDict:
+    artifacts_dir = resolve_output_dir(output_dir)
+    board_id = os.getenv("FIZZY_SYMPHONY_BOARD_ID") or None
+    card_number = _parse_optional_int(os.getenv("FIZZY_SYMPHONY_CARD_NUMBER"))
+    prompt = _prompt_from_environment()
+    workspace = _workspace_from_environment(artifacts_dir)
+    live_fizzy = _env_bool_default(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY"), default=True)
+    create_board = _env_bool_default(
+        os.getenv("FIZZY_SYMPHONY_CREATE_BOARD"),
+        default=board_id is None,
+    )
+    create_card = _env_bool_default(
+        os.getenv("FIZZY_SYMPHONY_CREATE_CARD"),
+        default=card_number is None,
+    )
+
+    return run_prompt_card_smoke(
+        board_id=board_id,
+        card_number=card_number,
+        prompt=prompt,
+        workspace=workspace,
+        output_dir=artifacts_dir,
+        adapter=adapter,
+        runner=runner,
+        prefer_real_adapter=prefer_real_adapter,
+        live_fizzy=live_fizzy,
+        handoff_column_id=os.getenv("FIZZY_SYMPHONY_HANDOFF_COLUMN_ID") or None,
+        create_board=create_board,
+        create_card=create_card,
+        board_name=os.getenv("FIZZY_SYMPHONY_BOARD_NAME") or "Fizzy Symphony",
+        card_title=os.getenv("FIZZY_SYMPHONY_CARD_TITLE") or "Run Fizzy Symphony",
+        codex_model=os.getenv("FIZZY_SYMPHONY_CODEX_MODEL") or "gpt-5.4-mini",
+        codex_approval_policy=os.getenv("FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY") or "never",
+        codex_sandbox_mode=os.getenv("FIZZY_SYMPHONY_CODEX_SANDBOX") or "workspace-write",
+    )
 
 
 def _require_disposable_board_id(board_id: Optional[str]) -> str:
@@ -1101,6 +1151,100 @@ def _env_bool(raw: Optional[str]) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_bool_default(raw: Optional[str], *, default: bool) -> bool:
+    if raw is None or raw == "":
+        return default
+    return _env_bool(raw)
+
+
+def _prompt_from_environment() -> Optional[str]:
+    prompt = os.getenv("FIZZY_SYMPHONY_PROMPT")
+    if prompt:
+        return prompt
+    if os.getenv("FIZZY_SYMPHONY_PROMPT_FILE"):
+        return None
+    if _can_prompt_interactively():
+        value = _read_interactive_value("Prompt", required=True)
+        if value:
+            return value
+    return None
+
+
+def _workspace_from_environment(output_dir: Path) -> Path:
+    raw_workspace = os.getenv("FIZZY_SYMPHONY_WORKSPACE") or os.getenv(
+        "FIZZY_SYMPHONY_REPO_URL"
+    )
+    if raw_workspace:
+        if _looks_like_git_workspace(raw_workspace):
+            ref = os.getenv("FIZZY_SYMPHONY_GIT_REF") or os.getenv("FIZZY_SYMPHONY_BRANCH")
+            return _clone_git_workspace(raw_workspace, output_dir=output_dir, ref=ref)
+        return Path(raw_workspace)
+    default = REPO_ROOT
+    if _can_prompt_interactively():
+        value = _read_interactive_value("Workspace", default=str(default))
+        return Path(value or default)
+    return default
+
+
+def _can_prompt_interactively() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _read_interactive_value(
+    label: str,
+    *,
+    default: Optional[str] = None,
+    required: bool = False,
+) -> str:
+    suffix = f" [{default}]" if default else ""
+    while True:
+        value = input(f"{label}{suffix}: ").strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        if not required:
+            return ""
+        print(f"{label} is required.")
+
+
+def _looks_like_git_workspace(value: str) -> bool:
+    if value.startswith(("https://", "http://", "ssh://", "git@", "file://")):
+        return True
+    return value.endswith(".git")
+
+
+def _clone_git_workspace(repo_url: str, *, output_dir: Path, ref: Optional[str]) -> Path:
+    workspace_root = output_dir / "workspaces"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    destination = workspace_root / _git_workspace_name(repo_url, ref)
+    if destination.exists():
+        _run_git(["git", "-C", str(destination), "fetch", "--all", "--tags", "--prune"])
+    else:
+        _run_git(["git", "clone", repo_url, str(destination)])
+    if ref:
+        _run_git(["git", "-C", str(destination), "checkout", ref])
+    return destination
+
+
+def _git_workspace_name(repo_url: str, ref: Optional[str]) -> str:
+    repo_name = repo_url.rstrip("/").rsplit("/", 1)[-1]
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+    suffix = f"-{ref}" if ref else ""
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{repo_name}{suffix}").strip("-")
+    return name or "workspace"
+
+
+def _run_git(command: List[str]) -> None:
+    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise FullSmokeBlocked(completed.stderr or completed.stdout or f"Git failed: {command}")
+
+
 def _require_prompt(prompt: Optional[str]) -> str:
     if prompt:
         return prompt
@@ -1157,13 +1301,13 @@ def SmokeSQLiteWorkitemFlow() -> None:
 
 @task
 def FizzySymphony() -> None:
-    proof = _run_prompt_card_from_environment()
+    proof = run_fizzy_symphony_from_environment()
     print(json.dumps(proof, indent=2, sort_keys=True))
 
 
 @task
 def RunSymphony() -> None:
-    proof = _run_prompt_card_from_environment()
+    proof = run_fizzy_symphony_from_environment()
     print(json.dumps(proof, indent=2, sort_keys=True))
 
 
@@ -1184,23 +1328,5 @@ def WorkAIProductionSmoke() -> None:
 
 @task
 def PromptCardSmoke() -> None:
-    proof = _run_prompt_card_from_environment()
+    proof = run_fizzy_symphony_from_environment()
     print(json.dumps(proof, indent=2, sort_keys=True))
-
-
-def _run_prompt_card_from_environment() -> JSONDict:
-    return run_prompt_card_smoke(
-        board_id=os.getenv("FIZZY_SYMPHONY_BOARD_ID"),
-        card_number=_parse_optional_int(os.getenv("FIZZY_SYMPHONY_CARD_NUMBER")),
-        prompt=os.getenv("FIZZY_SYMPHONY_PROMPT"),
-        workspace=_parse_optional_path(os.getenv("FIZZY_SYMPHONY_WORKSPACE")),
-        live_fizzy=_env_bool(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY")),
-        handoff_column_id=os.getenv("FIZZY_SYMPHONY_HANDOFF_COLUMN_ID"),
-        create_board=_env_bool(os.getenv("FIZZY_SYMPHONY_CREATE_BOARD")),
-        create_card=_env_bool(os.getenv("FIZZY_SYMPHONY_CREATE_CARD")),
-        board_name=os.getenv("FIZZY_SYMPHONY_BOARD_NAME"),
-        card_title=os.getenv("FIZZY_SYMPHONY_CARD_TITLE"),
-        codex_model=os.getenv("FIZZY_SYMPHONY_CODEX_MODEL") or "gpt-5.4-mini",
-        codex_approval_policy=os.getenv("FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY") or "never",
-        codex_sandbox_mode=os.getenv("FIZZY_SYMPHONY_CODEX_SANDBOX") or "workspace-write",
-    )
