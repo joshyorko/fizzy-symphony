@@ -237,11 +237,12 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_p.add_argument("--run-mode", default="once", choices=["once", "watch"], help="Run mode env value.")
     setup_p.add_argument("--rcc-bin", default="rcc", help="RCC executable.")
     setup_p.add_argument("--robot-path", default="robots/workitems/robot.yaml", help="RCC robot.yaml path.")
-    setup_p.add_argument("--output-dir", default="robots/workitems/output", help="RCC artifact output directory.")
+    setup_p.add_argument("--output-dir", default="", help="RCC artifact output directory; defaults to <config-dir>/output.")
 
     start_p = sub.add_parser("start", help="Start the RCC-backed Fizzy Symphony watcher.")
     start_p.add_argument("--config-dir", default=".fizzy-symphony", help="Config directory.")
     start_p.add_argument("--detach", action="store_true", help="Start in the background and return immediately.")
+    start_p.add_argument("--foreground", action="store_true", help="Run in the foreground for debugging.")
     start_p.add_argument("--dry-run", action="store_true", help="Print the RCC command without running it.")
     start_p.add_argument("--verbose", action="store_true", help="Do not pass --silent to RCC.")
 

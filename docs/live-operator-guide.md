@@ -85,7 +85,7 @@ fizzy-symphony setup \
   --card-title "Build a simple Rails todo app" \
   --run-mode once
 
-fizzy-symphony start --detach
+fizzy-symphony start
 fizzy-symphony status
 ```
 
@@ -95,10 +95,10 @@ back, moves the card according to the golden ticket completion tag, and prints a
 cleanup command for the disposable board. The default disposable board golden
 ticket moves completed work cards to `Done`.
 
-For foreground operation, use:
+For foreground debugging, use:
 
 ```bash
-fizzy-symphony start
+fizzy-symphony start --foreground --verbose
 ```
 
 For lower-level debugging, the equivalent RCC command remains:

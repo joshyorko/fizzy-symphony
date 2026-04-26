@@ -21,7 +21,7 @@ DEFAULT_ENV_FILE = "env.json"
 DEFAULT_RUN_FILE = "run.json"
 DEFAULT_LOG_FILE = "service.log"
 DEFAULT_ROBOT_PATH = "robots/workitems/robot.yaml"
-DEFAULT_OUTPUT_DIR = "robots/workitems/output"
+DEFAULT_OUTPUT_DIR = ".fizzy-symphony/output"
 DEFAULT_TASK = "FizzySymphony"
 
 
@@ -38,7 +38,7 @@ def setup_command(args: object) -> int:
         "rcc_bin": str(getattr(args, "rcc_bin", "rcc") or "rcc"),
         "robot_path": str(getattr(args, "robot_path", DEFAULT_ROBOT_PATH) or DEFAULT_ROBOT_PATH),
         "task": DEFAULT_TASK,
-        "output_dir": str(getattr(args, "output_dir", DEFAULT_OUTPUT_DIR) or DEFAULT_OUTPUT_DIR),
+        "output_dir": str(_setup_output_dir(args, config_dir)),
     }
     env = _build_env(args)
 
@@ -56,7 +56,7 @@ def setup_command(args: object) -> int:
 
 
 def start_command(args: object) -> int:
-    """Start the RCC-backed service in foreground or detached mode."""
+    """Start the RCC-backed service, detached by default."""
 
     config_dir = _config_dir(args)
     config = _load_config(config_dir)
@@ -70,10 +70,10 @@ def start_command(args: object) -> int:
         print(" ".join(command))
         return 0
 
-    if bool(getattr(args, "detach", False)):
+    if not bool(getattr(args, "foreground", False)):
         return _start_detached(config_dir, command)
 
-    print("Starting Fizzy Symphony watcher. Press Ctrl-C to stop.")
+    print("Starting Fizzy Symphony watcher in foreground. Press Ctrl-C to stop.")
     print(" ".join(command))
     return subprocess.run(command, check=False).returncode
 
@@ -248,6 +248,11 @@ def _start_detached(config_dir: Path, command: Sequence[str]) -> int:
 
 def _config_dir(args: object) -> Path:
     return Path(str(getattr(args, "config_dir", None) or DEFAULT_CONFIG_DIR))
+
+
+def _setup_output_dir(args: object, config_dir: Path) -> Path:
+    raw_output_dir = str(getattr(args, "output_dir", "") or "")
+    return Path(raw_output_dir) if raw_output_dir else config_dir / "output"
 
 
 def _load_config(config_dir: Path, *, required: bool = True) -> JSONDict:

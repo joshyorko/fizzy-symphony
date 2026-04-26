@@ -111,9 +111,8 @@ fizzy-symphony setup \
   --board-name "Fizzy Symphony Rails Todo" \
   --card-title "Build a simple Rails todo app"
 
-# Start the RCC-backed service in the foreground, or detach it
+# Start the RCC-backed service in the background
 fizzy-symphony start
-fizzy-symphony start --detach
 
 # Inspect process, queue, board/card, and SDK status
 fizzy-symphony status
@@ -174,7 +173,7 @@ fizzy-symphony setup \
   --board-name "Fizzy Symphony Rails Todo" \
   --card-title "Build a simple Rails todo app"
 
-fizzy-symphony start --detach
+fizzy-symphony start
 fizzy-symphony status
 fizzy-symphony boards
 ```
