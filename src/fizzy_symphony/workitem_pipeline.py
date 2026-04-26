@@ -80,18 +80,18 @@ class CodexWorkItemWorker:
 
     @staticmethod
     def _output_payload(payload: FizzyWorkItemPayload, result: JSONDict) -> JSONDict:
+        handoff_column_id = result.get("handoff_column_id")
+        if handoff_column_id is None:
+            handoff_column_id = result.get("handoff_state")
+        if handoff_column_id is None:
+            handoff_column_id = payload.workflow.get("handoff_column", "Synthesize & Verify")
+
         return {
             "source": payload.source,
             "card_id": payload.card.get("id"),
             "card_number": payload.card.get("number"),
             "comment": result.get("comment", ""),
-            "handoff_column_id": result.get(
-                "handoff_column_id",
-                result.get(
-                    "handoff_state",
-                    payload.workflow.get("handoff_column", "Synthesize & Verify"),
-                ),
-            ),
+            "handoff_column_id": handoff_column_id,
             "runner": payload.runner,
             "result": dict(result),
         }

@@ -182,6 +182,25 @@ def test_reporter_accepts_legacy_handoff_state_key():
     assert tracker.columns == [(579, "Synthesize & Verify")]
 
 
+def test_reporter_prefers_handoff_column_id_over_legacy_state_key():
+    adapter = FakeAdapter()
+    adapter.seed_input(
+        payload={
+            "card_id": "card-579",
+            "card_number": 579,
+            "comment": "Proof attached",
+            "handoff_column_id": "Ready to Ship",
+            "handoff_state": "Synthesize & Verify",
+        }
+    )
+    tracker = FakeTracker()
+
+    result = FizzyWorkItemReporter(queue=WorkItemQueue(adapter), tracker=tracker).report_one()
+
+    assert result.reported is True
+    assert tracker.columns == [(579, "Ready to Ship")]
+
+
 def test_reporter_failure_releases_result_item_as_failed():
     class BrokenTracker(FakeTracker):
         def create_comment(self, card_number, body):  # noqa: ARG002
