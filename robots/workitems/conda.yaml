@@ -1,0 +1,9 @@
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12.11
+  - uv=0.9.28
+  - pip:
+      - robocorp>=3.0
+      - robocorp-adapters-custom>=0.1.4

@@ -1,0 +1,31 @@
+# Fizzy Symphony RCC workitem smoke robot.
+# Run from the repo root:
+#   rcc run -r robots/workitems/robot.yaml -t Doctor
+#   rcc run -r robots/workitems/robot.yaml -t WorkitemsEnv
+#   rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow -e robots/workitems/devdata/env-sqlite.json
+
+tasks:
+  Doctor:
+    shell: python -m robocorp.tasks run tasks.py -t Doctor
+
+  WorkitemsEnv:
+    shell: python -m robocorp.tasks run tasks.py -t WorkitemsEnv
+
+  SmokeSQLiteWorkitemFlow:
+    shell: python -m robocorp.tasks run tasks.py -t SmokeSQLiteWorkitemFlow
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+
+PYTHONPATH:
+  - .
+  - ../..
+  - ../../src
+
+ignoreFiles:
+  - ../../.gitignore

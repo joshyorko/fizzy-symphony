@@ -52,6 +52,12 @@ The workitem worker should depend on the runner contract, not the concrete SDK.
 Do not add a default dependency on either SDK until a local spike proves the
 auth, app-server, and packaging path works in Josh's Bluefin/devcontainer setup.
 
+Current implementation status: the repo now has a payload-agnostic runner
+boundary in `fizzy_symphony.runners`. `CodexCliRunner` is the safe fallback for
+local subprocess execution, `CodexWorkItemRunner` adapts that boundary to the
+durable workitem worker, and the SDK path intentionally fails clearly until the
+optional Codex SDK/app-server spike is implemented.
+
 ## How This Fits Durable Mode
 
 The workitem queue owns execution custody:
