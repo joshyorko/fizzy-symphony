@@ -9,9 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from shlex import quote
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional, Sequence, Union
 
 from ..models import FizzyConfig
+from ..symphony import FizzyCustomColumn, FizzyLaneTarget, resolve_fizzy_lane
 
 
 @dataclass(frozen=True)
@@ -92,12 +93,46 @@ class FizzyCLIAdapter:
         parts.extend(self.config.extra_flags)
         return " ".join(parts)
 
-    def build_move_command(self, card_number: int, column_id: str) -> str:
-        """Build the Fizzy CLI command used to move a card to a column.
+    def build_move_command(
+        self,
+        card_number: int,
+        target: str,
+        *,
+        custom_columns: Sequence[Union[FizzyCustomColumn, Mapping[str, Any]]] = (),
+    ) -> str:
+        """Build the Fizzy CLI command used to move a card to a lane.
 
-        Compatibility wrapper over :meth:`build_move_to_column_command`.
+        Custom lanes resolve to ``fizzy card column`` with a real column ID.
+        Fizzy system lanes resolve to their dedicated card operation.
         """
-        return self.build_move_to_column_command(card_number, column_id)
+        return self.build_move_to_lane_command(
+            card_number,
+            resolve_fizzy_lane(target, custom_columns=custom_columns),
+        )
+
+    def build_move_to_lane_command(self, card_number: int, lane: FizzyLaneTarget) -> str:
+        """Build the Fizzy CLI command used to move a card to a resolved lane."""
+        if lane.kind == "custom_column":
+            return self.build_move_to_column_command(card_number, lane.column_id or "")
+        if lane.kind == "triage":
+            return self.build_untriage_card_command(card_number)
+        if lane.kind == "not_now":
+            return self.build_postpone_card_command(card_number)
+        if lane.kind == "closed":
+            return self.build_close_card_command(card_number)
+        raise ValueError(f"Unsupported Fizzy lane kind: {lane.kind}")
+
+    def build_untriage_card_command(self, card_number: int) -> str:
+        """Build the Fizzy CLI command used to return a card to Maybe?/triage."""
+        return self._build_card_system_lane_command("untriage", card_number)
+
+    def build_postpone_card_command(self, card_number: int) -> str:
+        """Build the Fizzy CLI command used to move a card to Not Now."""
+        return self._build_card_system_lane_command("postpone", card_number)
+
+    def build_close_card_command(self, card_number: int) -> str:
+        """Build the Fizzy CLI command used to move a card to Done."""
+        return self._build_card_system_lane_command("close", card_number)
 
     def build_create_comment_command(self, card_number: int, body: str) -> str:
         """Build the Fizzy CLI command used to comment on a card."""
@@ -205,6 +240,14 @@ class FizzyCLIAdapter:
     def _ensure_dry_run(self) -> None:
         if not self.config.dry_run:
             raise ValueError("FizzyCLIAdapter is dry-run only in this scaffold.")
+
+    def _build_card_system_lane_command(self, operation: str, card_number: int) -> str:
+        self._ensure_dry_run()
+        self._validate_card_number(card_number)
+        parts: List[str] = [quote(self.config.fizzy_bin), "card", operation, str(card_number)]
+        parts.extend(self._agent_quiet_parts())
+        parts.extend(self.config.extra_flags)
+        return " ".join(parts)
 
     @staticmethod
     def _agent_markdown_parts() -> List[str]:

@@ -26,7 +26,11 @@ def test_fixture_describes_disposable_board_and_cards():
     assert production_smoke["requires_codex_sdk"] is True
     assert production_smoke["requires_rcc_sqlite"] is True
     assert production_smoke["minimum_task_cards"] == 8
-    assert "Codex SDK run metadata" in production_smoke["expected_artifacts"]
+    assert (
+        "Codex SDK thread/run metadata and raw metadata"
+        in production_smoke["expected_artifacts"]
+    )
+    assert "Disposable board cleanup command" in production_smoke["expected_artifacts"]
     assert data["board"]["recommended_columns"] == [
         "Shaping",
         "Ready for Agents",
@@ -94,6 +98,7 @@ def test_bootstrap_dry_run_does_not_execute_fizzy(monkeypatch, capsys):
     assert exit_code == 0
     assert "Dry run only" in captured.out
     assert "fizzy board create" in captured.out
+    assert "fizzy board delete ${WORKAI_SMOKE_BOARD_ID}" in captured.out
 
 
 def test_live_requires_explicit_board_id_before_execution(monkeypatch):
@@ -137,6 +142,11 @@ def test_live_with_board_id_executes_configure_commands(monkeypatch, capsys):
     assert exit_code == 0
     assert calls
     assert '"board_id": "board_123"' in captured.out
+    assert '"cleanup_command": "fizzy board delete board_123"' in captured.out
+    assert '"marked_golden": true' in captured.out
+    assert '"WORKAI_SMOKE_CARD_NUMBERS": "1=987,2=987,3=987,4=987,5=987,6=987,7=987,8=987"' in captured.out
+    assert '"WORKAI_SMOKE_GOLDEN_CARD_NUMBER": "987"' in captured.out
+    assert '"WORKAI_SMOKE_HANDOFF_COLUMN_ID": "col-Synthesize & Verify"' in captured.out
     assert all(call[1] is True for call in calls)
     assert ["fizzy", "column", "list", "--board", "board_123", "--agent", "--quiet"] in [
         call[0] for call in calls

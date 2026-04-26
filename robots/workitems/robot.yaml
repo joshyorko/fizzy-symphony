@@ -3,6 +3,8 @@
 #   rcc run -r robots/workitems/robot.yaml -t Doctor
 #   rcc run -r robots/workitems/robot.yaml -t WorkitemsEnv
 #   rcc run -r robots/workitems/robot.yaml -t SmokeSQLiteWorkitemFlow -e robots/workitems/devdata/env-sqlite.json
+#   WORKAI_SMOKE_BOARD_ID=<disposable board id> rcc run -r robots/workitems/robot.yaml -t WorkAIProductionSmoke
+#   FIZZY_SYMPHONY_BOARD_ID=<board id> FIZZY_SYMPHONY_CARD_NUMBER=<number> FIZZY_SYMPHONY_WORKSPACE=$PWD FIZZY_SYMPHONY_PROMPT='...' rcc run -r robots/workitems/robot.yaml -t PromptCardSmoke
 
 tasks:
   Doctor:
@@ -13,6 +15,12 @@ tasks:
 
   SmokeSQLiteWorkitemFlow:
     shell: python -m robocorp.tasks run tasks.py -t SmokeSQLiteWorkitemFlow
+
+  WorkAIProductionSmoke:
+    shell: python -m robocorp.tasks run tasks.py -t WorkAIProductionSmoke
+
+  PromptCardSmoke:
+    shell: python -m robocorp.tasks run tasks.py -t PromptCardSmoke
 
 environmentConfigs:
   - conda.yaml

@@ -73,7 +73,7 @@ class TestCommandBuilders:
         commands = build_card_claim_commands(_make_board(), _make_card(number=42), _make_config())
         assert commands == [
             "fizzy card show 42 --agent --markdown",
-            "fizzy card column 42 --column 'In Flight' --agent --quiet",
+            "fizzy card column 42 --column backlog --agent --quiet",
             "fizzy comment create --card 42 --body 'Do something' --agent --quiet",
         ]
 
@@ -223,5 +223,5 @@ class TestFormatPlanAsText:
         assert "fizzy doctor" in text
         assert "fizzy card list" in text
         assert "fizzy card show 101" in text
-        assert "fizzy card column 101 --column 'In Flight'" in text
+        assert "fizzy card column 101 --column backlog" in text
         assert "fizzy comment create --card 101" in text
