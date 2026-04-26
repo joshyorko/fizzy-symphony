@@ -28,3 +28,16 @@ Goal: FizzySymphony creates its own board and card in contract mode
     Must Exist    robots/workitems/output/fizzy-symphony-contract/workspace/contract-issues/contract-issue-2.md
     Must Exist    robots/workitems/output/fizzy-symphony-contract/workspace/contract-issues/contract-issue-3.md
     Must Exist    robots/workitems/output/fizzy-symphony-contract/workspace/FIZZY_SYMPHONY_CONTRACT_PLAN.md
+
+Goal: FizzySymphony parity contract creates and discovers a golden ticket
+    Remove Directory    robots/workitems/output/fizzy-symphony-parity-contract    recursive=True
+    Step    rcc run -r robots/workitems/robot.yaml --dev -t FizzySymphonyParityContract --silent
+    Must Have    "status": "PASS"
+    Must Have    "golden_ticket_created": true
+    Must Have    "discovered_golden_ticket": true
+    Must Have    "work_card_number": 321
+    Must Have    "card_number": 321
+    Must Have    "move-to-done"
+    Must Have    status: PASS
+    Must Exist    robots/workitems/output/fizzy-symphony-parity-contract/fizzy-symphony-parity-contract.json
+    Must Exist    robots/workitems/output/fizzy-symphony-parity-contract/workspace/prompt-proof.txt

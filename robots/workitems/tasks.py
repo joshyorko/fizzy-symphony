@@ -61,6 +61,20 @@ PROMPT_CARD_DEFAULT_COLUMNS = [
     "Synthesize & Verify",
     "Ready to Ship",
 ]
+SYMPHONY_AGENT_COLUMN = "Ready for Agents"
+SYMPHONY_DONE_COLUMN = "Done"
+SYMPHONY_GOLDEN_TAGS = ["agent-instructions", "codex", "move-to-done"]
+SYMPHONY_DEFAULT_COLUMNS = [
+    "Not Now",
+    "Maybe?",
+    "Shaping",
+    SYMPHONY_AGENT_COLUMN,
+    "In Flight",
+    "Needs Input",
+    "Synthesize & Verify",
+    "Ready to Ship",
+    SYMPHONY_DONE_COLUMN,
+]
 
 
 class FullSmokeBlocked(RuntimeError):
@@ -167,6 +181,47 @@ class ContractCodexRunner:
                 "run_id": "contract-worker-run",
                 "card_number": request.card_number,
                 "raw": {"contract": True, "changed_files": changed_files},
+            },
+        )
+
+
+class ParityCodexRunner:
+    """SDK-shaped runner for the board-parity robot contract."""
+
+    runner_kind = "codex_sdk"
+
+    def __call__(self, request: CodexRunRequest) -> CodexRunResult:
+        if request.metadata.get("preflight"):
+            return CodexRunResult(
+                success=True,
+                final_response="WORKAI_SDK_PREFLIGHT_OK",
+                thread_id="parity-preflight-thread",
+                raw_metadata={
+                    "runner": "codex_sdk",
+                    "thread_id": "parity-preflight-thread",
+                    "run_id": "parity-preflight-run",
+                    "raw": {"parity": True},
+                },
+            )
+
+        workspace = Path(str(request.workspace))
+        proof_path = workspace / "prompt-proof.txt"
+        proof_path.write_text(
+            "Fizzy Symphony parity contract completed with SDK runner.\n",
+            encoding="utf-8",
+        )
+        return CodexRunResult(
+            success=True,
+            final_response="Parity runner wrote prompt-proof.txt.",
+            thread_id="parity-worker-thread",
+            artifacts={"changed_files": ["prompt-proof.txt"]},
+            validation_summary="parity proof artifact written",
+            raw_metadata={
+                "runner": "codex_sdk",
+                "thread_id": "parity-worker-thread",
+                "run_id": "parity-worker-run",
+                "card_number": request.card_number,
+                "raw": {"parity": True, "changed_files": ["prompt-proof.txt"]},
             },
         )
 
@@ -577,16 +632,8 @@ def run_fizzy_symphony_from_environment(
     prompt = _prompt_from_environment()
     workspace = _workspace_from_environment(artifacts_dir)
     live_fizzy = _env_bool_default(os.getenv("FIZZY_SYMPHONY_LIVE_FIZZY"), default=True)
-    create_board = _env_bool_default(
-        os.getenv("FIZZY_SYMPHONY_CREATE_BOARD"),
-        default=board_id is None,
-    )
-    create_card = _env_bool_default(
-        os.getenv("FIZZY_SYMPHONY_CREATE_CARD"),
-        default=card_number is None,
-    )
 
-    return run_prompt_card_smoke(
+    return run_board_native_fizzy_symphony(
         board_id=board_id,
         card_number=card_number,
         prompt=prompt,
@@ -596,15 +643,150 @@ def run_fizzy_symphony_from_environment(
         runner=runner,
         prefer_real_adapter=prefer_real_adapter,
         live_fizzy=live_fizzy,
-        handoff_column_id=os.getenv("FIZZY_SYMPHONY_HANDOFF_COLUMN_ID") or None,
-        create_board=create_board,
-        create_card=create_card,
         board_name=os.getenv("FIZZY_SYMPHONY_BOARD_NAME") or "Fizzy Symphony",
         card_title=os.getenv("FIZZY_SYMPHONY_CARD_TITLE") or "Run Fizzy Symphony",
         codex_model=os.getenv("FIZZY_SYMPHONY_CODEX_MODEL") or "gpt-5.4-mini",
         codex_approval_policy=os.getenv("FIZZY_SYMPHONY_CODEX_APPROVAL_POLICY") or "never",
         codex_sandbox_mode=os.getenv("FIZZY_SYMPHONY_CODEX_SANDBOX") or "workspace-write",
     )
+
+
+def run_board_native_fizzy_symphony(
+    *,
+    board_id: Optional[str],
+    card_number: Optional[int],
+    prompt: Optional[str],
+    workspace: Optional[Path],
+    output_dir: Optional[Path] = None,
+    adapter=None,
+    runner=None,
+    prefer_real_adapter: bool = True,
+    live_fizzy: bool = False,
+    board_name: Optional[str] = None,
+    card_title: Optional[str] = None,
+    codex_model: Optional[str] = "gpt-5.4-mini",
+    codex_approval_policy: Optional[str] = "never",
+    codex_sandbox_mode: Optional[str] = "workspace-write",
+) -> JSONDict:
+    """Run the public board-native Fizzy Symphony path.
+
+    Existing boards are read/discovered only. A missing board id means the
+    operator explicitly wants a disposable Symphony board bootstrap.
+    """
+
+    if workspace is None:
+        raise FullSmokeBlocked("FizzySymphony requires FIZZY_SYMPHONY_WORKSPACE.")
+
+    artifacts_dir = resolve_output_dir(output_dir)
+    workspace = Path(workspace).resolve()
+    if not workspace.is_dir():
+        raise FullSmokeBlocked(f"FizzySymphony workspace does not exist: {workspace}")
+
+    bootstrap = _ensure_symphony_board_and_seed_card(
+        board_id=board_id,
+        card_number=card_number,
+        prompt=prompt,
+        live=live_fizzy,
+        board_name=board_name,
+        card_title=card_title,
+    )
+    board_id = str(bootstrap["board_id"])
+
+    discovery = _discover_symphony_board(
+        board_id,
+        live=live_fizzy,
+        known_columns=bootstrap.get("columns", {}),
+    )
+    golden_ticket = _select_golden_ticket(discovery)
+    work_card = _select_work_card(
+        discovery,
+        card_number=int(bootstrap.get("work_card_number") or card_number or 0) or None,
+    )
+    card_number = int(work_card["card_number"])
+    completion_policy = dict(golden_ticket.get("completion") or {})
+    assembled_prompt = _assemble_symphony_prompt(
+        golden_ticket=golden_ticket,
+        work_card=work_card,
+        fallback_prompt=prompt,
+    )
+
+    sdk_runner, sdk_preflight = _require_sdk_runner(
+        runner,
+        workspace=workspace,
+        codex_model=codex_model,
+        codex_approval_policy=codex_approval_policy,
+        codex_sandbox_mode=codex_sandbox_mode,
+    )
+    selected_adapter, adapter_kind = _make_required_workai_adapter(
+        artifacts_dir,
+        adapter=adapter,
+        prefer_real_adapter=prefer_real_adapter,
+    )
+    fizzy_preflight = _run_prompt_card_fizzy_preflight(
+        board_id=board_id,
+        card_number=card_number,
+        live=live_fizzy,
+    )
+
+    payload = _prompt_card_payload(
+        board_id=board_id,
+        card_number=card_number,
+        prompt=assembled_prompt,
+        workspace=workspace,
+        live_card=fizzy_preflight.get("card") if live_fizzy else None,
+        codex_model=codex_model,
+        codex_approval_policy=codex_approval_policy,
+        codex_sandbox_mode=codex_sandbox_mode,
+    )
+    queue = WorkItemQueue(selected_adapter)
+    input_id = queue.enqueue_input(payload)
+    worker_result = CodexWorkItemWorker(
+        queue=queue,
+        runner=CodexWorkItemRunner(sdk_runner),
+    ).work_one()
+    output_payload = _load_output_payload(selected_adapter, worker_result.output_id)
+    report_back = _report_card_result(
+        output_payload,
+        card_number=card_number,
+        live=live_fizzy,
+        handoff_column_id=completion_policy.get("column_id"),
+        completion_policy=completion_policy,
+    )
+    summary: JSONDict = {
+        "status": "PASS" if worker_result.succeeded else "FAIL",
+        "run_mode": os.getenv("FIZZY_SYMPHONY_RUN_MODE") or "once",
+        "board": {
+            "id": board_id,
+            "url": _board_url(board_id),
+            "mutated_fizzy": live_fizzy,
+            "cleanup_command": bootstrap.get("cleanup_command"),
+        },
+        "card_number": card_number,
+        "workspace": str(workspace),
+        "bootstrap": bootstrap,
+        "discovery": discovery,
+        "preflight": {
+            "fizzy": fizzy_preflight,
+            "sqlite_workitems": {"adapter": adapter_kind, "required": prefer_real_adapter},
+            "sdk": sdk_preflight,
+        },
+        "worker": {
+            "input_id": input_id,
+            "item_id": worker_result.item_id,
+            "output_id": worker_result.output_id,
+            "succeeded": worker_result.succeeded,
+        },
+        "sdk": _sdk_metadata(output_payload.get("result", {})),
+        "report_back": report_back,
+        "artifacts": {},
+    }
+    summary_path = artifacts_dir / "fizzy-symphony-summary.json"
+    status_path = artifacts_dir / "fizzy-symphony-status.json"
+    summary["artifacts"]["summary_path"] = str(summary_path)
+    summary["artifacts"]["status_path"] = str(status_path)
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    _write_fizzy_symphony_status(status_path, summary)
+    return summary
 
 
 def run_fizzy_symphony_contract_test(*, output_dir: Optional[Path] = None) -> JSONDict:
@@ -633,6 +815,7 @@ def run_fizzy_symphony_contract_test(*, output_dir: Optional[Path] = None) -> JS
     env_backup = {key: os.environ.get(key) for key in env_updates}
     original_run = subprocess.run
     fizzy_calls: List[List[str]] = []
+    created_cards: List[JSONDict] = []
 
     def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         if not command or command[0] != "fizzy":
@@ -648,22 +831,51 @@ def run_fizzy_symphony_contract_test(*, output_dir: Optional[Path] = None) -> JS
             column_id = f"contract_col_{_slugify(column_name)}"
             stdout = json.dumps({"id": column_id})
         elif command[:3] == ["fizzy", "card", "create"]:
-            stdout = json.dumps({"id": "contract_card", "number": 4242})
+            is_golden = len(created_cards) == 0
+            number = 4241 if is_golden else 4242
+            title = command[command.index("--title") + 1]
+            description = command[command.index("--description") + 1]
+            card = {
+                "id": "contract_golden" if is_golden else "contract_card",
+                "number": number,
+                "title": title,
+                "description": description,
+                "golden": is_golden,
+                "tags": ["agent-instructions", "codex", "move-to-done"] if is_golden else [],
+                "board": {"id": "contract_board"},
+                "column": {
+                    "id": "contract_col_ready_for_agents",
+                    "name": "Ready for Agents",
+                },
+            }
+            created_cards.append(card)
+            stdout = json.dumps({"id": card["id"], "number": number})
         elif command[:3] == ["fizzy", "board", "show"]:
             stdout = json.dumps({"id": "contract_board"})
+        elif command[:3] == ["fizzy", "card", "list"]:
+            stdout = json.dumps(created_cards)
         elif command[:3] == ["fizzy", "card", "show"]:
-            stdout = json.dumps(
-                {
+            number = int(command[3])
+            card = next((card for card in created_cards if card["number"] == number), None)
+            if card is None:
+                card = {
                     "id": "contract_card",
                     "number": 4242,
                     "title": "Contract: run multi-issue packet",
                     "description": env_updates["FIZZY_SYMPHONY_PROMPT"],
                     "golden": False,
                     "board": {"id": "contract_board"},
-                    "column": {"name": "Ready for Agents"},
+                    "column": {
+                        "id": "contract_col_ready_for_agents",
+                        "name": "Ready for Agents",
+                    },
                 }
+            stdout = json.dumps(
+                card
             )
         elif command[:3] in (
+            ["fizzy", "card", "golden"],
+            ["fizzy", "card", "tag"],
             ["fizzy", "card", "column"],
             ["fizzy", "comment", "create"],
         ):
@@ -722,6 +934,151 @@ def run_fizzy_symphony_contract_test(*, output_dir: Optional[Path] = None) -> JS
     return proof
 
 
+def run_fizzy_symphony_parity_contract(*, output_dir: Optional[Path] = None) -> JSONDict:
+    artifacts_dir = resolve_output_dir(output_dir) / "fizzy-symphony-parity-contract"
+    if artifacts_dir.exists():
+        shutil.rmtree(artifacts_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    workspace = artifacts_dir / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "README.md").write_text("# Fizzy Symphony Parity Workspace\n", encoding="utf-8")
+
+    env_updates = {
+        "FIZZY_SYMPHONY_WORKSPACE": str(workspace),
+        "FIZZY_SYMPHONY_PROMPT": "Create prompt-proof.txt with a one-line proof.",
+        "FIZZY_SYMPHONY_BOARD_ID": "",
+        "FIZZY_SYMPHONY_CARD_NUMBER": "",
+        "FIZZY_SYMPHONY_LIVE_FIZZY": "1",
+        "FIZZY_SYMPHONY_RUN_MODE": "once",
+        "FIZZY_SYMPHONY_BOARD_NAME": "Fizzy Symphony Parity Contract",
+        "FIZZY_SYMPHONY_CARD_TITLE": "Contract: write prompt proof",
+    }
+    env_backup = {key: os.environ.get(key) for key in env_updates}
+    original_run = subprocess.run
+    fizzy_calls: List[List[str]] = []
+    created_cards: List[JSONDict] = []
+
+    def fake_run(command, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if not command or command[0] != "fizzy":
+            return original_run(command, *args, **kwargs)
+        fizzy_calls.append([str(part) for part in command])
+        stdout = ""
+        if command[:2] == ["fizzy", "doctor"]:
+            stdout = "ok\n"
+        elif command[:3] == ["fizzy", "board", "create"]:
+            stdout = json.dumps({"id": "board_auto"})
+        elif command[:3] == ["fizzy", "column", "create"]:
+            column_name = command[command.index("--name") + 1]
+            stdout = json.dumps({"id": f"col_{_slugify(column_name)}"})
+        elif command[:3] == ["fizzy", "card", "create"]:
+            is_golden = len(created_cards) == 0
+            number = 320 if is_golden else 321
+            title = command[command.index("--title") + 1]
+            description = command[command.index("--description") + 1]
+            card = {
+                "id": "card_golden" if is_golden else "card_work",
+                "number": number,
+                "title": title,
+                "description": description,
+                "golden": is_golden,
+                "tags": ["agent-instructions", "codex", "move-to-done"] if is_golden else [],
+                "board": {"id": "board_auto"},
+                "column": {"id": "col_ready_for_agents", "name": "Ready for Agents"},
+                "steps": ["Read the card", "Write proof", "Report verification"] if is_golden else [],
+            }
+            created_cards.append(card)
+            stdout = json.dumps({"id": card["id"], "number": number})
+        elif command[:3] == ["fizzy", "board", "show"]:
+            stdout = json.dumps({"id": "board_auto", "name": "Fizzy Symphony Parity Contract"})
+        elif command[:3] == ["fizzy", "card", "list"]:
+            stdout = json.dumps(created_cards)
+        elif command[:3] == ["fizzy", "card", "show"]:
+            number = int(command[3])
+            card = next((card for card in created_cards if card["number"] == number), None)
+            if card is None:
+                raise AssertionError(f"unknown fake card number: {number}")
+            stdout = json.dumps(card)
+        elif command[:3] in (
+            ["fizzy", "card", "golden"],
+            ["fizzy", "card", "tag"],
+            ["fizzy", "card", "column"],
+            ["fizzy", "comment", "create"],
+        ):
+            stdout = ""
+        else:
+            raise AssertionError(f"unexpected fake Fizzy command: {command}")
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    try:
+        for key, value in env_updates.items():
+            os.environ[key] = value
+        subprocess.run = fake_run
+        summary = run_fizzy_symphony_from_environment(
+            output_dir=artifacts_dir,
+            runner=ParityCodexRunner(),
+            prefer_real_adapter=True,
+        )
+    finally:
+        subprocess.run = original_run
+        for key, value in env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    if summary.get("status") != "PASS":
+        raise FullSmokeBlocked("Parity contract summary did not pass.")
+    if not (workspace / "prompt-proof.txt").is_file():
+        raise FullSmokeBlocked("Parity contract did not create prompt-proof.txt.")
+    if not summary.get("bootstrap", {}).get("golden_ticket_created"):
+        raise FullSmokeBlocked("Parity contract did not create a golden ticket.")
+    if not summary.get("discovery", {}).get("discovered_golden_ticket"):
+        raise FullSmokeBlocked("Parity contract did not discover its golden ticket.")
+
+    proof = {
+        "status": "PASS",
+        "mutated_fizzy": False,
+        "fizzy_boundary": "fake-cli",
+        "golden_ticket_created": True,
+        "discovered_golden_ticket": True,
+        "golden_ticket_number": summary.get("bootstrap", {}).get("golden_ticket_number"),
+        "work_card_number": summary.get("bootstrap", {}).get("work_card_number"),
+        "card_number": summary.get("card_number"),
+        "completion_tag": summary.get("discovery", {})
+        .get("golden_tickets", [{}])[0]
+        .get("completion", {})
+        .get("tag"),
+        "summary": summary,
+        "workspace": str(workspace),
+        "fizzy_calls": fizzy_calls,
+    }
+    proof_path = artifacts_dir / "fizzy-symphony-parity-contract.json"
+    proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True), encoding="utf-8")
+    proof["proof_path"] = str(proof_path)
+    return proof
+
+
+def run_fizzy_symphony_status(*, output_dir: Optional[Path] = None) -> JSONDict:
+    artifacts_dir = resolve_output_dir(output_dir)
+    candidates = [
+        artifacts_dir / "fizzy-symphony-status.json",
+        artifacts_dir / "fizzy-symphony-summary.json",
+        artifacts_dir
+        / "fizzy-symphony-parity-contract"
+        / "fizzy-symphony-status.json",
+    ]
+    for path in candidates:
+        if path.is_file():
+            status = json.loads(path.read_text(encoding="utf-8"))
+            status["status_path"] = str(path)
+            return status
+    return {
+        "status": "UNKNOWN",
+        "message": "No Fizzy Symphony status artifact found yet.",
+        "output_dir": str(artifacts_dir),
+    }
+
+
 def _require_disposable_board_id(board_id: Optional[str]) -> str:
     return _require_board_id(
         board_id,
@@ -738,6 +1095,386 @@ def _require_board_id(board_id: Optional[str], message: str) -> str:
 
 def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _ensure_symphony_board_and_seed_card(
+    *,
+    board_id: Optional[str],
+    card_number: Optional[int],
+    prompt: Optional[str],
+    live: bool,
+    board_name: Optional[str],
+    card_title: Optional[str],
+) -> JSONDict:
+    bootstrap: JSONDict = {
+        "created_board": False,
+        "created_card": False,
+        "golden_ticket_created": False,
+        "columns": {},
+    }
+    if board_id:
+        bootstrap["board_id"] = board_id
+        if card_number is not None:
+            bootstrap["card_number"] = int(card_number)
+            bootstrap["work_card_number"] = int(card_number)
+        return bootstrap
+
+    if not live:
+        raise FullSmokeBlocked(
+            "Bootstrapping a missing Fizzy board requires FIZZY_SYMPHONY_LIVE_FIZZY=1."
+        )
+    prompt = _require_prompt(prompt)
+
+    created_board = _run_json(
+        [
+            "fizzy",
+            "board",
+            "create",
+            "--name",
+            board_name or "Fizzy Symphony",
+            "--agent",
+            "--quiet",
+        ]
+    )
+    resolved_board_id = _resource_id(created_board, "fizzy board create")
+    column_ids = _create_symphony_board_columns(resolved_board_id)
+    ready_column_id = column_ids.get(SYMPHONY_AGENT_COLUMN)
+    if not ready_column_id:
+        raise FullSmokeBlocked("Bootstrapped board did not create a Ready for Agents column.")
+
+    golden_card = _run_json(
+        [
+            "fizzy",
+            "card",
+            "create",
+            "--board",
+            resolved_board_id,
+            "--title",
+            "Golden: Codex Agent",
+            "--description",
+            _default_golden_ticket_prompt(),
+            "--agent",
+            "--quiet",
+        ]
+    )
+    golden_number = _resource_number(golden_card, "fizzy card create golden ticket")
+    subprocess.run(["fizzy", "card", "golden", str(golden_number)], check=True)
+    for tag in SYMPHONY_GOLDEN_TAGS:
+        subprocess.run(["fizzy", "card", "tag", str(golden_number), "--tag", tag], check=True)
+    subprocess.run(
+        ["fizzy", "card", "column", str(golden_number), "--column", ready_column_id],
+        check=True,
+    )
+
+    work_card = _run_json(
+        [
+            "fizzy",
+            "card",
+            "create",
+            "--board",
+            resolved_board_id,
+            "--title",
+            card_title or "Run Fizzy Symphony",
+            "--description",
+            prompt,
+            "--agent",
+            "--quiet",
+        ]
+    )
+    work_number = _resource_number(work_card, "fizzy card create work card")
+    subprocess.run(
+        ["fizzy", "card", "column", str(work_number), "--column", ready_column_id],
+        check=True,
+    )
+
+    bootstrap.update(
+        {
+            "created_board": True,
+            "created_card": True,
+            "golden_ticket_created": True,
+            "board_id": resolved_board_id,
+            "card_number": int(work_number),
+            "work_card_number": int(work_number),
+            "golden_ticket_number": int(golden_number),
+            "columns": column_ids,
+            "agent_column_id": ready_column_id,
+            "handoff_column_id": column_ids.get(SYMPHONY_DONE_COLUMN),
+            "cleanup_command": f"fizzy board delete {shlex.quote(resolved_board_id)}",
+        }
+    )
+    return bootstrap
+
+
+def _create_symphony_board_columns(board_id: str) -> Dict[str, str]:
+    column_ids: Dict[str, str] = {}
+    for column in SYMPHONY_DEFAULT_COLUMNS:
+        created = _run_json(
+            [
+                "fizzy",
+                "column",
+                "create",
+                "--board",
+                board_id,
+                "--name",
+                column,
+                "--agent",
+                "--quiet",
+            ]
+        )
+        column_ids[column] = _resource_id(created, f"fizzy column create {column}")
+    return column_ids
+
+
+def _default_golden_ticket_prompt() -> str:
+    return (
+        "Use Codex to complete work cards moved into this column. Read the card title, "
+        "description, steps, and discussion; make the smallest useful change in the "
+        "workspace; then report concise proof of work back to Fizzy."
+    )
+
+
+def _discover_symphony_board(
+    board_id: str,
+    *,
+    live: bool,
+    known_columns: Mapping[str, object],
+) -> JSONDict:
+    if not live:
+        raise FullSmokeBlocked("FizzySymphony discovery requires live Fizzy CLI reads.")
+
+    completed = subprocess.run(["fizzy", "doctor"], text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise FullSmokeBlocked(f"fizzy doctor failed: {completed.stderr or completed.stdout}")
+
+    board = _run_json(["fizzy", "board", "show", board_id, "--agent", "--quiet"])
+    if str(board.get("id") or "") != board_id:
+        raise FullSmokeBlocked(f"Board {board_id} could not be verified.")
+
+    cards = _run_json_list(
+        ["fizzy", "card", "list", "--board", board_id, "--all", "--agent", "--quiet"]
+    )
+    columns = {str(name): str(value) for name, value in dict(known_columns).items()}
+    if cards:
+        columns.update(_columns_from_cards(cards))
+
+    golden_tickets: List[JSONDict] = []
+    for card in cards:
+        if not _is_symphony_golden_ticket(card):
+            continue
+        column_id = _card_column_id(card)
+        column_name = _card_column_name(card)
+        tags = _card_tags(card)
+        golden_tickets.append(
+            {
+                "card_number": _card_number(card),
+                "title": str(card.get("title") or ""),
+                "description": str(card.get("description") or ""),
+                "column_id": column_id,
+                "column_name": column_name,
+                "tags": tags,
+                "backend": _backend_from_tags(tags) or "codex",
+                "completion": _completion_policy_from_tags(tags, columns),
+            }
+        )
+
+    if not golden_tickets:
+        raise FullSmokeBlocked(
+            "No golden ticket found on board. Create a real golden card tagged "
+            "agent-instructions plus a backend tag such as codex, then move it into "
+            "the column agents should watch."
+        )
+
+    agent_columns = {
+        str(ticket.get("column_id") or ticket.get("column_name"))
+        for ticket in golden_tickets
+        if ticket.get("column_id") or ticket.get("column_name")
+    }
+    work_cards: List[JSONDict] = []
+    for card in cards:
+        if _is_symphony_golden_ticket(card):
+            continue
+        card_column_key = _card_column_id(card) or _card_column_name(card)
+        if card_column_key not in agent_columns:
+            continue
+        work_cards.append(_work_card_summary(card))
+
+    return {
+        "board_id": board_id,
+        "board": board,
+        "columns": columns,
+        "golden_tickets": golden_tickets,
+        "work_cards": work_cards,
+        "discovered_golden_ticket": bool(golden_tickets),
+    }
+
+
+def _select_golden_ticket(discovery: JSONDict) -> JSONDict:
+    tickets = list(discovery.get("golden_tickets") or [])
+    if not tickets:
+        raise FullSmokeBlocked("No golden ticket is available for this board.")
+    for ticket in tickets:
+        if ticket.get("backend") == "codex":
+            return dict(ticket)
+    return dict(tickets[0])
+
+
+def _select_work_card(discovery: JSONDict, *, card_number: Optional[int]) -> JSONDict:
+    work_cards = list(discovery.get("work_cards") or [])
+    if card_number is not None:
+        for card in work_cards:
+            if int(card.get("card_number")) == int(card_number):
+                return dict(card)
+        raise FullSmokeBlocked(
+            f"Card {card_number} is not in a column configured by a golden ticket."
+        )
+    if not work_cards:
+        raise FullSmokeBlocked("No work cards are waiting in golden-ticket columns.")
+    return dict(work_cards[0])
+
+
+def _assemble_symphony_prompt(
+    *,
+    golden_ticket: JSONDict,
+    work_card: JSONDict,
+    fallback_prompt: Optional[str],
+) -> str:
+    golden_steps = golden_ticket.get("steps") or []
+    work_steps = work_card.get("steps") or []
+    return "\n\n".join(
+        [
+            "You are Fizzy Symphony. A Fizzy board is the dispatch surface.",
+            "# Golden Ticket Instructions\n"
+            f"Title: {golden_ticket.get('title') or 'Golden Ticket'}\n"
+            f"Backend: {golden_ticket.get('backend') or 'codex'}\n"
+            f"Completion: {golden_ticket.get('completion', {}).get('tag') or 'comment-only'}\n"
+            f"{golden_ticket.get('description') or _default_golden_ticket_prompt()}",
+            "# Golden Ticket Steps\n" + _format_steps(golden_steps),
+            "# Work Card\n"
+            f"Card: {work_card.get('card_number')}\n"
+            f"Title: {work_card.get('title') or 'Untitled'}\n"
+            f"Description: {work_card.get('description') or fallback_prompt or ''}\n"
+            f"Tags: {', '.join(work_card.get('tags') or [])}",
+            "# Work Card Steps\n" + _format_steps(work_steps),
+            "# Proof Of Work\n"
+            "Make the requested change in the workspace. Return concise proof including "
+            "files changed, validation performed, and anything blocked.",
+        ]
+    )
+
+
+def _format_steps(steps: object) -> str:
+    if not isinstance(steps, list) or not steps:
+        return "- No steps provided."
+    lines = []
+    for index, step in enumerate(steps, start=1):
+        if isinstance(step, Mapping):
+            value = step.get("content") or step.get("title") or step.get("name") or step
+        else:
+            value = step
+        lines.append(f"{index}. {value}")
+    return "\n".join(lines)
+
+
+def _columns_from_cards(cards: List[JSONDict]) -> Dict[str, str]:
+    columns: Dict[str, str] = {}
+    for card in cards:
+        column = card.get("column")
+        if not isinstance(column, Mapping):
+            continue
+        column_name = column.get("name") or column.get("title")
+        column_id = column.get("id")
+        if column_name and column_id:
+            columns[str(column_name)] = str(column_id)
+    return columns
+
+
+def _is_symphony_golden_ticket(card: Mapping[str, object]) -> bool:
+    return bool(card.get("golden")) and "agent-instructions" in _card_tags(card)
+
+
+def _work_card_summary(card: JSONDict) -> JSONDict:
+    return {
+        "card_number": _card_number(card),
+        "id": str(card.get("id") or ""),
+        "title": str(card.get("title") or ""),
+        "description": str(card.get("description") or ""),
+        "column_id": _card_column_id(card),
+        "column_name": _card_column_name(card),
+        "tags": _card_tags(card),
+        "steps": card.get("steps") or [],
+    }
+
+
+def _card_number(card: Mapping[str, object]) -> int:
+    value = card.get("number") or card.get("card_number")
+    if value is None:
+        raise FullSmokeBlocked(f"Fizzy card is missing a number: {card}")
+    return int(value)
+
+
+def _card_column_id(card: Mapping[str, object]) -> str:
+    column = card.get("column")
+    if isinstance(column, Mapping):
+        return str(column.get("id") or "")
+    return str(card.get("column_id") or "")
+
+
+def _card_column_name(card: Mapping[str, object]) -> str:
+    column = card.get("column")
+    if isinstance(column, Mapping):
+        return str(column.get("name") or column.get("title") or "")
+    return str(card.get("column_name") or card.get("state") or "")
+
+
+def _card_tags(card: Mapping[str, object]) -> List[str]:
+    raw_tags = card.get("tags") or card.get("labels") or []
+    tags: List[str] = []
+    if isinstance(raw_tags, list):
+        for tag in raw_tags:
+            if isinstance(tag, Mapping):
+                value = tag.get("name") or tag.get("title") or tag.get("label")
+            else:
+                value = tag
+            if value:
+                tags.append(str(value).lstrip("#"))
+    return tags
+
+
+def _backend_from_tags(tags: List[str]) -> Optional[str]:
+    for backend in ("codex", "claude", "opencode", "anthropic", "openai", "command"):
+        if backend in tags:
+            return backend
+    return None
+
+
+def _completion_policy_from_tags(tags: List[str], columns: Mapping[str, str]) -> JSONDict:
+    if "close-on-complete" in tags:
+        return {"action": "close", "tag": "close-on-complete"}
+    for tag in tags:
+        if not tag.startswith("move-to-"):
+            continue
+        column_name = _column_name_from_move_tag(tag)
+        column_id = _lookup_column_id(columns, column_name)
+        return {
+            "action": "move",
+            "tag": tag,
+            "column_name": column_name,
+            "column_id": column_id,
+        }
+    return {"action": "comment", "tag": "comment-only"}
+
+
+def _column_name_from_move_tag(tag: str) -> str:
+    raw = tag.removeprefix("move-to-").replace("-", " ").strip()
+    return " ".join(part.capitalize() for part in raw.split()) or raw
+
+
+def _lookup_column_id(columns: Mapping[str, str], column_name: str) -> Optional[str]:
+    normalized = _slugify(column_name)
+    for name, column_id in columns.items():
+        if _slugify(str(name)) == normalized:
+            return str(column_id)
+    return None
 
 
 def _ensure_prompt_board_and_card(
@@ -1114,7 +1851,10 @@ def _report_card_result(
     card_number: int,
     live: bool,
     handoff_column_id: Optional[str],
+    completion_policy: Optional[Mapping[str, object]] = None,
 ) -> JSONDict:
+    completion = dict(completion_policy or {})
+    action = str(completion.get("action") or "move")
     result = output_payload.get("result", {})
     sdk = _sdk_metadata(result)
     final_response = str(
@@ -1125,31 +1865,45 @@ def _report_card_result(
         f"{final_response[:180]} "
         f"(thread={sdk['thread_id']}, run={sdk['run_id']})"
     )
-    target_column = handoff_column_id or "<Synthesize & Verify column id>"
     commands = [
-        _join_command(["fizzy", "comment", "create", "--card", str(card_number), "--body", comment]),
-        _join_command(
-            ["fizzy", "card", "column", str(card_number), "--column", target_column]
-        ),
+        _join_command(["fizzy", "comment", "create", "--card", str(card_number), "--body", comment])
     ]
+    target_column = handoff_column_id or _completion_target_placeholder(completion)
+    if action == "move":
+        commands.append(
+            _join_command(
+                ["fizzy", "card", "column", str(card_number), "--column", target_column]
+            )
+        )
+    elif action == "close":
+        commands.append(_join_command(["fizzy", "card", "close", str(card_number)]))
     if live:
-        if not handoff_column_id:
+        if action == "move" and not handoff_column_id:
             raise FullSmokeBlocked(
-                "Live smoke reporting requires a handoff column id."
+                "Live reporting requires a destination column id for move-on-complete."
             )
         subprocess.run(
             ["fizzy", "comment", "create", "--card", str(card_number), "--body", comment],
             check=True,
         )
-        subprocess.run(
-            ["fizzy", "card", "column", str(card_number), "--column", handoff_column_id],
-            check=True,
-        )
+        if action == "move":
+            subprocess.run(
+                ["fizzy", "card", "column", str(card_number), "--column", handoff_column_id],
+                check=True,
+            )
+        elif action == "close":
+            subprocess.run(["fizzy", "card", "close", str(card_number)], check=True)
     return {
         "mode": "live" if live else "dry-run",
         "comment": comment,
+        "completion_policy": completion or {"action": action},
         "commands": commands,
     }
+
+
+def _completion_target_placeholder(completion: Mapping[str, object]) -> str:
+    column_name = completion.get("column_name") or "Synthesize & Verify"
+    return f"<{column_name} column id>"
 
 
 def _resolve_report_card_number(
@@ -1259,6 +2013,35 @@ def _run_json(command: List[str]) -> JSONDict:
     if isinstance(data, Mapping):
         return dict(data)
     return {}
+
+
+def _run_json_list(command: List[str]) -> List[JSONDict]:
+    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise FullSmokeBlocked(completed.stderr or completed.stdout or f"Command failed: {command}")
+    try:
+        data = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise FullSmokeBlocked(f"Command did not return JSON: {command}") from exc
+    if isinstance(data, Mapping):
+        data = data.get("data") or data.get("cards") or []
+    if not isinstance(data, list):
+        return []
+    return [dict(item) for item in data if isinstance(item, Mapping)]
+
+
+def _write_fizzy_symphony_status(path: Path, summary: JSONDict) -> None:
+    status = {
+        "status": summary.get("status"),
+        "board_id": summary.get("board", {}).get("id"),
+        "card_number": summary.get("card_number"),
+        "golden_tickets": summary.get("discovery", {}).get("golden_tickets", []),
+        "work_cards": summary.get("discovery", {}).get("work_cards", []),
+        "worker": summary.get("worker", {}),
+        "sdk": summary.get("sdk", {}),
+        "summary_path": summary.get("artifacts", {}).get("summary_path"),
+    }
+    path.write_text(json.dumps(status, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _verify_live_card_on_board(card: JSONDict, *, board_id: str, expected_golden: bool) -> None:
@@ -1514,6 +2297,18 @@ def WorkAIProductionSmoke() -> None:
 @task
 def FizzySymphonyContractTest() -> None:
     proof = run_fizzy_symphony_contract_test()
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+@task
+def FizzySymphonyParityContract() -> None:
+    proof = run_fizzy_symphony_parity_contract()
+    print(json.dumps(proof, indent=2, sort_keys=True))
+
+
+@task
+def FizzySymphonyStatus() -> None:
+    proof = run_fizzy_symphony_status()
     print(json.dumps(proof, indent=2, sort_keys=True))
 
 

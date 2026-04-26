@@ -7,6 +7,8 @@
 #   rcc run -r robots/workitems/robot.yaml --dev -t WorkitemsEnv --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow -e robots/workitems/devdata/env-sqlite.json --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t FizzySymphonyContractTest --silent
+#   rcc run -r robots/workitems/robot.yaml --dev -t FizzySymphonyParityContract --silent
+#   rcc run -r robots/workitems/robot.yaml --dev -t FizzySymphonyStatus --silent
 #   rcc run -r robots/workitems/robot.yaml --dev -t WorkAIProductionSmoke -e workai-smoke.env.json --silent
 
 tasks:
@@ -28,6 +30,12 @@ devTasks:
 
   FizzySymphonyContractTest:
     shell: python -m robocorp.tasks run tasks.py -t FizzySymphonyContractTest
+
+  FizzySymphonyParityContract:
+    shell: python -m robocorp.tasks run tasks.py -t FizzySymphonyParityContract
+
+  FizzySymphonyStatus:
+    shell: python -m robocorp.tasks run tasks.py -t FizzySymphonyStatus
 
   PromptCardSmoke:
     shell: python -m robocorp.tasks run tasks.py -t PromptCardSmoke
