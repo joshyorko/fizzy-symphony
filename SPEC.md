@@ -13,8 +13,8 @@ project diverges by using Robocorp workitems as durable queue plumbing for
 claimed/running/result state instead of treating one daemon process as the only
 owner of orchestration state.
 
-This repository uses `basecamp/fizzy-popper` as prior art for the simple
-board-native loop, but it is only worth keeping if it also supports a durable
+This repository uses Basecamp's reference implementation as prior art for the
+simple board-native loop, but it is only worth keeping if it also supports a durable
 distributed mode for many workers, many Codex accounts/runtimes, and
 crash-safe handoffs.
 
@@ -68,8 +68,8 @@ commands. `id` remains the internal stable tracker identifier.
 ## Golden Ticket Shape
 
 A golden ticket is a Fizzy card tagged `#agent-instructions` that lives in the
-column it configures. It is inspired by `fizzy-popper`, but this scaffold treats
-it as routing policy only; it does not execute the card by itself.
+column it configures. This scaffold treats it as routing policy only; it does
+not execute the card by itself.
 
 The `GoldenTicket` fields are:
 

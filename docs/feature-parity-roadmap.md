@@ -1,7 +1,7 @@
 # Feature Parity Roadmap
 
-This roadmap uses `fizzy-popper` as prior art without turning
-`fizzy-symphony` into a TypeScript daemon clone.
+This roadmap uses Basecamp's reference implementation as prior art without
+turning `fizzy-symphony` into a TypeScript daemon clone.
 
 ## Product Shape
 
@@ -123,4 +123,5 @@ The durable mode should eventually support:
 - reporter-only retries;
 - metrics for queued, leased, succeeded, failed, and stale work.
 
-This is the reason to keep `fizzy-symphony` alive beside `fizzy-popper`.
+This is the reason to keep `fizzy-symphony` alive beside the simpler
+board-native reference implementation.
