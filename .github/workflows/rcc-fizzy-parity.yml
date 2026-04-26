@@ -1,0 +1,16 @@
+---
+name: RCC fizzy_parity
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fizzy-parity:
+    uses: ./.github/workflows/_rcc-robot.yml
+    with:
+      suite: fizzy_parity
+      task: FizzySymphonyParityContract

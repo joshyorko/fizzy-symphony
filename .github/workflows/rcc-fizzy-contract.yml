@@ -1,0 +1,16 @@
+---
+name: RCC fizzy_contract
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fizzy-contract:
+    uses: ./.github/workflows/_rcc-robot.yml
+    with:
+      suite: fizzy_contract
+      task: FizzySymphonyContractTest

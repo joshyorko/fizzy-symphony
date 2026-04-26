@@ -1,0 +1,16 @@
+---
+name: RCC sqlite_workitem_flow
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sqlite-workitem-flow:
+    uses: ./.github/workflows/_rcc-robot.yml
+    with:
+      suite: sqlite_workitem_flow
+      task: SmokeSQLiteWorkitemFlow
