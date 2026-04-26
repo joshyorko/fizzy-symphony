@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from shlex import quote
-from typing import List, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,38 @@ class FizzySystemLane:
     kind: str
     role: str
     description: str
+
+
+@dataclass(frozen=True)
+class FizzyCustomColumn:
+    """Known custom Fizzy board column used for name-to-ID resolution."""
+
+    column_id: str
+    name: str
+
+    def __post_init__(self) -> None:
+        if not self.column_id:
+            raise ValueError("FizzyCustomColumn.column_id must not be empty.")
+        if not self.name:
+            raise ValueError("FizzyCustomColumn.name must not be empty.")
+
+
+@dataclass(frozen=True)
+class FizzyLaneTarget:
+    """Resolved target lane for a card move/update plan."""
+
+    kind: str
+    display_name: str
+    column_id: Optional[str] = None
+    pseudo_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.kind:
+            raise ValueError("FizzyLaneTarget.kind must not be empty.")
+        if self.kind == "custom_column" and not self.column_id:
+            raise ValueError("FizzyLaneTarget.column_id is required for custom columns.")
+        if self.kind != "custom_column" and not self.pseudo_id:
+            raise ValueError("FizzyLaneTarget.pseudo_id is required for system lanes.")
 
 
 @dataclass(frozen=True)
@@ -64,6 +96,16 @@ FIZZY_SYSTEM_LANES: Tuple[FizzySystemLane, ...] = (
         description="Closed cards; no more automated work should occur.",
     ),
 )
+
+FIZZY_SYSTEM_LANE_ALIASES = {
+    "maybe": "maybe",
+    "triage": "maybe",
+    "not-now": "not-now",
+    "not now": "not-now",
+    "not_now": "not-now",
+    "done": "done",
+    "closed": "done",
+}
 
 
 RECOMMENDED_COLUMNS: Tuple[SymphonyColumn, ...] = (
@@ -150,6 +192,58 @@ def fizzy_system_lanes() -> List[FizzySystemLane]:
     return list(FIZZY_SYSTEM_LANES)
 
 
+def resolve_fizzy_lane(
+    target: str,
+    *,
+    custom_columns: Sequence[Union[FizzyCustomColumn, Mapping[str, Any]]] = (),
+) -> FizzyLaneTarget:
+    """Resolve a requested card lane into a custom column or immutable system lane.
+
+    Unknown non-system targets are treated as already-known Fizzy column IDs so
+    existing boards can keep their own workflow names and IDs.
+    """
+    requested = target.strip() if target else ""
+    if not requested:
+        raise ValueError("target lane must not be empty.")
+
+    system_lane = _system_lane_for_target(requested)
+    if system_lane is not None:
+        return FizzyLaneTarget(
+            kind=system_lane.kind,
+            display_name=system_lane.name,
+            pseudo_id=system_lane.pseudo_id,
+        )
+
+    columns = [_coerce_custom_column(column) for column in custom_columns]
+    for column in columns:
+        if requested == column.column_id:
+            return FizzyLaneTarget(
+                kind="custom_column",
+                display_name=column.name,
+                column_id=column.column_id,
+            )
+
+    requested_name = _normalize_column_name(requested)
+    name_matches = [
+        column
+        for column in columns
+        if _normalize_column_name(column.name) == requested_name
+    ]
+    if len(name_matches) > 1:
+        raise ValueError(
+            f"Duplicate custom column name {requested!r}; use column IDs to disambiguate."
+        )
+    if name_matches:
+        column = name_matches[0]
+        return FizzyLaneTarget(
+            kind="custom_column",
+            display_name=column.name,
+            column_id=column.column_id,
+        )
+
+    return FizzyLaneTarget(kind="custom_column", display_name=requested, column_id=requested)
+
+
 def upstream_mapping() -> List[SymphonyMapping]:
     """Return a copy of the upstream-to-Fizzy mapping."""
     return list(UPSTREAM_MAPPING)
@@ -195,3 +289,32 @@ def format_mapping_table() -> str:
     for mapping in UPSTREAM_MAPPING:
         lines.append(f"- {mapping.upstream} -> {mapping.fizzy_symphony}: {mapping.note}")
     return "\n".join(lines)
+
+
+def _system_lane_for_target(target: str) -> Optional[FizzySystemLane]:
+    pseudo_id = FIZZY_SYSTEM_LANE_ALIASES.get(_normalize_lane_token(target))
+    if pseudo_id is None:
+        return None
+    for lane in FIZZY_SYSTEM_LANES:
+        if lane.pseudo_id == pseudo_id:
+            return lane
+    return None
+
+
+def _coerce_custom_column(column: Union[FizzyCustomColumn, Mapping[str, Any]]) -> FizzyCustomColumn:
+    if isinstance(column, FizzyCustomColumn):
+        return column
+    column_id = str(column.get("column_id") or column.get("id") or "")
+    name = str(column.get("name") or column.get("column_name") or "")
+    return FizzyCustomColumn(column_id=column_id, name=name)
+
+
+def _normalize_lane_token(value: str) -> str:
+    token = _normalize_column_name(value).replace("_", "-")
+    if token.endswith("?"):
+        token = token[:-1]
+    return token
+
+
+def _normalize_column_name(value: str) -> str:
+    return " ".join(value.strip().lower().split())

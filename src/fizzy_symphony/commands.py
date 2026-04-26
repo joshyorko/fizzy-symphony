@@ -32,16 +32,17 @@ def build_card_claim_commands(
     card: CardAdapter,
     config: FizzyConfig,
     *,
-    in_flight_column_id: str = "In Flight",
+    in_flight_column_id: Optional[str] = None,
     comment_body: Optional[str] = None,
     assignee_id: Optional[str] = None,
     self_assign: bool = False,
 ) -> List[str]:
     """Build the composite dry-run claim commands for a single card number."""
     _ = board
+    target_column_id = in_flight_column_id or card.column_id
     return _adapter(config).build_claim_commands(
         card.number,
-        in_flight_column_id,
+        target_column_id,
         comment_body or card.comment_body or card.title,
         assignee_id=assignee_id,
         self_assign=self_assign,

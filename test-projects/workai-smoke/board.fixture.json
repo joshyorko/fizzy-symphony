@@ -9,8 +9,9 @@
       "minimum_task_cards": 8,
       "expected_artifacts": [
         "Fizzy board with a real golden ticket",
+        "Disposable board cleanup command",
         "SQLite workitem database",
-        "Codex SDK run metadata",
+        "Codex SDK thread/run metadata and raw metadata",
         "Sample project code changes",
         "Sample project test output",
         "Fizzy card comments and movement"

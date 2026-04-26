@@ -30,6 +30,9 @@ workitems = [
     "robocorp-workitems>=1.4.7; python_version >= '3.10'",
     "robocorp-adapters-custom>=0.1.4; python_version >= '3.10'",
 ]
+codex-sdk = [
+    "codex-app-server-sdk @ git+https://github.com/openai/codex.git@87bc72408c5ef08f8d21f2cdd00c55451c3be33f#subdirectory=sdk/python; python_version >= '3.10'",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",

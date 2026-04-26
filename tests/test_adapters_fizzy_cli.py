@@ -5,6 +5,7 @@ import pytest
 from fizzy_symphony.adapters.fizzy_cli import FizzyCLIAdapter
 from fizzy_symphony.adapters.fizzy_openapi import FizzyOpenAPIAdapter
 from fizzy_symphony.models import FizzyConfig
+from fizzy_symphony.symphony import FizzyCustomColumn
 
 
 def _make_adapter(**kwargs) -> FizzyCLIAdapter:
@@ -78,6 +79,39 @@ def test_build_comment_command_quotes_body():
 def test_build_move_command_uses_column_id():
     cmd = _make_adapter().build_move_command(42, "ready-to-ship")
     assert cmd == "fizzy card column 42 --column ready-to-ship --agent --quiet"
+
+
+def test_build_move_command_maps_system_lanes():
+    adapter = _make_adapter()
+
+    assert adapter.build_move_command(42, "maybe") == "fizzy card untriage 42 --agent --quiet"
+    assert adapter.build_move_command(42, "not-now") == "fizzy card postpone 42 --agent --quiet"
+    assert adapter.build_move_command(42, "done") == "fizzy card close 42 --agent --quiet"
+
+
+def test_build_move_command_resolves_unique_custom_column_name():
+    cmd = _make_adapter().build_move_command(
+        42,
+        "Ready",
+        custom_columns=[
+            FizzyCustomColumn(column_id="col_ready", name="Ready"),
+            FizzyCustomColumn(column_id="col_review", name="Review"),
+        ],
+    )
+
+    assert cmd == "fizzy card column 42 --column col_ready --agent --quiet"
+
+
+def test_build_move_command_rejects_ambiguous_custom_column_name():
+    with pytest.raises(ValueError, match="Duplicate custom column name 'Ready'.*column IDs"):
+        _make_adapter().build_move_command(
+            42,
+            "Ready",
+            custom_columns=[
+                FizzyCustomColumn(column_id="col_a", name="Ready"),
+                FizzyCustomColumn(column_id="col_b", name="Ready"),
+            ],
+        )
 
 
 def test_build_list_command_can_fall_back_to_fizzy_yaml(tmp_path, monkeypatch):
