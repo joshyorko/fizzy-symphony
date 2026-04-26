@@ -224,5 +224,4 @@ class TestFormatPlanAsText:
         assert "fizzy card list" in text
         assert "fizzy card show 101" in text
         assert "fizzy card column 101 --column 'In Flight'" in text
-        assert "fizzy card column 101" in text
         assert "fizzy comment create --card 101" in text
