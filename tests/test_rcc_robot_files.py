@@ -47,6 +47,20 @@ def test_robot_yaml_exposes_expected_tasks():
     assert "robocorp.tasks" in robot_yaml
 
 
+def test_rcc_conda_uses_focused_robocorp_packages():
+    conda_yaml = (ROBOT_ROOT / "conda.yaml").read_text(encoding="utf-8")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "robocorp-tasks==" in conda_yaml
+    assert "robocorp-log==" in conda_yaml
+    assert "robocorp-workitems==" in conda_yaml
+    assert "robocorp==" not in conda_yaml
+    assert "robocorp-tasks>=" in pyproject
+    assert "robocorp-log>=" in pyproject
+    assert "robocorp-workitems>=" in pyproject
+    assert '"robocorp==' not in pyproject
+
+
 def test_smoke_helper_runs_with_in_memory_adapter(tmp_path):
     adapter = InMemoryWorkItemAdapter()
 
