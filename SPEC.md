@@ -37,6 +37,9 @@ Boundary:
 - `FizzyCLIAdapter`: dry-run adapter that builds Fizzy CLI commands for preview/debugging.
 - `FizzyOpenAPIAdapter`: future real adapter to be implemented from `basecamp/fizzy-sdk/openapi.json`.
 - `SymphonyColumn`: recommended tracker column for the upstream-inspired flow.
+- `FizzyCustomColumn`: known custom board column with a real Fizzy `column_id`.
+- `FizzyLaneTarget`: resolved move target, either `custom_column`, `triage`,
+  `not_now`, or `closed`.
 - `RobocorpWorkitemConfig`: environment contract for the published adapter
   package.
 
@@ -87,6 +90,10 @@ Supported completion policies:
 - no completion tag: post a comment only
 - `#close-on-complete`: post a comment, then close the card
 - `#move-to-<column-name>`: post a comment, then move to the named custom column
+
+Name-based custom-column resolution is valid only after mapping real Fizzy
+column IDs. Duplicate display names are ambiguous and must be resolved by
+column ID.
 
 ## Tracker Adapter Contract
 
@@ -146,6 +153,13 @@ Fizzy's built-in system lanes are always represented separately:
 
 Do not create, delete, or treat those system lanes as custom columns.
 
+Move planning branches by lane kind:
+
+- custom column: `fizzy card column CARD --column COLUMN_ID`
+- `maybe` / `triage`: `fizzy card untriage CARD`
+- `not-now` / `not_now`: `fizzy card postpone CARD`
+- `done` / `closed`: `fizzy card close CARD`
+
 ## Terminal States
 
 Terminal states indicate no more automated work should occur:
@@ -203,9 +217,11 @@ passes, and preserve the card as the source of truth for scope and status.
 
 ## Safety Invariants
 
-- Phase 0 is dry-run only; no subprocess execution is allowed.
-- No direct HTTP or API behavior is allowed in the scaffold beyond the explicit
-  future OpenAPI stub.
+- Tracker mutation previews are dry-run by default.
+- Runner and RCC smoke paths may execute subprocesses only through explicit
+  runner/robot entry points.
+- No direct Fizzy HTTP or API behavior is allowed in the scaffold beyond the
+  explicit future OpenAPI stub.
 - No daemon/background loop behavior is allowed yet.
 - The system must not create a hidden board by default; it configures or checks
   an existing Fizzy board unless the user explicitly opts into creation later.

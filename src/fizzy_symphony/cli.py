@@ -15,10 +15,9 @@ from .robocorp_adapter import (
     adapter_package_available,
     format_workitem_env,
 )
-from .symphony import format_init_board_plan, format_mapping_table
+from .symphony import FizzyCustomColumn, format_init_board_plan, format_mapping_table
 
 DEFAULT_CLAIM_COMMENT_BODY = "Claimed by fizzy-symphony worker."
-DEFAULT_IN_FLIGHT_COLUMN_ID = "In Flight"
 
 
 def _build_demo_board() -> Board:
@@ -29,7 +28,7 @@ def _build_demo_board() -> Board:
         number=42,
         title="Capture the board request and draft a scoped implementation prompt.",
         agent=agent,
-        column_id="ready-for-agents",
+        column_id="col_ready_for_agents",
         labels=["board", "planning"],
         comment_body="Captured the request in dry-run mode and prepared the adapter prompt.",
     )
@@ -37,7 +36,7 @@ def _build_demo_board() -> Board:
         number=57,
         title="Map the tracker card into the Fizzy card adapter model.",
         agent=agent,
-        column_id="synthesize-and-verify",
+        column_id="col_synthesize_and_verify",
         labels=["adapter", "modeling"],
         comment_body="Mapped the tracker card into the canonical Fizzy card fields.",
     )
@@ -45,7 +44,7 @@ def _build_demo_board() -> Board:
         number=61,
         title="Review the dry-run board plan output and update docs/tests.",
         agent=agent,
-        column_id="ready-to-ship",
+        column_id="col_ready_to_ship",
         labels=["docs", "tests"],
         comment_body="Validated the dry-run CLI contract and documented the setup guidance.",
     )
@@ -156,7 +155,27 @@ def _cmd_comment(args: argparse.Namespace) -> int:
 
 def _cmd_move(args: argparse.Namespace) -> int:
     adapter = FizzyCLIAdapter(config=_config_from_args(args))
-    return _print_dry_run_commands([adapter.build_move_command(args.card_number, args.column)])
+    try:
+        custom_columns = _parse_custom_columns(args.custom_column)
+        command = adapter.build_move_command(
+            args.card_number,
+            args.column,
+            custom_columns=custom_columns,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    return _print_dry_run_commands([command])
+
+
+def _parse_custom_columns(values: Optional[Sequence[str]]) -> List[FizzyCustomColumn]:
+    columns: List[FizzyCustomColumn] = []
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError("--custom-column must use COLUMN_ID=NAME.")
+        column_id, name = value.split("=", 1)
+        columns.append(FizzyCustomColumn(column_id=column_id.strip(), name=name.strip()))
+    return columns
 
 
 def _add_common_command_options(parser: argparse.ArgumentParser, *, include_board: bool = False) -> None:
@@ -273,9 +292,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     claim_p.add_argument(
         "--in-flight-column",
-        default=DEFAULT_IN_FLIGHT_COLUMN_ID,
+        required=True,
         metavar="COLUMN_ID",
-        help="Column ID used for the claim move step (default: In Flight).",
+        help="Real Fizzy custom column ID used for the claim move step.",
     )
     claim_p.add_argument(
         "--comment-body",
@@ -299,9 +318,20 @@ def _build_parser() -> argparse.ArgumentParser:
     comment_p.add_argument("--body", required=True, help="Comment body to pass to the Fizzy CLI.")
     _add_common_command_options(comment_p)
 
-    move_p = sub.add_parser("move", help="Print the Fizzy CLI command for moving a card to a column.")
+    move_p = sub.add_parser("move", help="Print the Fizzy CLI command for moving a card to a lane.")
     move_p.add_argument("card_number", type=int, metavar="CARD_NUMBER", help="Visible Fizzy card number.")
-    move_p.add_argument("--column", required=True, metavar="COLUMN_ID", help="Target Fizzy column identifier.")
+    move_p.add_argument(
+        "--column",
+        required=True,
+        metavar="COLUMN_ID_OR_LANE",
+        help="Target custom column ID, unique mapped column name, or system lane: maybe/not-now/done.",
+    )
+    move_p.add_argument(
+        "--custom-column",
+        action="append",
+        metavar="COLUMN_ID=NAME",
+        help="Known custom column mapping for safe name resolution; repeat as needed.",
+    )
     _add_common_command_options(move_p)
 
     return parser

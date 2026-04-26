@@ -66,9 +66,9 @@ multi-worker or crash-recovery value, operators should prefer `fizzy-popper`.
 | Workflow contract | WORKFLOW.md |
 | Workspace | Per-card branch/worktree |
 
-> **Status:** Pre-alpha scaffold — no real Fizzy or Codex execution yet.
-> The durable orchestration direction is now Robocorp workitems/RCC: Fizzy stays
-> the board, workitems provide queue leasing/release, and Codex is the worker.
+> **Status:** Pre-alpha, but the runner and RCC smoke paths now execute.
+> Tracker-facing CLI flows remain dry-run-first unless explicitly guarded as
+> live smoke commands.
 
 ---
 
@@ -94,10 +94,10 @@ fizzy-symphony workitems-env
 fizzy-symphony list --board work-ai-board --dry-run
 
 # Claim a card in dry-run mode
-fizzy-symphony claim 42 --board work-ai-board --dry-run
+fizzy-symphony claim 42 --board work-ai-board --in-flight-column col_in_flight --dry-run
 
 # Preview a composite claim with an explicit in-flight column/comment
-fizzy-symphony claim 42 --in-flight-column in-flight --comment-body "Claimed by fizzy-symphony worker." --dry-run
+fizzy-symphony claim 42 --in-flight-column col_in_flight --comment-body "Claimed by fizzy-symphony worker." --dry-run
 
 # Comment on a card in dry-run mode
 fizzy-symphony comment 42 --body "Validated the change." --dry-run
@@ -172,18 +172,18 @@ Fizzy CLI operation, so the preview is:
 - add a claim comment
 
 ```bash
-fizzy-symphony claim 42 --board work-ai-board --dry-run
+fizzy-symphony claim 42 --board work-ai-board --in-flight-column col_in_flight --dry-run
 # fizzy card show 42 --agent --markdown
-# fizzy card column 42 --column 'In Flight' --agent --quiet
+# fizzy card column 42 --column col_in_flight --agent --quiet
 # fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet
 
-fizzy-symphony claim 42 --self-assign --dry-run
+fizzy-symphony claim 42 --self-assign --in-flight-column col_in_flight --dry-run
 # fizzy card show 42 --agent --markdown
 # fizzy card self-assign 42 --agent --quiet
-# fizzy card column 42 --column 'In Flight' --agent --quiet
+# fizzy card column 42 --column col_in_flight --agent --quiet
 # fizzy comment create --card 42 --body 'Claimed by fizzy-symphony worker.' --agent --quiet
 
-fizzy-symphony claim 42 --assignee-id user-123 --in-flight-column ready --comment-body "Claimed by fizzy-symphony worker." --dry-run
+fizzy-symphony claim 42 --assignee-id user-123 --in-flight-column col_ready --comment-body "Claimed by fizzy-symphony worker." --dry-run
 # fizzy card show 42 --agent --markdown
 # fizzy card assign 42 --user user-123 --agent --quiet
 # fizzy card column 42 --column ready --agent --quiet
@@ -201,12 +201,31 @@ fizzy-symphony comment 42 --body "Proof of work attached." --dry-run
 
 ### `fizzy-symphony move`
 
-Prints the Fizzy CLI command that would move a card to a new column.
+Prints the Fizzy CLI command that would move a card to a custom column or Fizzy
+system lane. Custom columns should be targeted by real column ID. The system
+lanes are immutable pseudo lanes: `maybe`, `not-now`, and `done`.
 
 ```bash
 fizzy-symphony move 42 --column ready-to-ship --dry-run
 # fizzy card column 42 --column ready-to-ship --agent --quiet
+
+fizzy-symphony move 42 --column maybe --dry-run
+# fizzy card untriage 42 --agent --quiet
+
+fizzy-symphony move 42 --column not-now --dry-run
+# fizzy card postpone 42 --agent --quiet
+
+fizzy-symphony move 42 --column done --dry-run
+# fizzy card close 42 --agent --quiet
+
+fizzy-symphony move 42 --column "Ready for Agents" \
+  --custom-column "col_ready=Ready for Agents" --dry-run
+# fizzy card column 42 --column col_ready --agent --quiet
 ```
+
+Name-based custom-column resolution is only a convenience for mapped columns.
+Duplicate custom column names are rejected; use column IDs when a board has
+ambiguous display names.
 
 ### `fizzy-symphony plan`
 
@@ -294,6 +313,7 @@ python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 - `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
 - `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
 - `docs/production-smoke-agent.md` defines the SDK-backed release smoke gate.
+- `docs/live-operator-guide.md` walks from devcontainer setup to a live Fizzy card run.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
 - `robots/workitems/` contains the RCC SQLite smoke robot.
 - `test-projects/workai-smoke/` contains the disposable Fizzy board fixture and fake project.
@@ -314,8 +334,9 @@ python test-projects/workai-smoke/bootstrap_board.py --live --create-board
 ## Runner Strategy
 
 The runner boundary now lives in `fizzy_symphony.runners`. `CodexCliRunner`
-is the safe subprocess fallback, `CodexWorkItemRunner` adapts it to durable
-workitems, and the preferred future path remains the official Codex SDK/app-server.
+is the safe subprocess fallback, `CodexSdkRunner` uses the official Codex
+app-server protocol when the local runtime is available, and
+`CodexWorkItemRunner` adapts the runner contract to durable workitems.
 
 This project should not build its own coding-agent harness. For "let Codex work
 a repo card," use Codex as the harness and keep `fizzy-symphony` focused on
