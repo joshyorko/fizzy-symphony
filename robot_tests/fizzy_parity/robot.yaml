@@ -1,0 +1,32 @@
+---
+# yamllint disable rule:line-length
+# Fizzy Symphony parity RCC suite.
+# Run from the repo root:
+#   rcc run -r robot_tests/fizzy_parity/robot.yaml --dev -t FizzySymphonyParityContract --silent
+
+tasks:
+  FizzySymphonyParityContract:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t FizzySymphonyParityContract
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  FizzySymphonyParityContract:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t FizzySymphonyParityContract
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore

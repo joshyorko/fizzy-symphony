@@ -52,6 +52,30 @@ Use SQLite first:
 }
 ```
 
+## Robot Suite Layout
+
+The RCC-facing test layout is one self-contained Robot project per suite under
+`robot_tests/<suite>/`:
+
+```text
+robot_tests/
+  sqlite_workitem_flow/
+  fizzy_contract/
+  fizzy_parity/
+  <future-suite>/
+    robot.yaml
+    conda.yaml
+    test.robot
+    devdata/
+    README.md
+```
+
+Each suite owns its `robot.yaml`, dependency lock surface, Robot test entry
+point, devdata, and operator README. That keeps RCC smoke, live smoke, and
+contract checks runnable independently in CI or from a devcontainer. The older
+`robots/workitems/` robot remains as the shared Python task implementation and
+compatibility path.
+
 ## Current Code
 
 - `fizzy_symphony.workitem_queue.WorkItemQueue` wraps Robocorp-compatible
@@ -62,6 +86,19 @@ Use SQLite first:
   runner.
 - `FizzyWorkItemReporter` consumes one result and calls the tracker comment/state
   contract.
+
+## Current Gaps
+
+- CI proof pending: Python, uv, and RCC workflow files exist, but hosted Actions
+  still need to prove the matrix on GitHub.
+- RCC expansion pending: only the initial SQLite workitem, Fizzy contract, and
+  Fizzy parity suites have independent suite roots today.
+- Live smoke gated: live Fizzy mutation must stay opt-in and require explicit
+  board/card configuration plus cleanup proof.
+- Production daemon not implemented: there is no always-on scheduler,
+  reconciler, or orphan-recovery service.
+- Webhook receiver not implemented: polling/reconciliation must become reliable
+  before webhook ingestion is added.
 
 ## Adapter Augmentation
 

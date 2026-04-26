@@ -19,10 +19,18 @@ from robots.workitems.tasks import (
 
 ROOT = Path(__file__).resolve().parents[1]
 ROBOT_ROOT = ROOT / "robots" / "workitems"
+ROBOT_TESTS_ROOT = ROOT / "robot_tests"
+WORKFLOWS_ROOT = ROOT / ".github" / "workflows"
 WORKAI_SAMPLE = ROOT / "test-projects" / "workai-smoke" / "sample_project"
+PER_SUITE_ROBOT_FILES = ("robot.yaml", "conda.yaml", "test.robot", "README.md")
+EXPECTED_RCC_SUITES = {
+    "sqlite_workitem_flow": "SmokeSQLiteWorkitemFlow",
+    "fizzy_contract": "FizzySymphonyContractTest",
+    "fizzy_parity": "FizzySymphonyParityContract",
+}
 
 
-def test_rcc_workitem_robot_files_exist():
+def test_rcc_workitem_robot_files_exist_during_suite_split():
     assert (ROBOT_ROOT / "robot.yaml").is_file()
     assert (ROBOT_ROOT / "conda.yaml").is_file()
     assert (ROBOT_ROOT / "requirements.txt").is_file()
@@ -31,8 +39,51 @@ def test_rcc_workitem_robot_files_exist():
     assert (ROBOT_ROOT / "devdata" / "env-sqlite.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "env-prompt-card.example.json").is_file()
     assert (ROBOT_ROOT / "devdata" / "prompt-card.prompt.md").is_file()
-    assert (ROOT / "robot_tests" / "resources.robot").is_file()
-    assert (ROOT / "robot_tests" / "fizzy_symphony.robot").is_file()
+    assert ROBOT_TESTS_ROOT.is_dir()
+    assert (ROBOT_TESTS_ROOT / "resources.robot").is_file()
+    assert (ROBOT_TESTS_ROOT / "fizzy_symphony.robot").is_file()
+
+
+def test_robot_tests_per_suite_layout_for_available_suites():
+    for suite_name, task_name in EXPECTED_RCC_SUITES.items():
+        suite_dir = ROBOT_TESTS_ROOT / suite_name
+        assert suite_dir.is_dir(), f"missing robot_tests/{suite_name}"
+        for file_name in PER_SUITE_ROBOT_FILES:
+            assert (suite_dir / file_name).is_file(), f"{suite_dir.name} missing {file_name}"
+        assert (suite_dir / "devdata").is_dir(), f"{suite_dir.name} missing devdata/"
+
+        robot_yaml = (suite_dir / "robot.yaml").read_text(encoding="utf-8")
+        assert "tasks:" in robot_yaml or "devTasks:" in robot_yaml
+        assert "environmentConfigs:" in robot_yaml
+        assert "conda.yaml" in robot_yaml
+        assert task_name in robot_yaml
+
+        readme = (suite_dir / "README.md").read_text(encoding="utf-8").lower()
+        assert "rcc" in readme
+        assert "robot" in readme
+
+
+def test_github_actions_cover_python_uv_and_rcc_suites():
+    expected_workflows = {
+        "python.yml": ("python -m pip install -e \".[dev]\"", "python -m pytest -q"),
+        "uv.yml": ("uv venv .venv", "uv pip install -e \".[dev]\""),
+        "rcc-sqlite-workitem-flow.yml": ("sqlite_workitem_flow", "SmokeSQLiteWorkitemFlow"),
+        "rcc-fizzy-contract.yml": ("fizzy_contract", "FizzySymphonyContractTest"),
+        "rcc-fizzy-parity.yml": ("fizzy_parity", "FizzySymphonyParityContract"),
+    }
+
+    assert (WORKFLOWS_ROOT / "_rcc-robot.yml").is_file()
+    reusable = (WORKFLOWS_ROOT / "_rcc-robot.yml").read_text(encoding="utf-8")
+    assert "workflow_call:" in reusable
+    assert "rcc ht vars" in reusable
+    assert "rcc run" in reusable
+    assert "actions/upload-artifact" in reusable
+
+    for workflow_name, required_text in expected_workflows.items():
+        workflow = (WORKFLOWS_ROOT / workflow_name).read_text(encoding="utf-8")
+        assert "workflow_dispatch:" in workflow
+        for text in required_text:
+            assert text in workflow
 
 
 def test_robot_yaml_exposes_expected_tasks():

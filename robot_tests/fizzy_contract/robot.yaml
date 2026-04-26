@@ -1,0 +1,32 @@
+---
+# yamllint disable rule:line-length
+# Fizzy Symphony contract RCC suite.
+# Run from the repo root:
+#   rcc run -r robot_tests/fizzy_contract/robot.yaml --dev -t FizzySymphonyContractTest --silent
+
+tasks:
+  FizzySymphonyContractTest:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t FizzySymphonyContractTest
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  FizzySymphonyContractTest:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t FizzySymphonyContractTest
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore

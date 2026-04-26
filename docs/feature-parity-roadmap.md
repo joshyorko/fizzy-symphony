@@ -3,6 +3,30 @@
 This roadmap uses Basecamp's reference implementation as prior art without
 turning `fizzy-symphony` into a TypeScript daemon clone.
 
+## Current Maturity
+
+Implemented and locally tested:
+
+- Dry-run Fizzy command generation and guarded live tracker operations.
+- Golden-ticket discovery/parsing and board bootstrap helpers.
+- Robocorp workitem payloads, queue wrapper, producer, worker, and reporter
+  policy paths.
+- SQLite/in-memory smoke paths and WorkAI sample-project tests with scripted
+  Codex SDK runners.
+- Independent RCC suite projects for SQLite workitems, Fizzy contract, and
+  Fizzy parity under `robot_tests/<suite>/`.
+- GitHub Actions workflow files for Python, uv, and RCC suite execution.
+
+Still pending:
+
+- Hosted CI proof for the newly added GitHub Actions workflows.
+- Live Fizzy smoke runs, which remain gated behind explicit env and operator
+  cleanup.
+- Production daemon behavior: no hardened scheduler, polling loop, lease
+  reconciler, or background service is implemented yet.
+- Webhook receiver behavior: webhooks are future acceleration only, not current
+  correctness machinery.
+
 ## Product Shape
 
 `fizzy-symphony` should support two operating modes.

@@ -1,0 +1,32 @@
+---
+# yamllint disable rule:line-length
+# SQLite workitem RCC contract suite.
+# Run from the repo root:
+#   rcc run -r robot_tests/sqlite_workitem_flow/robot.yaml --dev -t SmokeSQLiteWorkitemFlow --silent
+
+tasks:
+  SmokeSQLiteWorkitemFlow:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t SmokeSQLiteWorkitemFlow
+
+devTasks:
+  Doctor:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t Doctor
+
+  SmokeSQLiteWorkitemFlow:
+    shell: python -m robocorp.tasks run ../../robots/workitems/tasks.py -t SmokeSQLiteWorkitemFlow
+
+environmentConfigs:
+  - conda.yaml
+
+artifactsDir: output
+
+PATH:
+  - .
+  - ../../robots/workitems
+
+PYTHONPATH:
+  - ../../src
+  - ../../robots/workitems
+
+ignoreFiles:
+  - ../../.gitignore
