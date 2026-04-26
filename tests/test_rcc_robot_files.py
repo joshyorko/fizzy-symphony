@@ -159,6 +159,17 @@ def test_prompt_file_resolution_accepts_robot_local_and_repo_relative_paths(monk
     assert repo_relative == ROBOT_ROOT / "devdata" / "rails-todo.prompt.md"
 
 
+def test_prompt_defaults_to_robot_prompt_md_when_env_omits_prompt(monkeypatch):
+    for key in ("FIZZY_SYMPHONY_PROMPT", "FIZZY_SYMPHONY_PROMPT_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(task_module, "_can_prompt_interactively", lambda: False)
+
+    prompt = task_module._require_prompt(None)
+
+    assert "Pocket Launch Control" in prompt
+    assert "## Card: Build the control room shell" in prompt
+
+
 def test_workspace_resolution_treats_relative_paths_as_repo_relative(monkeypatch, tmp_path):
     monkeypatch.chdir(ROBOT_ROOT)
     monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", "tmp/rails-todo-live")
@@ -424,6 +435,51 @@ def test_fizzy_symphony_defaults_to_live_bootstrap_from_small_env(tmp_path, monk
     assert any(call[:3] == ["fizzy", "card", "tag"] and "--tag" in call for call in calls)
 
 
+def test_fizzy_symphony_prompt_sections_create_and_run_multiple_cards(
+    tmp_path, monkeypatch
+):
+    sample_project = tmp_path / "sample_project"
+    shutil.copytree(WORKAI_SAMPLE, sample_project)
+    calls = _patch_fake_fizzy(monkeypatch)
+    runner = _ScriptedPromptSdkRunner()
+    monkeypatch.setenv("FIZZY_SYMPHONY_WORKSPACE", str(sample_project))
+    monkeypatch.setenv(
+        "FIZZY_SYMPHONY_PROMPT",
+        "\n\n".join(
+            [
+                "# Random multi-agent demo",
+                "## Card: Build the tiny app shell",
+                "Create prompt-proof.txt with shell proof.",
+                "## Card: Add the launch notes",
+                "Create prompt-proof.txt with launch proof.",
+            ]
+        ),
+    )
+    monkeypatch.delenv("FIZZY_SYMPHONY_CARD_NUMBER", raising=False)
+
+    summary = run_fizzy_symphony_from_environment(
+        output_dir=tmp_path / "output",
+        runner=runner,
+        prefer_real_adapter=False,
+    )
+
+    created_titles = [
+        call[call.index("--title") + 1]
+        for call in calls
+        if call[:3] == ["fizzy", "card", "create"]
+    ]
+    assert summary["status"] == "PASS"
+    assert created_titles == [
+        "Golden: Codex Agent",
+        "Build the tiny app shell",
+        "Add the launch notes",
+    ]
+    assert summary["bootstrap"]["work_card_numbers"] == [321, 322]
+    assert summary["card_numbers"] == [321, 322]
+    assert runner.card_numbers == [321, 322]
+    assert len(summary["cards"]) == 2
+
+
 def test_fizzy_symphony_creates_missing_local_workspace(tmp_path, monkeypatch):
     workspace = tmp_path / "fresh_workspace"
     calls = _patch_fake_fizzy(monkeypatch)
@@ -685,11 +741,11 @@ def _patch_fake_fizzy(monkeypatch):
             stdout = json.dumps({"id": column_id})
         elif command[:3] == ["fizzy", "card", "create"]:
             is_golden = len(created_cards) == 0
-            number = 320 if is_golden else 321
+            number = 320 + len(created_cards)
             title = command[command.index("--title") + 1]
             description = command[command.index("--description") + 1]
             card = {
-                "id": "card_golden" if is_golden else "card_work",
+                "id": "card_golden" if is_golden else f"card_work_{number}",
                 "number": number,
                 "title": title,
                 "description": description,

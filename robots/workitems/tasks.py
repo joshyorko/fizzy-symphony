@@ -703,17 +703,11 @@ def run_board_native_fizzy_symphony(
         known_columns=bootstrap.get("columns", {}),
     )
     golden_ticket = _select_golden_ticket(discovery)
-    work_card = _select_work_card(
+    work_cards = _select_work_cards(
         discovery,
-        card_number=int(bootstrap.get("work_card_number") or card_number or 0) or None,
+        card_number=card_number,
     )
-    card_number = int(work_card["card_number"])
     completion_policy = dict(golden_ticket.get("completion") or {})
-    assembled_prompt = _assemble_symphony_prompt(
-        golden_ticket=golden_ticket,
-        work_card=work_card,
-        fallback_prompt=prompt,
-    )
 
     sdk_runner, sdk_preflight = _require_sdk_runner(
         runner,
@@ -727,52 +721,99 @@ def run_board_native_fizzy_symphony(
         adapter=adapter,
         prefer_real_adapter=prefer_real_adapter,
     )
-    fizzy_preflight = _run_prompt_card_fizzy_preflight(
-        board_id=board_id,
-        card_number=card_number,
-        live=live_fizzy,
-    )
-
-    payload = _prompt_card_payload(
-        board_id=board_id,
-        card_number=card_number,
-        prompt=assembled_prompt,
-        workspace=workspace,
-        live_card=fizzy_preflight.get("card") if live_fizzy else None,
-        codex_model=codex_model,
-        codex_approval_policy=codex_approval_policy,
-        codex_sandbox_mode=codex_sandbox_mode,
-    )
     queue = WorkItemQueue(selected_adapter)
-    input_id = queue.enqueue_input(payload)
     summary_path = artifacts_dir / "fizzy-symphony-summary.json"
     status_path = artifacts_dir / "fizzy-symphony-status.json"
-    running_status = _worker_running_status(
-        board_id=board_id,
-        card_number=card_number,
-        workspace=workspace,
-        input_id=input_id,
-        adapter_kind=adapter_kind,
-        sdk_preflight=sdk_preflight,
-        summary_path=summary_path,
-        status_path=status_path,
-    )
-    _write_fizzy_symphony_progress(status_path, running_status)
-    with _worker_heartbeat(status_path, running_status):
-        worker_result = CodexWorkItemWorker(
-            queue=queue,
-            runner=CodexWorkItemRunner(sdk_runner),
-        ).work_one()
-    output_payload = _load_output_payload(selected_adapter, worker_result.output_id)
-    report_back = _report_card_result(
-        output_payload,
-        card_number=card_number,
-        live=live_fizzy,
-        handoff_column_id=completion_policy.get("column_id"),
-        completion_policy=completion_policy,
-    )
+
+    cards: List[JSONDict] = []
+    for work_card in work_cards:
+        current_card_number = int(work_card["card_number"])
+        assembled_prompt = _assemble_symphony_prompt(
+            golden_ticket=golden_ticket,
+            work_card=work_card,
+            fallback_prompt=prompt,
+        )
+        fizzy_preflight = _run_prompt_card_fizzy_preflight(
+            board_id=board_id,
+            card_number=current_card_number,
+            live=live_fizzy,
+        )
+        payload = _prompt_card_payload(
+            board_id=board_id,
+            card_number=current_card_number,
+            prompt=assembled_prompt,
+            workspace=workspace,
+            live_card=fizzy_preflight.get("card") if live_fizzy else None,
+            codex_model=codex_model,
+            codex_approval_policy=codex_approval_policy,
+            codex_sandbox_mode=codex_sandbox_mode,
+        )
+        input_id = queue.enqueue_input(payload)
+        running_status = _worker_running_status(
+            board_id=board_id,
+            card_number=current_card_number,
+            workspace=workspace,
+            input_id=input_id,
+            adapter_kind=adapter_kind,
+            sdk_preflight=sdk_preflight,
+            summary_path=summary_path,
+            status_path=status_path,
+        )
+        _write_fizzy_symphony_progress(status_path, running_status)
+        with _worker_heartbeat(status_path, running_status):
+            worker_result = CodexWorkItemWorker(
+                queue=queue,
+                runner=CodexWorkItemRunner(sdk_runner),
+            ).work_one()
+        output_payload = _load_output_payload(selected_adapter, worker_result.output_id)
+        report_back = _report_card_result(
+            output_payload,
+            card_number=current_card_number,
+            live=live_fizzy,
+            handoff_column_id=completion_policy.get("column_id"),
+            completion_policy=completion_policy,
+        )
+        cards.append(
+            {
+                "card_number": current_card_number,
+                "title": work_card.get("title") or "",
+                "input_id": input_id,
+                "preflight": fizzy_preflight,
+                "worker": {
+                    "item_id": worker_result.item_id,
+                    "output_id": worker_result.output_id,
+                    "succeeded": worker_result.succeeded,
+                },
+                "sdk": _sdk_metadata(output_payload.get("result", {})),
+                "report_back": report_back,
+            }
+        )
+
+    first_card = cards[0]
+    all_cards_succeeded = all(card["worker"]["succeeded"] for card in cards)
+    last_card = cards[-1]
+    if cards:
+        _write_fizzy_symphony_progress(
+            status_path,
+            {
+                "status": "RUNNING",
+                "phase": "reporting_complete",
+                "board_id": board_id,
+                "card_number": last_card["card_number"],
+                "workspace": str(workspace),
+                "worker": last_card["worker"],
+                "queue": {"adapter": adapter_kind, "state": "COMPLETED"},
+                "sdk": last_card["sdk"],
+                "summary_path": str(summary_path),
+                "status_path": str(status_path),
+            },
+        )
+    report_back = first_card["report_back"]
+    card_number = int(first_card["card_number"])
+    fizzy_preflight = first_card["preflight"]
+    sdk = first_card["sdk"]
     summary: JSONDict = {
-        "status": "PASS" if worker_result.succeeded else "FAIL",
+        "status": "PASS" if all_cards_succeeded else "FAIL",
         "run_mode": os.getenv("FIZZY_SYMPHONY_RUN_MODE") or "once",
         "board": {
             "id": board_id,
@@ -781,6 +822,8 @@ def run_board_native_fizzy_symphony(
             "cleanup_command": bootstrap.get("cleanup_command"),
         },
         "card_number": card_number,
+        "card_numbers": [card["card_number"] for card in cards],
+        "cards": cards,
         "workspace": str(workspace),
         "bootstrap": bootstrap,
         "discovery": discovery,
@@ -789,13 +832,8 @@ def run_board_native_fizzy_symphony(
             "sqlite_workitems": {"adapter": adapter_kind, "required": prefer_real_adapter},
             "sdk": sdk_preflight,
         },
-        "worker": {
-            "input_id": input_id,
-            "item_id": worker_result.item_id,
-            "output_id": worker_result.output_id,
-            "succeeded": worker_result.succeeded,
-        },
-        "sdk": _sdk_metadata(output_payload.get("result", {})),
+        "worker": first_card["worker"],
+        "sdk": sdk,
         "report_back": report_back,
         "artifacts": {},
     }
@@ -1183,26 +1221,32 @@ def _ensure_symphony_board_and_seed_card(
         check=True,
     )
 
-    work_card = _run_json(
-        [
-            "fizzy",
-            "card",
-            "create",
-            "--board",
-            resolved_board_id,
-            "--title",
-            card_title or "Run Fizzy Symphony",
-            "--description",
-            prompt,
-            "--agent",
-            "--quiet",
-        ]
-    )
-    work_number = _resource_number(work_card, "fizzy card create work card")
-    subprocess.run(
-        ["fizzy", "card", "column", str(work_number), "--column", ready_column_id],
-        check=True,
-    )
+    work_numbers: List[int] = []
+    for work_card_spec in _prompt_work_card_specs(prompt, card_title=card_title):
+        work_card = _run_json(
+            [
+                "fizzy",
+                "card",
+                "create",
+                "--board",
+                resolved_board_id,
+                "--title",
+                str(work_card_spec["title"]),
+                "--description",
+                str(work_card_spec["description"]),
+                "--agent",
+                "--quiet",
+            ]
+        )
+        work_number = _resource_number(work_card, "fizzy card create work card")
+        subprocess.run(
+            ["fizzy", "card", "column", str(work_number), "--column", ready_column_id],
+            check=True,
+        )
+        work_numbers.append(int(work_number))
+
+    if not work_numbers:
+        raise FullSmokeBlocked("FizzySymphony prompt did not produce any work cards.")
 
     bootstrap.update(
         {
@@ -1210,8 +1254,9 @@ def _ensure_symphony_board_and_seed_card(
             "created_card": True,
             "golden_ticket_created": True,
             "board_id": resolved_board_id,
-            "card_number": int(work_number),
-            "work_card_number": int(work_number),
+            "card_number": work_numbers[0],
+            "work_card_number": work_numbers[0],
+            "work_card_numbers": work_numbers,
             "golden_ticket_number": int(golden_number),
             "columns": column_ids,
             "agent_column_id": ready_column_id,
@@ -1220,6 +1265,46 @@ def _ensure_symphony_board_and_seed_card(
         }
     )
     return bootstrap
+
+
+def _prompt_work_card_specs(prompt: str, *, card_title: Optional[str]) -> List[JSONDict]:
+    section_pattern = re.compile(
+        r"^#{2,6}\s+(?:card|task|agent)\s*:\s*(?P<title>.+?)\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    matches = list(section_pattern.finditer(prompt))
+    if not matches:
+        return [
+            {
+                "title": card_title or _prompt_default_card_title(prompt),
+                "description": prompt,
+            }
+        ]
+
+    cards: List[JSONDict] = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(prompt)
+        description = prompt[start:end].strip()
+        cards.append(
+            {
+                "title": match.group("title").strip() or f"Run Fizzy Symphony {index + 1}",
+                "description": description or prompt,
+            }
+        )
+    return cards
+
+
+def _prompt_default_card_title(prompt: str) -> str:
+    for line in prompt.splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        heading = re.match(r"^#+\s+(.+)$", value)
+        if heading:
+            return heading.group(1).strip()[:120]
+        return value[:120]
+    return "Run Fizzy Symphony"
 
 
 def _create_symphony_board_columns(board_id: str) -> Dict[str, str]:
@@ -1336,17 +1421,21 @@ def _select_golden_ticket(discovery: JSONDict) -> JSONDict:
 
 
 def _select_work_card(discovery: JSONDict, *, card_number: Optional[int]) -> JSONDict:
+    return _select_work_cards(discovery, card_number=card_number)[0]
+
+
+def _select_work_cards(discovery: JSONDict, *, card_number: Optional[int]) -> List[JSONDict]:
     work_cards = list(discovery.get("work_cards") or [])
     if card_number is not None:
         for card in work_cards:
             if int(card.get("card_number")) == int(card_number):
-                return dict(card)
+                return [dict(card)]
         raise FullSmokeBlocked(
             f"Card {card_number} is not in a column configured by a golden ticket."
         )
     if not work_cards:
         raise FullSmokeBlocked("No work cards are waiting in golden-ticket columns.")
-    return dict(work_cards[0])
+    return [dict(card) for card in work_cards]
 
 
 def _assemble_symphony_prompt(
@@ -2053,8 +2142,10 @@ def _write_fizzy_symphony_status(path: Path, summary: JSONDict) -> None:
         "phase": "complete",
         "board_id": summary.get("board", {}).get("id"),
         "card_number": summary.get("card_number"),
+        "card_numbers": summary.get("card_numbers", []),
         "golden_tickets": summary.get("discovery", {}).get("golden_tickets", []),
         "work_cards": summary.get("discovery", {}).get("work_cards", []),
+        "cards": summary.get("cards", []),
         "worker": summary.get("worker", {}),
         "sdk": summary.get("sdk", {}),
         "summary_path": summary.get("artifacts", {}).get("summary_path"),
@@ -2322,16 +2413,24 @@ def _require_prompt(prompt: Optional[str]) -> str:
         return prompt
     prompt_file = os.getenv("FIZZY_SYMPHONY_PROMPT_FILE")
     if prompt_file:
-        path = _resolve_robot_file(Path(prompt_file))
-        if not path.is_file():
-            raise FullSmokeBlocked(f"Prompt file does not exist: {path}")
-        text = path.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-        raise FullSmokeBlocked(f"Prompt file is empty: {path}")
+        return _read_required_prompt_file(Path(prompt_file))
+    default_prompt = _resolve_robot_file(Path("devdata/prompt.md"))
+    if default_prompt.is_file():
+        return _read_required_prompt_file(default_prompt)
     raise FullSmokeBlocked(
-        "Prompt card smoke requires FIZZY_SYMPHONY_PROMPT or FIZZY_SYMPHONY_PROMPT_FILE."
+        "Prompt card smoke requires FIZZY_SYMPHONY_PROMPT, "
+        "FIZZY_SYMPHONY_PROMPT_FILE, or robots/workitems/devdata/prompt.md."
     )
+
+
+def _read_required_prompt_file(path: Path) -> str:
+    resolved_path = _resolve_robot_file(path)
+    if not resolved_path.is_file():
+        raise FullSmokeBlocked(f"Prompt file does not exist: {resolved_path}")
+    text = resolved_path.read_text(encoding="utf-8").strip()
+    if text:
+        return text
+    raise FullSmokeBlocked(f"Prompt file is empty: {resolved_path}")
 
 
 def _resolve_robot_file(path: Path) -> Path:
