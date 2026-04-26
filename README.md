@@ -7,7 +7,7 @@
 ## Overview
 
 **Fizzy Symphony** is a Python scaffold for planning card-based automation on top
-of [Fizzy](https://github.com/fizzy-project/fizzy). The scaffold treats **Fizzy
+of [Fizzy](https://github.com/basecamp/fizzy-cli). The scaffold treats **Fizzy
 as the tracker and board system**, normalizes cards into a canonical `FizzyCard`
 shape, and keeps tracker mutations dry-run-first while the durable queue layer
 is delegated to `robocorp-adapters-custom`.
@@ -19,14 +19,38 @@ main divergence is implementation plumbing: this project can use Robocorp
 workitems as the durable claimed/running/result queue instead of keeping that
 state only inside a long-running daemon.
 
+The closest Fizzy-native prior art is
+[`basecamp/fizzy-popper`](https://github.com/basecamp/fizzy-popper). This repo
+borrows its golden-ticket board pattern, but keeps a separate Python/RCC lane for
+larger asynchronous execution.
+
 It provides:
 
 | Layer | Description |
 |---|---|
-| **Models** | Pure Python dataclasses (`FizzyCard`, `Agent`, `CardAdapter`, `Board`, `FizzyConfig`) |
+| **Models** | Pure Python dataclasses (`FizzyCard`, `GoldenTicket`, `Agent`, `CardAdapter`, `Board`, `FizzyConfig`) |
 | **Adapter** | A dry-run `FizzyCLIAdapter` for command preview/debugging plus a future `FizzyOpenAPIAdapter` stub for real tracker reads/writes |
 | **CLI** | `fizzy-symphony` entry points for board bootstrap, setup checks, dry-run list/claim/comment/move flows, and a demo plan |
 | **Workitems** | Robocorp-compatible queue payloads, adapter env helpers, and producer/worker/reporter helpers |
+
+## Operating Modes
+
+Simple mode should stay as clean as `fizzy-popper`:
+
+```text
+Fizzy board -> polling -> Codex -> comment/move card
+```
+
+Durable mode is the reason for this Python/RCC variant:
+
+```text
+Fizzy board -> producer -> workitem lease -> RCC/Codex worker -> reporter -> Fizzy
+```
+
+Fizzy stores the work truth: card content, comments, tags, visible lanes, and
+proof. Workitems store execution custody: leases, retries, worker outputs,
+artifacts, and reporter handoff. If durable mode does not provide real
+multi-worker or crash-recovery value, operators should prefer `fizzy-popper`.
 
 ## Main Mapping
 
@@ -35,7 +59,7 @@ It provides:
 | Issue tracker | Fizzy |
 | Issue | Fizzy card |
 | Project | Fizzy board |
-| State | Fizzy list/column |
+| State | Fizzy system lane or custom column |
 | Comment | Fizzy card comment/update |
 | Orchestrator state | Robocorp workitem reservation/release/output state |
 | Worker | Codex command/app-server session |
@@ -108,8 +132,9 @@ fizzy-symphony doctor --board work-ai-board
 ### `fizzy-symphony init-board`
 
 Prints dry-run commands for preparing an existing Fizzy board with the
-recommended Symphony-style columns. It does not create a hidden system board by
-default.
+recommended Symphony-style custom columns. It does not create a hidden system
+board by default, and it treats `Maybe?`, `Not Now`, and `Done` as built-in
+Fizzy system lanes rather than custom columns to create.
 
 ```bash
 fizzy-symphony init-board --board work-ai-board
@@ -250,6 +275,9 @@ python -m pytest
 - `prompts/program-lead.md` guides the lead agent on board coordination and state transitions.
 - `prompts/worker-agent.md` guides a worker to claim exactly one card, stay within allowed paths, and report proof of work.
 - `docs/openai-symphony-alignment.md` explains how this maps to the upstream OpenAI Symphony model.
+- `docs/prior-art-fizzy-popper.md` compares this repo with Basecamp's Fizzy-native implementation.
+- `docs/feature-parity-roadmap.md` tracks simple-mode and durable-mode parity work.
+- `docs/codex-runner-strategy.md` explains why Codex SDK/app-server is the preferred worker harness.
 - `docs/rcc-workitems.md` describes the RCC/workitems refactor path.
 
 ## Adapter Strategy
@@ -264,6 +292,17 @@ python -m pytest
   layer. Fizzy is still the human-visible tracker layer.
 - Assignment is optional for MVP claim previews; a dedicated Codex/Fizzy
   Symphony user can be added later without blocking the orchestration loop.
+
+## Runner Strategy
+
+The current scaffold does not run Codex yet. When runtime execution lands, the
+preferred worker path should be the official Codex SDK/app-server so
+`fizzy-symphony` can control local Codex agents programmatically. Raw
+non-interactive `codex` CLI commands should be a fallback, not the only story.
+
+This project should not build its own coding-agent harness. For "let Codex work
+a repo card," use Codex as the harness and keep `fizzy-symphony` focused on
+Fizzy routing, durable work custody, and report-back.
 
 ---
 
