@@ -1,17 +1,22 @@
 # WORKFLOW.example.md
 
-This example shows the current operator workflow for running Fizzy Symphony from
-one RCC command. RCC owns the runtime, Fizzy owns the visible board/cards, SQLite
-workitems own execution custody, and Codex SDK owns the coding harness.
+This example shows the current operator workflow for running Fizzy Symphony with
+service-style commands. The `fizzy-symphony` CLI owns setup, start, status, and
+board inspection; RCC still owns the contained Python/SQLite/Codex runtime under
+the hood.
 
 ## Runtime Contract
 
 ```yaml
 runtime:
+  command_surface:
+    - fizzy-symphony setup
+    - fizzy-symphony start
+    - fizzy-symphony status
+    - fizzy-symphony boards
   runner: rcc
   robot: robots/workitems/robot.yaml
   task: FizzySymphony
-  run_mode: once
 
 tracker:
   kind: fizzy
@@ -64,38 +69,39 @@ Create a workspace for the app Codex will build:
 mkdir -p tmp/rails-todo-live
 ```
 
-Create a local env file:
+Create local config and env files:
 
 ```bash
-cat > env.rails-todo.local.json <<EOF
-{
-  "FIZZY_SYMPHONY_WORKSPACE": "$PWD/tmp/rails-todo-live",
-  "FIZZY_SYMPHONY_PROMPT_FILE": "devdata/rails-todo.prompt.md",
-  "FIZZY_SYMPHONY_BOARD_NAME": "Fizzy Symphony Rails Todo",
-  "FIZZY_SYMPHONY_CARD_TITLE": "Build a simple Rails todo app",
-  "FIZZY_SYMPHONY_RUN_MODE": "once",
-  "FIZZY_SYMPHONY_BOARD_ID": "",
-  "FIZZY_SYMPHONY_CARD_NUMBER": ""
-}
-EOF
+fizzy-symphony setup \
+  --workspace "$PWD/tmp/rails-todo-live" \
+  --prompt-file devdata/rails-todo.prompt.md \
+  --board-name "Fizzy Symphony Rails Todo" \
+  --card-title "Build a simple Rails todo app" \
+  --run-mode once
 ```
 
-Run the full orchestration:
+Start the orchestration in the foreground:
 
 ```bash
-rcc run -r robots/workitems/robot.yaml -t FizzySymphony -e env.rails-todo.local.json --silent
+fizzy-symphony start
 ```
 
-The run should print:
+Or start it detached so your terminal returns immediately:
 
-- disposable board id and URL
-- golden ticket card number
-- work card number
-- Codex SDK thread/run ids
-- summary/status artifact paths
-- cleanup command for the disposable board
+```bash
+fizzy-symphony start --detach
+fizzy-symphony status
+tail -f .fizzy-symphony/service.log
+```
 
-Clean up the disposable board after inspecting it:
+Inspect available boards:
+
+```bash
+fizzy-symphony boards
+```
+
+When the run prints or records a cleanup command, delete only the disposable
+board after inspection:
 
 ```bash
 fizzy board delete <printed board id>

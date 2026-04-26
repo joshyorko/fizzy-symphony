@@ -71,19 +71,41 @@ rcc run -r robots/workitems/robot.yaml --dev -t SmokeSQLiteWorkitemFlow \
 
 ## 4. Run One Live Card From Your Own Prompt
 
-The shortest path is one interactive RCC command:
+The recommended operator path is the service-style CLI. It writes a local
+`.fizzy-symphony/config.json` and `.fizzy-symphony/env.json`, then delegates to
+RCC under the hood.
 
 ```bash
-rcc run -r robots/workitems/robot.yaml -t FizzySymphony --interactive
+mkdir -p tmp/rails-todo-live
+
+fizzy-symphony setup \
+  --workspace "$PWD/tmp/rails-todo-live" \
+  --prompt-file devdata/rails-todo.prompt.md \
+  --board-name "Fizzy Symphony Rails Todo" \
+  --card-title "Build a simple Rails todo app" \
+  --run-mode once
+
+fizzy-symphony start --detach
+fizzy-symphony status
 ```
 
-When prompted, paste the prompt you want Codex to run. If you leave the
-workspace prompt blank, the robot defaults to this checkout. With no board/card
-values, `FizzySymphony` creates a fresh live board and card, adds the default
-custom columns, runs Codex through SQLite workitems, comments back, moves the
-card according to the golden ticket completion tag, and prints a cleanup
-command for the disposable board. The default disposable board golden ticket
-moves completed work cards to `Done`.
+With no board/card values, `FizzySymphony` creates a fresh live board and card,
+adds the default custom columns, runs Codex through SQLite workitems, comments
+back, moves the card according to the golden ticket completion tag, and prints a
+cleanup command for the disposable board. The default disposable board golden
+ticket moves completed work cards to `Done`.
+
+For foreground operation, use:
+
+```bash
+fizzy-symphony start
+```
+
+For lower-level debugging, the equivalent RCC command remains:
+
+```bash
+rcc run -r robots/workitems/robot.yaml -t FizzySymphony -e .fizzy-symphony/env.json --silent
+```
 
 For repeatable runs, create a tiny local env file from the template:
 

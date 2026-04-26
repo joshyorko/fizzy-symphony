@@ -81,6 +81,23 @@ pip install -e ".[dev]"
 # Optional: install Robocorp workitems adapter support
 pip install -e ".[workitems]"
 
+# Create local service config/env files
+fizzy-symphony setup \
+  --workspace "$PWD/tmp/rails-todo-live" \
+  --prompt-file devdata/rails-todo.prompt.md \
+  --board-name "Fizzy Symphony Rails Todo" \
+  --card-title "Build a simple Rails todo app"
+
+# Start the RCC-backed service in the foreground, or detach it
+fizzy-symphony start
+fizzy-symphony start --detach
+
+# Inspect process, queue, board/card, and SDK status
+fizzy-symphony status
+
+# List Fizzy boards
+fizzy-symphony boards
+
 # Check how this checkout maps to the upstream Symphony model
 fizzy-symphony doctor --board work-ai-board
 
@@ -119,6 +136,25 @@ pip install -e ".[dev]"
 ---
 
 ## CLI Commands
+
+### `fizzy-symphony setup/start/status/boards`
+
+These are the normal operator commands. `setup` writes `.fizzy-symphony/config.json`
+and `.fizzy-symphony/env.json`; `start` delegates to RCC using that env file;
+`status` shows process, queue, latest board/card, and SDK metadata; `boards`
+lists boards through the Fizzy CLI.
+
+```bash
+fizzy-symphony setup \
+  --workspace "$PWD/tmp/rails-todo-live" \
+  --prompt-file devdata/rails-todo.prompt.md \
+  --board-name "Fizzy Symphony Rails Todo" \
+  --card-title "Build a simple Rails todo app"
+
+fizzy-symphony start --detach
+fizzy-symphony status
+fizzy-symphony boards
+```
 
 ### `fizzy-symphony doctor`
 
