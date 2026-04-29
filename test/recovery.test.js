@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 
 import { createRunRegistry } from "../src/run-registry.js";
 import { evaluateCleanupRecovery, performStartupRecovery } from "../src/recovery.js";
 import { prepareWorkspace, resolveWorkspaceIdentity } from "../src/workspace.js";
 
 const NOW = "2026-04-29T12:10:00.000Z";
+const execFileAsync = promisify(execFile);
 
 function configFixture(dir) {
   return {
@@ -84,7 +87,29 @@ function attemptFor(identity, overrides = {}) {
   };
 }
 
+async function git(cwd, args) {
+  return execFileAsync("git", args, { cwd });
+}
+
+async function initSourceRepo(dir) {
+  const source = join(dir, "source");
+  await mkdir(source, { recursive: true });
+  try {
+    await git(source, ["rev-parse", "--is-inside-work-tree"]);
+    return;
+  } catch {
+    // Create the source repository once per temp root.
+  }
+  await git(source, ["init", "-b", "main"]);
+  await git(source, ["config", "user.email", "agent@example.test"]);
+  await git(source, ["config", "user.name", "Agent"]);
+  await writeFile(join(source, "WORKFLOW.md"), "# Policy\n", "utf8");
+  await git(source, ["add", "."]);
+  await git(source, ["commit", "-m", "initial"]);
+}
+
 async function preparedIdentity(dir, overrides = {}) {
+  await initSourceRepo(dir);
   const config = configFixture(dir);
   const identity = resolveWorkspaceIdentity({
     config,

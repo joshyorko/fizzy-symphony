@@ -1,19 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import {
   branchName,
+  cleanupWorkspace,
   prepareWorkspace,
+  preflightWorkspaceSource,
   resolveWorkspaceIdentity,
   scanWorkspaceMetadata,
   validateExistingWorkspaceMetadata,
   workspaceKey,
   workspacePath
 } from "../src/workspace.js";
+
+const execFileAsync = promisify(execFile);
 
 function shortDigest(value) {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -63,6 +69,32 @@ function card(overrides = {}) {
     board_id: "board_1",
     ...overrides
   };
+}
+
+async function git(cwd, args) {
+  const result = await execFileAsync("git", args, { cwd });
+  return String(result.stdout ?? "").trim();
+}
+
+async function initSourceRepo(dir, { workflow = "# Policy\n", extraFiles = {} } = {}) {
+  const source = join(dir, "source repo");
+  await mkdir(source, { recursive: true });
+  await git(source, ["init", "-b", "main"]);
+  await git(source, ["config", "user.email", "agent@example.test"]);
+  await git(source, ["config", "user.name", "Agent"]);
+  await writeFile(join(source, "WORKFLOW.md"), workflow, "utf8");
+  for (const [path, content] of Object.entries(extraFiles)) {
+    const fullPath = join(source, path);
+    await mkdir(resolve(fullPath, ".."), { recursive: true });
+    await writeFile(fullPath, content, "utf8");
+  }
+  await git(source, ["add", "."]);
+  await git(source, ["commit", "-m", "initial"]);
+  return source;
+}
+
+async function assertMissing(path) {
+  await assert.rejects(() => access(path), (error) => error.code === "ENOENT");
 }
 
 test("resolveWorkspaceIdentity builds deterministic identity, key, path, and branch name", async () => {
@@ -138,6 +170,7 @@ test("workspacePath rejects key escapes and roots outside configured allowed_roo
 
 test("prepareWorkspace writes guard and metadata before runner dispatch would start", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-prepare-"));
+  await initSourceRepo(dir);
   const config = baseConfig(dir);
   const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
   const metadata = {
@@ -167,8 +200,261 @@ test("prepareWorkspace writes guard and metadata before runner dispatch would st
   assert.equal(guard.workspace_identity_digest, identity.workspace_identity_digest);
 });
 
+test("prepareWorkspace creates a deterministic git worktree branch and runs create/run hooks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-create-"));
+  const hookScript = [
+    "import { appendFileSync } from 'node:fs';",
+    "appendFileSync('../hook.log', `${process.argv[2]}\\n`);"
+  ].join("\n");
+  await initSourceRepo(dir, {
+    workflow: [
+      "---",
+      "hooks:",
+      "  after_create:",
+      "    command: node",
+      "    args:",
+      "      - hooks.js",
+      "      - after_create",
+      "  before_run:",
+      "    command: node",
+      "    args:",
+      "      - hooks.js",
+      "      - before_run",
+      "---",
+      "# Policy",
+      ""
+    ].join("\n"),
+    extraFiles: { "hooks.js": hookScript }
+  });
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+
+  assert.equal(await git(prepared.workspace_path, ["branch", "--show-current"]), branchName(identity));
+  assert.equal(await git(prepared.workspace_path, ["rev-parse", "--show-toplevel"]), prepared.workspace_path);
+  assert.deepEqual((await readFile(join(config.workspaces.registry.app.worktree_root, "hook.log"), "utf8")).trim().split("\n"), [
+    "after_create",
+    "before_run"
+  ]);
+
+  const writtenMetadata = JSON.parse(await readFile(prepared.metadata_path, "utf8"));
+  assert.equal(writtenMetadata.branch_name, branchName(identity));
+  assert.equal(writtenMetadata.workspace_path, prepared.workspace_path);
+});
+
+test("prepareWorkspace reuses a clean matching worktree without rerunning after_create", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-reuse-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  const first = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const second = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+  });
+
+  assert.equal(second.workspace_path, first.workspace_path);
+  assert.equal(await git(second.workspace_path, ["branch", "--show-current"]), branchName(identity));
+  assert.equal(second.created, false);
+
+  const writtenMetadata = JSON.parse(await readFile(second.metadata_path, "utf8"));
+  assert.equal(writtenMetadata.run_attempt_id, "attempt_2");
+});
+
+test("prepareWorkspace preserves a dirty existing worktree instead of reusing it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-dirty-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  await writeFile(join(prepared.workspace_path, "debug.log"), "keep me\n", "utf8");
+
+  await assert.rejects(
+    () => prepareWorkspace({
+      config,
+      identity,
+      metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+    }),
+    (error) => error.code === "WORKSPACE_WORKTREE_DIRTY" &&
+      error.details.preserve_workspace === true &&
+      error.details.workspace_path === prepared.workspace_path
+  );
+
+  assert.equal(await readFile(join(prepared.workspace_path, "debug.log"), "utf8"), "keep me\n");
+});
+
+test("preflightWorkspaceSource rejects dirty source repositories when policy requires a clean source", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-dirty-"));
+  const source = await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  await writeFile(join(source, "scratch.txt"), "dirty\n", "utf8");
+
+  await assert.rejects(
+    () => preflightWorkspaceSource({ config, identity }),
+    (error) => error.code === "WORKSPACE_SOURCE_DIRTY" &&
+      error.details.preserve_workspace === true &&
+      error.details.source_repository_path === resolve(source)
+  );
+});
+
+test("preflightWorkspaceSource allows dirty source repositories when snapshot policy supplies a commit", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-snapshot-"));
+  const source = await initSourceRepo(dir);
+  const snapshot = await git(source, ["rev-parse", "HEAD"]);
+  const config = baseConfig(dir, {
+    safety: {
+      allowed_roots: [dir],
+      dirty_source_repo_policy: "snapshot"
+    }
+  });
+  const identity = resolveWorkspaceIdentity({
+    config,
+    route: route({ source_snapshot_id: snapshot }),
+    card: card()
+  });
+  await writeFile(join(source, "scratch.txt"), "dirty\n", "utf8");
+
+  const preflight = await preflightWorkspaceSource({ config, identity });
+
+  assert.equal(preflight.status, "ok");
+  assert.equal(preflight.clean, false);
+  assert.equal(identity.source_ref, snapshot);
+
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const writtenMetadata = JSON.parse(await readFile(prepared.metadata_path, "utf8"));
+
+  assert.equal(writtenMetadata.source_snapshot_id, snapshot);
+  assert.equal(writtenMetadata.source_ref_kind, "source_snapshot_id");
+});
+
+test("cleanupWorkspace removes clean proven worktrees with non-force git worktree removal", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cleanup-remove-"));
+  const hookScript = [
+    "import { appendFileSync } from 'node:fs';",
+    "appendFileSync('../remove.log', 'before_remove\\n');"
+  ].join("\n");
+  await initSourceRepo(dir, {
+    workflow: [
+      "---",
+      "hooks:",
+      "  before_remove:",
+      "    command: node",
+      "    args:",
+      "      - hooks.js",
+      "---",
+      "# Policy",
+      ""
+    ].join("\n"),
+    extraFiles: { "hooks.js": hookScript }
+  });
+  const config = baseConfig(dir, {
+    safety: {
+      allowed_roots: [dir],
+      dirty_source_repo_policy: "fail",
+      cleanup: { policy: "remove_clean_only" }
+    }
+  });
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const proof = {
+    file: join(dir, ".fizzy-symphony", "run", "proof", "run_1.json"),
+    digest: "sha256:proof",
+    payload: { no_code_change: true }
+  };
+  await mkdir(resolve(proof.file, ".."), { recursive: true });
+  await writeFile(proof.file, "{}\n", "utf8");
+
+  const result = await cleanupWorkspace({
+    config,
+    workspace: prepared,
+    proof,
+    resultComment: { id: "comment_1" },
+    completionMarker: { id: "marker_1" },
+    claimRelease: { released: true }
+  });
+
+  assert.equal(result.action, "removed");
+  assert.equal(result.method, "git_worktree_remove");
+  assert.equal(result.force, false);
+  assert.equal(await readFile(join(config.workspaces.registry.app.worktree_root, "remove.log"), "utf8"), "before_remove\n");
+  await assertMissing(prepared.workspace_path);
+  await assertMissing(prepared.metadata_path);
+});
+
+test("cleanupWorkspace preserves dirty and unpushed worktrees", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cleanup-preserve-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir, {
+    safety: {
+      allowed_roots: [dir],
+      dirty_source_repo_policy: "fail",
+      cleanup: { policy: "remove_clean_only" }
+    }
+  });
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const proof = {
+    file: join(dir, ".fizzy-symphony", "run", "proof", "run_1.json"),
+    digest: "sha256:proof",
+    payload: { no_code_change: true }
+  };
+  await mkdir(resolve(proof.file, ".."), { recursive: true });
+  await writeFile(proof.file, "{}\n", "utf8");
+  const complete = {
+    config,
+    workspace: prepared,
+    proof,
+    resultComment: { id: "comment_1" },
+    completionMarker: { id: "marker_1" },
+    claimRelease: { released: true }
+  };
+
+  await writeFile(join(prepared.workspace_path, "debug.log"), "dirty\n", "utf8");
+  const dirty = await cleanupWorkspace(complete);
+  assert.equal(dirty.action, "preserve");
+  assert.equal(dirty.reason, "worktree_dirty");
+  await rm(join(prepared.workspace_path, "debug.log"));
+
+  await writeFile(join(prepared.workspace_path, "feature.txt"), "new work\n", "utf8");
+  await git(prepared.workspace_path, ["add", "feature.txt"]);
+  await git(prepared.workspace_path, ["commit", "-m", "feature"]);
+  const unpushed = await cleanupWorkspace(complete);
+  assert.equal(unpushed.action, "preserve");
+  assert.equal(unpushed.reason, "worktree_unpushed");
+  assert.equal(await git(prepared.workspace_path, ["branch", "--show-current"]), branchName(identity));
+});
+
 test("metadata mismatch preserves existing workspace metadata and fails dispatch", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-metadata-mismatch-"));
+  await initSourceRepo(dir);
   const config = baseConfig(dir);
   const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
   const prepared = await prepareWorkspace({
@@ -219,6 +505,7 @@ test("validateExistingWorkspaceMetadata rejects identity and canonical repositor
 
 test("scanWorkspaceMetadata preserves workspaces with missing guards and guard metadata mismatches", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-scan-metadata-"));
+  await initSourceRepo(dir);
   const config = baseConfig(dir);
   const identity = resolveWorkspaceIdentity({ config, route: route(), card: card({ id: "card_missing", number: 1 }) });
   const missingGuard = await prepareWorkspace({
