@@ -13,7 +13,7 @@ import { applyClaimEventLog, createBoardClaimStore } from "./claims.js";
 import { parseCompletionFailureMarker, parseCompletionMarker } from "./completion.js";
 import { createFizzyClient } from "./fizzy-client.js";
 import { createOrchestratorState } from "./orchestrator-state.js";
-import { loadWorkflow } from "./workflow.js";
+import { createCachedWorkflowLoader } from "./workflow.js";
 import { createWorkspaceManager } from "./workspace.js";
 import { createCodexCliAppServerRunner } from "./codex-cli-app-server-runner.js";
 import { createFakeCodexRunner } from "./runner-contract.js";
@@ -98,7 +98,7 @@ export async function startDaemon(options = {}) {
     const workspaceManager = await callFactory(dependencies.workspaceManagerFactory, { config, status }) ??
       createDefaultWorkspaceManager(dependencies);
     const workflowLoader = await callFactory(dependencies.workflowLoaderFactory, { config, status }) ??
-      createDefaultWorkflowLoader();
+      createDefaultWorkflowLoader({ status });
     const router = await callFactory(dependencies.routerFactory, { config, status }) ??
       createDefaultRouter({ config, routes: () => status.status().routes });
     const orchestratorState = await callFactory(dependencies.orchestratorStateFactory, { config, claims, runner }) ??
@@ -234,12 +234,8 @@ function createDefaultWorkspaceManager(dependencies = {}) {
   return createWorkspaceManager(dependencies.workspaceOptions ?? {});
 }
 
-function createDefaultWorkflowLoader() {
-  return {
-    async load({ config, workspace }) {
-      return loadWorkflow({ config, workspace });
-    }
-  };
+function createDefaultWorkflowLoader({ status } = {}) {
+  return createCachedWorkflowLoader({ status });
 }
 
 function createDefaultRouter({ config, routes }) {

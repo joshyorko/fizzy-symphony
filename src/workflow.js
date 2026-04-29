@@ -131,6 +131,47 @@ export function createWorkflowCache(loaderOptions = {}, options = {}) {
   return new WorkflowCache(loaderOptions, options);
 }
 
+export function createCachedWorkflowLoader(options = {}) {
+  const {
+    status,
+    loader = loadWorkflow
+  } = options;
+  const caches = new Map();
+
+  return {
+    caches,
+    async load(context = {}) {
+      const key = workflowCacheKey(context);
+      let cache = caches.get(key);
+      if (!cache) {
+        cache = createWorkflowCache({}, { loader });
+        caches.set(key, cache);
+      }
+
+      try {
+        const result = await cache.reload(context);
+        status?.recordWorkflowReload?.({
+          ...workflowReloadContext(context, result.workflow),
+          key,
+          ok: result.ok,
+          cache_hit: result.ok === false,
+          error: result.error
+        });
+        return result.workflow;
+      } catch (error) {
+        status?.recordWorkflowReload?.({
+          ...workflowReloadContext(context),
+          key,
+          ok: false,
+          cache_hit: false,
+          error
+        });
+        throw error;
+      }
+    }
+  };
+}
+
 function workflowCandidates(workspace) {
   const sourceRepo = workspace.sourceRepo ?? workspace.source_repo ?? workspace.repo ?? workspace.config?.repo;
   const workspacePath = workspace.path ?? workspace.workspacePath ?? workspace.workspace_path;
@@ -151,6 +192,28 @@ function workflowCandidates(workspace) {
   }
 
   return uniqueCandidates(candidates);
+}
+
+function workflowCacheKey({ config = {}, workspace = {} } = {}) {
+  const sourceRepo = workspace.sourceRepo ?? workspace.source_repo ?? workspace.repo ?? workspace.config?.repo ?? "";
+  const workspacePath = workspace.path ?? workspace.workspacePath ?? workspace.workspace_path ?? "";
+  return JSON.stringify({
+    source_repo: sourceRepo,
+    workspace_path: sourceRepo ? "" : workspacePath,
+    workflow_path: workspace.config?.workflow_path ?? workspace.workflow_path ?? workspace.workflowPath ?? "",
+    fallback_path: config.workflow?.fallback_path ?? "",
+    fallback_enabled: Boolean(config.workflow?.fallback_enabled)
+  });
+}
+
+function workflowReloadContext({ card = {}, route = {}, workspace = {} } = {}, workflow = null) {
+  return {
+    card,
+    route,
+    workspace,
+    workflow,
+    workflow_path: workflow?.path ?? workspace.config?.workflow_path ?? workspace.workflow_path ?? workspace.workflowPath
+  };
 }
 
 function resolveWorkflowPath(workflowPath, base) {
@@ -509,6 +572,9 @@ function frontMatterError(message, details = {}) {
 function structuredWorkflowError(error, details = {}) {
   if (error instanceof FizzySymphonyError) {
     return new FizzySymphonyError(error.code, error.message, { ...error.details, ...details });
+  }
+  if (error?.code) {
+    return new FizzySymphonyError(error.code, error.message, { ...(error.details ?? {}), ...details });
   }
   return new FizzySymphonyError("WORKFLOW_ERROR", error.message, details);
 }

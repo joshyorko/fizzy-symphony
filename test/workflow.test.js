@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 
 import {
   WorkflowCache,
+  createCachedWorkflowLoader,
   createWorkflowCache,
   loadWorkflow,
   parseWorkflow,
   renderPrompt
 } from "../src/workflow.js";
+import { createStatusStore } from "../src/status.js";
 
 test("parseWorkflow parses optional front matter and markdown body", () => {
   const workflow = parseWorkflow(`---
@@ -259,4 +261,75 @@ test("WorkflowCache keeps the last known good workflow after a failed reload", a
   assert.equal(cache.workflow.body, "# First");
   assert.equal(cache.reloadError.code, "WORKFLOW_FRONT_MATTER_INVALID");
   assert.ok(cache instanceof WorkflowCache);
+});
+
+test("cached workflow loader records reload failures while returning last known good workflow", async () => {
+  const status = createStatusStore({
+    instance: { id: "instance-a" },
+    startedAt: "2026-04-29T12:00:00.000Z",
+    config: { workflow: { fallback_enabled: false } }
+  });
+  const route = { id: "route_1", fingerprint: "sha256:route" };
+  const card = { id: "card_1", number: 1, board_id: "board_1" };
+  const workspace = { key: "workspace_app", sourceRepo: "/repo/app", path: "/tmp/workspace-app" };
+  const calls = [];
+  const loader = createCachedWorkflowLoader({
+    status,
+    loader: async () => {
+      calls.push("load");
+      if (calls.length === 1) return { body: "# First", frontMatter: {}, path: "/repo/app/WORKFLOW.md" };
+      const error = new Error("front matter broke");
+      error.code = "WORKFLOW_FRONT_MATTER_INVALID";
+      error.details = { path: "/repo/app/WORKFLOW.md" };
+      throw error;
+    }
+  });
+
+  const first = await loader.load({ config: {}, card, route, workspace });
+  const second = await loader.load({ config: {}, card, route, workspace });
+
+  assert.equal(first.body, "# First");
+  assert.equal(second.body, "# First");
+  assert.deepEqual(calls, ["load", "load"]);
+
+  const snapshot = status.status();
+  assert.equal(snapshot.workflow_cache.recent_reload_errors.length, 1);
+  assert.equal(snapshot.workflow_cache.recent_reload_errors[0].code, "WORKFLOW_FRONT_MATTER_INVALID");
+  assert.equal(snapshot.workflow_cache.recent_reload_errors[0].cache_hit, true);
+  assert.equal(snapshot.workflow_cache.recent_reload_errors[0].route_id, "route_1");
+  assert.equal(snapshot.workflow_cache.recent_reload_errors[0].card_id, "card_1");
+  assert.equal(snapshot.workflow_cache.entries[0].status, "cached_after_error");
+  assert.equal(snapshot.recent_failures.at(-1).failure_kind, "workflow_reload");
+});
+
+test("cached workflow loader reports invalid workflow with no last known good and rethrows", async () => {
+  const status = createStatusStore({
+    instance: { id: "instance-a" },
+    startedAt: "2026-04-29T12:00:00.000Z",
+    config: { workflow: { fallback_enabled: false } }
+  });
+  const error = new Error("missing closing delimiter");
+  error.code = "WORKFLOW_FRONT_MATTER_INVALID";
+  error.details = { path: "/repo/app/WORKFLOW.md" };
+  const loader = createCachedWorkflowLoader({
+    status,
+    loader: async () => {
+      throw error;
+    }
+  });
+
+  await assert.rejects(
+    () => loader.load({
+      config: {},
+      card: { id: "card_1", board_id: "board_1" },
+      route: { id: "route_1", fingerprint: "sha256:route" },
+      workspace: { key: "workspace_app", sourceRepo: "/repo/app", path: "/tmp/workspace-app" }
+    }),
+    (thrown) => thrown.code === "WORKFLOW_FRONT_MATTER_INVALID"
+  );
+
+  const snapshot = status.status();
+  assert.equal(snapshot.workflow_cache.recent_reload_errors[0].cache_hit, false);
+  assert.equal(snapshot.workflow_cache.entries[0].status, "failed");
+  assert.equal(snapshot.recent_failures.at(-1).failure_kind, "workflow_reload");
 });
