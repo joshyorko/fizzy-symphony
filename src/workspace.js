@@ -12,7 +12,7 @@ const GUARD_FILE_VERSION = 1;
 const GUARD_FILE_NAME = ".fizzy-symphony-workspace-guard.json";
 const METADATA_MARKER = "fizzy-symphony:workspace-metadata:v1";
 const GUARD_MARKER = "fizzy-symphony:workspace-guard:v1";
-const SUPPORTED_ISOLATION_STRATEGIES = new Set(["git_worktree", "git_clone", "copy"]);
+const SUPPORTED_ISOLATION_STRATEGIES = new Set(["git_worktree"]);
 
 const execFileAsync = promisify(execFile);
 const nodeFs = { access, mkdir, readdir, readFile, rm, writeFile };

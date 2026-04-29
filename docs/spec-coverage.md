@@ -37,8 +37,8 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 
 ### Workspace isolation
 - Status: passing
-- Tests: `test/workspace.test.js`, `test/recovery.test.js`
-- Coverage: deterministic workspace key, named workspace identity, metadata mismatch preservation, source snapshot requirements, path escape rejection, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
+- Tests: `test/config.test.js`, `test/workspace.test.js`, `test/recovery.test.js`
+- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
 
 ### Port allocation
 - Status: newly covered

@@ -316,9 +316,9 @@ function validateConfigValues(config) {
   validateEnum(config.runner?.preferred, ["sdk", "cli_app_server"], "runner.preferred");
   validateEnum(config.runner?.fallback, ["cli_app_server", "none"], "runner.fallback");
   validateEnum(config.server?.port_allocation, ["fixed", "next_available", "random"], "server.port_allocation");
-  validateEnum(config.workspaces?.default_isolation, ["git_worktree", "git_clone", "copy"], "workspaces.default_isolation");
+  validateWorkspaceIsolation(config.workspaces?.default_isolation, "workspaces.default_isolation");
   for (const [name, workspace] of Object.entries(config.workspaces?.registry ?? {})) {
-    validateEnum(workspace?.isolation, ["git_worktree", "git_clone", "copy"], `workspaces.registry.${name}.isolation`);
+    validateWorkspaceIsolation(workspace?.isolation, `workspaces.registry.${name}.isolation`);
   }
 
   validateServerPort(config.server ?? {});
@@ -356,6 +356,18 @@ function validateEnum(value, allowed, path) {
       value,
       allowed
     });
+  }
+}
+
+function validateWorkspaceIsolation(value, path) {
+  if (value === undefined) return;
+  validateEnum(value, ["git_worktree", "git_clone", "copy"], path);
+  if (value !== "git_worktree") {
+    throw new FizzySymphonyError(
+      "CONFIG_UNIMPLEMENTED_FEATURE",
+      "Only git_worktree workspace isolation is implemented for live daemon dispatch.",
+      { path, value, supported: ["git_worktree"] }
+    );
   }
 }
 

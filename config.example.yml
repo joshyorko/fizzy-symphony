@@ -282,10 +282,10 @@ workspaces:
   metadata_root: .fizzy-symphony/run/workspaces
 
   # Required: yes. Default: git_worktree.
-  # Valid: git_worktree, git_clone, copy.
+  # Valid: git_worktree. git_clone/copy are rejected until implemented.
   default_isolation: git_worktree
 
-  # Required for git_worktree and git_clone.
+  # Required for git_worktree.
   # Example source repo that contains WORKFLOW.md.
   default_repo: .
 

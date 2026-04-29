@@ -331,6 +331,14 @@ test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross
       mutate: (config) => { config.agent.max_turns = 2; }
     },
     {
+      code: "CONFIG_UNIMPLEMENTED_FEATURE",
+      mutate: (config) => { config.workspaces.default_isolation = "git_clone"; }
+    },
+    {
+      code: "CONFIG_UNIMPLEMENTED_FEATURE",
+      mutate: (config) => { config.workspaces.registry.app.isolation = "copy"; }
+    },
+    {
       code: "CONFIG_INVALID_ENUM",
       mutate: (config) => { config.workspaces.default_isolation = "empty_directory"; }
     },
