@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { asArray, cardColumnId, cardDescription, commentBody, richText } from "./fizzy-normalize.js";
+
 const DIGEST_PREFIX = "sha256:";
 
 export function canonicalJson(value) {
@@ -27,7 +29,7 @@ export function normalizedTags(card) {
   const tags = [];
   const seen = new Set();
 
-  for (const tag of card?.tags ?? []) {
+  for (const tag of asArray(card?.tags ?? card?.tag_names ?? card?.tagNames)) {
     const normalized = normalizeTag(tag);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
@@ -50,12 +52,12 @@ export function cardDigest(card = {}, route = {}) {
     card_id: card.id ?? card.card_id ?? null,
     card_number: card.number ?? card.card_number ?? null,
     title: card.title ?? "",
-    description: card.description ?? card.body ?? "",
+    description: cardDescription(card),
     steps: normalizeSteps(card.steps),
     tags: normalizedNonDaemonTags(card),
     closed: Boolean(card.closed ?? card.is_closed ?? card.closed_at ?? false),
     postponed: Boolean(card.postponed ?? card.is_postponed ?? card.postponed_at ?? card.postponed_until ?? false),
-    source_column_id: card.column_id ?? card.column?.id ?? null,
+    source_column_id: cardColumnId(card),
     route_id: route.id ?? route.route_id ?? null,
     route_fingerprint: route.fingerprint ?? route.route_fingerprint ?? null
   };
@@ -109,14 +111,14 @@ function normalizeTimestamp(value) {
 }
 
 function normalizeSteps(steps = []) {
-  return (steps ?? []).map((step) => {
+  return asArray(steps).map((step) => {
     if (typeof step === "string") {
       return { id: null, title: step, checked: false };
     }
 
     return {
       id: step?.id ?? step?.step_id ?? null,
-      title: step?.title ?? step?.name ?? step?.text ?? step?.description ?? step?.body ?? "",
+      title: richText(step?.title ?? step?.name ?? step?.text ?? step?.description ?? step?.body ?? ""),
       checked: Boolean(step?.checked ?? step?.is_checked ?? step?.completed ?? step?.complete ?? false)
     };
   });
@@ -126,7 +128,7 @@ function normalizedNonDaemonTags(card) {
   const tags = [];
   const seen = new Set();
 
-  for (const tag of card?.tags ?? []) {
+  for (const tag of asArray(card?.tags ?? card?.tag_names ?? card?.tagNames)) {
     const normalized = normalizeTag(tag);
     if (!normalized || isDaemonTag(normalized) || seen.has(normalized)) continue;
     seen.add(normalized);
@@ -137,7 +139,7 @@ function normalizedNonDaemonTags(card) {
 }
 
 function normalizeNonDaemonComments(comments = []) {
-  return (comments ?? [])
+  return asArray(comments)
     .filter((comment) => !isDaemonMarkerComment(comment))
     .map((comment) => {
       if (typeof comment === "string") {
@@ -149,11 +151,6 @@ function normalizeNonDaemonComments(comments = []) {
         body: commentBody(comment)
       };
     });
-}
-
-function commentBody(comment) {
-  if (typeof comment === "string") return comment;
-  return comment?.body ?? comment?.text ?? comment?.content ?? comment?.markdown ?? "";
 }
 
 function isDaemonMarkerComment(comment) {

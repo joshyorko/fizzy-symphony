@@ -182,6 +182,27 @@ Route: {{route.id}}
   assert.match(prompt, /Completion policy:\n```json\n\{/);
 });
 
+test("renderPrompt includes live Fizzy rich-text card and comment bodies as plain text", () => {
+  const prompt = renderPrompt({
+    workflow: parseWorkflow("# Policy\n\nUse card context."),
+    board: { id: "board_1" },
+    column: { id: "col_ready" },
+    route: { id: "route_1", fingerprint: "sha256:route", completion: { policy: "comment_once" } },
+    card: {
+      id: "card_1",
+      title: "Normalize live text",
+      body: { plain_text: "Use the visible body.", html: "<p>Use the visible body.</p>" },
+      comments: [{ author: { name: "Josh" }, body: { plain_text: "Loop markers live here.", html: "<p>Loop markers live here.</p>" } }]
+    },
+    workspace: {},
+    completion: {}
+  });
+
+  assert.match(prompt, /Description:\nUse the visible body\./u);
+  assert.match(prompt, /Josh: Loop markers live here\./u);
+  assert.doesNotMatch(prompt, /\[object Object\]/u);
+});
+
 test("renderPrompt rejects unknown template variables", () => {
   assert.throws(
     () => renderPrompt({

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 
 import { canonicalJson, cardDigest, digest } from "./domain.js";
 import { FizzySymphonyError } from "./errors.js";
+import { commentBody } from "./fizzy-normalize.js";
 
 export const COMPLETION_MARKER = "fizzy-symphony:completion:v1";
 export const COMPLETION_FAILED_MARKER = "fizzy-symphony:completion-failed:v1";
@@ -522,11 +523,6 @@ function isInsideOrSame(path, root) {
   const resolvedRoot = resolve(root);
   const remainder = relative(resolvedRoot, resolvedPath);
   return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
-}
-
-function commentBody(comment) {
-  if (typeof comment === "string") return comment;
-  return String(comment?.body ?? comment?.content ?? comment?.text ?? "");
 }
 
 function toIso(value) {

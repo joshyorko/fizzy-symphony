@@ -242,6 +242,33 @@ test("claim event logs apply renewals and releases so released claims do not blo
   }), { ok: true, reason: "no_active_claim" });
 });
 
+test("claim marker readers parse live Fizzy rich-text comment bodies", () => {
+  const marker = createClaimMarker({
+    claim: claim(),
+    route: route(),
+    card: card(),
+    instance: instance(),
+    workspace: workspace(),
+    now: NOW
+  });
+  const liveComment = {
+    id: "comment_live",
+    body: {
+      plain_text: marker.body,
+      html: `<p>${marker.body}</p>`
+    },
+    created_at: NOW.toISOString()
+  };
+
+  const parsed = readClaims([liveComment]);
+  const reduced = applyClaimEventLog([liveComment]);
+
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].claim_id, "claim_1");
+  assert.equal(reduced.length, 1);
+  assert.equal(reduced[0].claim_id, "claim_1");
+});
+
 test("unexpired claims block acquisition and expired claims are stealable only after grace", () => {
   const marker = createClaimMarker({
     claim: claim(),

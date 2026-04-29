@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { FizzySymphonyError } from "./errors.js";
+import { commentBody } from "./fizzy-normalize.js";
 
 export const CLAIM_MARKER = "fizzy-symphony:claim:v1";
 
@@ -615,11 +616,6 @@ function compareSequence(left, right) {
   const normalizedLeft = Number.isFinite(Number(left)) ? Number(left) : 0;
   const normalizedRight = Number.isFinite(Number(right)) ? Number(right) : 0;
   return normalizedLeft - normalizedRight;
-}
-
-function commentBody(comment) {
-  if (typeof comment === "string") return comment;
-  return String(comment?.body ?? comment?.content ?? "");
 }
 
 function commentCreatedAt(comment) {

@@ -26,7 +26,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Card routing precedence
 - Status: passing
 - Tests: `test/router.test.js`
-- Coverage: allowed and disallowed card overrides, unknown workspace/model validation, rerun tag handling, no-repeat marker behavior, completion-failure marker behavior, postponed and closed card skips, and golden-ticket card skips.
+- Coverage: allowed and disallowed card overrides, unknown workspace/model validation, rerun tag handling, no-repeat marker behavior, completion-failure marker behavior, live rich-text marker comment parsing, nested board/column lifecycle fields, postponed and closed card skips, and golden-ticket card skips.
 
 ### Fizzy API usage
 - Status: newly covered
@@ -49,18 +49,17 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Multi-instance claim behavior
 - Status: newly covered
 - Tests: `test/claims.test.js`, `test/orchestrator-state.test.js`, `test/reconciler.test.js`
-- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, long-running active-run renewal before steal, multiple renewal comments, renewal failure cancellation, release failure reporting, and stale instance registry surfaces.
+- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, live rich-text claim marker parsing, long-running active-run renewal before steal, multiple renewal comments, returned renewal-failure cancellation, thrown renewal-failure cancellation, release failure reporting, and stale instance registry surfaces.
 
 ### Safe cleanup
 - Status: newly covered
 - Tests: `test/completion.test.js`, `test/recovery.test.js`, `test/workspace.test.js`
 - Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, force removal forbidden by policy validation, and interrupted cleanup recovery.
-- Follow-up: `fizzy-symphony: implement clean-only workspace removal executor`.
 
 ### Runner health checks
 - Status: passing
 - Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, session stop after completion-policy failure, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
 
 ### Status snapshot
 - Status: newly covered

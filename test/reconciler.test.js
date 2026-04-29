@@ -649,6 +649,7 @@ test("runReconciliationTick records a non-looping completion-failure marker when
   assert.match(failurePayload.proof_digest, /^sha256:/u);
   assert.equal(status.status().runs.failed[0].last_error.code, "COMPLETION_BLOCKED_BY_REQUIRED_STEPS");
   assert.ok(calls.includes("completionFailureMarker"));
+  assert.ok(calls.includes("stopSession"));
   assert.ok(!calls.includes("completionMarker"));
 });
 
