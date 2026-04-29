@@ -217,17 +217,45 @@ export async function upsertWorkpad({
   if (config.workpad?.enabled === false || config.workpad?.mode === "disabled") return null;
 
   const existing = status?.getWorkpad?.(card.id) ?? findWorkpadComment(card.comments);
-  const body = workpadBody({ card, route, run, workspace, phase, proof, resultComment, now });
+  const body = workpadBody({
+    card,
+    route,
+    run,
+    workspace,
+    phase,
+    proof,
+    resultComment,
+    now,
+    replacementOfCommentId: existing?.replacement_of_comment_id
+  });
   let response;
   let action;
 
   if (existing?.comment_id) {
-    if (fizzy?.updateWorkpadComment) {
-      response = await fizzy.updateWorkpadComment({ card, route, run, comment_id: existing.comment_id, body });
-      action = "updated";
-    } else if (fizzy?.updateComment) {
-      response = await fizzy.updateComment({ card, comment_id: existing.comment_id, body });
-      action = "updated";
+    try {
+      if (fizzy?.updateWorkpadComment) {
+        response = await fizzy.updateWorkpadComment({ card, route, run, comment_id: existing.comment_id, body });
+        action = "updated";
+      } else if (fizzy?.updateComment) {
+        response = await fizzy.updateComment({ card, comment_id: existing.comment_id, body });
+        action = "updated";
+      }
+    } catch (error) {
+      return recoverWorkpadUpdateFailure({
+        config,
+        status,
+        fizzy,
+        card,
+        route,
+        run,
+        workspace,
+        phase,
+        proof,
+        resultComment,
+        now,
+        existing,
+        error
+      });
     }
   }
 
@@ -259,6 +287,166 @@ export async function upsertWorkpad({
   };
   status?.recordWorkpad?.(workpad);
   return workpad;
+}
+
+async function recoverWorkpadUpdateFailure({
+  status,
+  fizzy,
+  card = {},
+  route = {},
+  run = {},
+  workspace = {},
+  phase,
+  proof,
+  resultComment,
+  now,
+  existing = {},
+  error
+} = {}) {
+  const failedCommentId = existing.comment_id;
+  const occurredAt = toIso(now);
+  const baseFailure = {
+    code: "WORKPAD_UPDATE_FAILED",
+    message: "Workpad update failed; daemon preserved the previous workpad.",
+    card_id: card.id,
+    route_id: route.id,
+    route_fingerprint: route.fingerprint ?? route.route_fingerprint,
+    run_id: run.id ?? run.run_id,
+    phase,
+    failed_comment_id: failedCommentId,
+    error: normalizeError(error),
+    occurred_at: occurredAt
+  };
+
+  if (replacementShouldBeSkipped(existing)) {
+    const reason = existing.replacement_of_comment_id ? "already_replacement" : "replacement_already_attempted";
+    const preserved = preservedFailedWorkpad({ card, route, run, phase, existing, failedCommentId, occurredAt, reason });
+    status?.recordWorkpadFailure?.({
+      ...baseFailure,
+      message: "Workpad update failed; replacement was skipped to avoid a loop.",
+      replacement_posted: false,
+      replacement_skipped_reason: reason
+    });
+    status?.recordWorkpad?.(preserved);
+    return preserved;
+  }
+
+  const replacementBody = workpadBody({
+    card,
+    route,
+    run,
+    workspace,
+    phase,
+    proof,
+    resultComment,
+    now,
+    replacementOfCommentId: failedCommentId
+  });
+
+  try {
+    const replacement = await createWorkpadComment({ fizzy, card, route, run, body: replacementBody });
+    if (!replacement?.response) {
+      const preserved = preservedFailedWorkpad({
+        card,
+        route,
+        run,
+        phase,
+        existing,
+        failedCommentId,
+        occurredAt,
+        reason: "replacement_mutator_unavailable"
+      });
+      status?.recordWorkpadFailure?.({
+        ...baseFailure,
+        replacement_posted: false,
+        replacement_skipped_reason: "replacement_mutator_unavailable"
+      });
+      status?.recordWorkpad?.(preserved);
+      return preserved;
+    }
+
+    const replacementCommentId = replacement.response.id ?? replacement.response.comment_id;
+    const workpad = {
+      id: card.id,
+      card_id: card.id,
+      route_id: route.id,
+      route_fingerprint: route.fingerprint ?? route.route_fingerprint,
+      run_id: run.id ?? run.run_id,
+      comment_id: replacementCommentId,
+      phase,
+      action: "replaced",
+      failed_comment_id: failedCommentId,
+      replacement_of_comment_id: failedCommentId,
+      replacement_attempted_comment_id: failedCommentId,
+      updated_at: occurredAt
+    };
+    status?.recordWorkpadFailure?.({
+      ...baseFailure,
+      message: "Workpad update failed; replacement workpad comment was posted.",
+      replacement_posted: true,
+      replacement_comment_id: replacementCommentId
+    });
+    status?.recordWorkpad?.(workpad);
+    return workpad;
+  } catch (replacementError) {
+    const preserved = preservedFailedWorkpad({
+      card,
+      route,
+      run,
+      phase,
+      existing,
+      failedCommentId,
+      occurredAt,
+      reason: "replacement_failed"
+    });
+    status?.recordWorkpadFailure?.({
+      ...baseFailure,
+      replacement_posted: false,
+      replacement_error: normalizeError(replacementError)
+    });
+    status?.recordWorkpad?.(preserved);
+    return preserved;
+  }
+}
+
+async function createWorkpadComment({ fizzy, card, route, run, body } = {}) {
+  if (fizzy?.postWorkpadComment) {
+    return {
+      response: await fizzy.postWorkpadComment({ card, route, run, body }),
+      action: "created"
+    };
+  }
+  if (fizzy?.createComment) {
+    return {
+      response: await fizzy.createComment({ card, body }),
+      action: "created"
+    };
+  }
+  return null;
+}
+
+function replacementShouldBeSkipped(existing = {}) {
+  if (existing.replacement_of_comment_id) return true;
+  return Boolean(existing.replacement_attempted_comment_id && existing.replacement_attempted_comment_id === existing.comment_id);
+}
+
+function preservedFailedWorkpad({ card = {}, route = {}, run = {}, phase, existing = {}, failedCommentId, occurredAt, reason } = {}) {
+  return {
+    ...existing,
+    id: card.id,
+    card_id: card.id,
+    route_id: route.id,
+    route_fingerprint: route.fingerprint ?? route.route_fingerprint,
+    run_id: run.id ?? run.run_id,
+    comment_id: existing.comment_id,
+    phase,
+    action: "preserved_update_failed",
+    failed_comment_id: failedCommentId,
+    replacement_attempted_comment_id: existing.replacement_attempted_comment_id ?? failedCommentId,
+    replacement_skipped_reason: reason,
+    last_failure_at: occurredAt,
+    updated_at: existing.updated_at ?? occurredAt
+  };
 }
 
 export function requiredUncheckedSteps(card = {}, route = {}, workflow = {}) {
@@ -438,15 +626,42 @@ function sanitizePathSegment(value) {
 }
 
 function findWorkpadComment(comments = []) {
-  const comment = (comments ?? []).find((entry) => commentBody(entry).includes(WORKPAD_SENTINEL));
-  if (!comment) return null;
-  return {
-    card_id: comment.card_id,
-    comment_id: comment.id ?? comment.comment_id
-  };
+  const candidates = (comments ?? [])
+    .map((comment, index) => {
+      const body = commentBody(comment);
+      if (!body.includes(WORKPAD_SENTINEL)) return null;
+      const payload = parseJsonBlock(body);
+      return {
+        card_id: comment.card_id,
+        comment_id: comment.id ?? comment.comment_id,
+        replacement_of_comment_id: payload?.replacement_of_comment_id,
+        replacement_attempted_comment_id: payload?.replacement_attempted_comment_id,
+        updated_at: payload?.updated_at ?? comment.updated_at ?? comment.updatedAt ?? comment.created_at ?? comment.createdAt,
+        index
+      };
+    })
+    .filter(Boolean)
+    .sort(compareWorkpadCandidates);
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  const { index: _index, ...workpad } = candidate;
+  return workpad;
 }
 
-function workpadBody({ card, route, run, workspace, phase, proof, resultComment, now }) {
+function compareWorkpadCandidates(left, right) {
+  const replacement = Number(Boolean(right.replacement_of_comment_id)) - Number(Boolean(left.replacement_of_comment_id));
+  if (replacement !== 0) return replacement;
+  const updated = timestampMs(right.updated_at) - timestampMs(left.updated_at);
+  if (updated !== 0) return updated;
+  return right.index - left.index;
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : -Infinity;
+}
+
+function workpadBody({ card, route, run, workspace, phase, proof, resultComment, now, replacementOfCommentId }) {
   const payload = omitUndefined({
     marker: "fizzy-symphony:workpad:v1",
     card_id: card.id,
@@ -455,6 +670,7 @@ function workpadBody({ card, route, run, workspace, phase, proof, resultComment,
     run_id: run.id ?? run.run_id,
     workspace_key: workspace.key ?? workspace.workspace_key,
     phase,
+    replacement_of_comment_id: replacementOfCommentId,
     proof_file: proof?.file,
     proof_digest: proof?.digest,
     result_comment_id: resultComment?.id ?? resultComment?.comment_id,
@@ -467,6 +683,7 @@ function workpadBody({ card, route, run, workspace, phase, proof, resultComment,
     "",
     `Run: ${payload.run_id ?? "pending"}`,
     `Phase: ${phase}`,
+    replacementOfCommentId ? `Replaces failed workpad: ${replacementOfCommentId}` : "",
     proof?.file ? `Proof: ${proof.file}` : "",
     "",
     "```json",
@@ -498,6 +715,16 @@ function requiredStepPolicy(route, workflow) {
   return { enabled, blockAllUnchecked };
 }
 
+function parseJsonBlock(body) {
+  const match = String(body ?? "").match(/```json\s*([\s\S]*?)\s*```/u);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 function isStepChecked(step) {
   return Boolean(step?.checked ?? step?.is_checked ?? step?.completed ?? step?.complete ?? false);
 }
@@ -521,6 +748,15 @@ function normalizePolicyResult(result) {
     };
   }
   return { success: true, ...(result ?? {}) };
+}
+
+function normalizeError(error = {}) {
+  if (typeof error === "string") return { code: "ERROR", message: error };
+  return {
+    code: error.code ?? "ERROR",
+    message: error.message ?? String(error),
+    details: error.details ?? {}
+  };
 }
 
 function isInsideOrSame(path, root) {
