@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -18,6 +18,7 @@ import {
   workspaceKey,
   workspacePath
 } from "../src/workspace.js";
+import { writeDurableProof } from "../src/completion.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -95,6 +96,19 @@ async function initSourceRepo(dir, { workflow = "# Policy\n", extraFiles = {} } 
 
 async function assertMissing(path) {
   await assert.rejects(() => access(path), (error) => error.code === "ENOENT");
+}
+
+async function cleanupProof({ dir, workspace }) {
+  return writeDurableProof({
+    config: { observability: { state_dir: join(dir, ".fizzy-symphony", "run") } },
+    run: { id: "run_1", attempt_id: "attempt_1" },
+    card: card(),
+    route: route(),
+    workspace,
+    result: { status: "completed", no_code_change: true },
+    resultComment: { id: "comment_1" },
+    completedAt: "2026-04-29T12:05:00.000Z"
+  });
 }
 
 test("resolveWorkspaceIdentity builds deterministic identity, key, path, and branch name", async () => {
@@ -182,6 +196,21 @@ test("workspacePath rejects key escapes and roots outside configured allowed_roo
     }, "safe-key"),
     (error) => error.code === "WORKSPACE_PATH_OUTSIDE_ALLOWED_ROOT" &&
       error.details.allowed_roots.includes(resolve(dir))
+  );
+
+  const outside = await mkdtemp(join(tmpdir(), "fizzy-symphony-outside-target-"));
+  const linkedRoot = join(dir, "linked-workspaces");
+  await symlink(outside, linkedRoot, "dir");
+  assert.throws(
+    () => workspacePath({
+      ...config,
+      workspaces: {
+        ...config.workspaces,
+        root: linkedRoot
+      }
+    }, "safe-key"),
+    (error) => error.code === "WORKSPACE_PATH_OUTSIDE_ALLOWED_ROOT" &&
+      error.details.path.startsWith(outside)
   );
 });
 
@@ -462,13 +491,7 @@ test("cleanupWorkspace removes clean proven worktrees with non-force git worktre
     identity,
     metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
   });
-  const proof = {
-    file: join(dir, ".fizzy-symphony", "run", "proof", "run_1.json"),
-    digest: "sha256:proof",
-    payload: { no_code_change: true }
-  };
-  await mkdir(resolve(proof.file, ".."), { recursive: true });
-  await writeFile(proof.file, "{}\n", "utf8");
+  const proof = await cleanupProof({ dir, workspace: prepared });
 
   const result = await cleanupWorkspace({
     config,
@@ -503,13 +526,7 @@ test("cleanupWorkspace preserves dirty and unpushed worktrees", async () => {
     identity,
     metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
   });
-  const proof = {
-    file: join(dir, ".fizzy-symphony", "run", "proof", "run_1.json"),
-    digest: "sha256:proof",
-    payload: { no_code_change: true }
-  };
-  await mkdir(resolve(proof.file, ".."), { recursive: true });
-  await writeFile(proof.file, "{}\n", "utf8");
+  const proof = await cleanupProof({ dir, workspace: prepared });
   const complete = {
     config,
     workspace: prepared,
@@ -532,6 +549,44 @@ test("cleanupWorkspace preserves dirty and unpushed worktrees", async () => {
   assert.equal(unpushed.action, "preserve");
   assert.equal(unpushed.reason, "worktree_unpushed");
   assert.equal(await git(prepared.workspace_path, ["branch", "--show-current"]), branchName(identity));
+});
+
+test("cleanupWorkspace preserves when durable proof file is missing or tampered", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cleanup-proof-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir, {
+    safety: {
+      allowed_roots: [dir],
+      dirty_source_repo_policy: "fail",
+      cleanup: { policy: "remove_clean_only" }
+    }
+  });
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const proof = await cleanupProof({ dir, workspace: prepared });
+  const complete = {
+    config,
+    workspace: prepared,
+    proof,
+    resultComment: { id: "comment_1" },
+    completionMarker: { id: "marker_1" },
+    claimRelease: { released: true }
+  };
+
+  await rm(proof.file);
+  const missing = await cleanupWorkspace(complete);
+  assert.equal(missing.action, "preserve");
+  assert.equal(missing.reason, "proof_file_missing");
+
+  const replacement = await cleanupProof({ dir, workspace: prepared });
+  await writeFile(replacement.file, `${JSON.stringify({ proof_digest: replacement.digest, no_code_change: false })}\n`, "utf8");
+  const tampered = await cleanupWorkspace({ ...complete, proof: replacement });
+  assert.equal(tampered.action, "preserve");
+  assert.equal(tampered.reason, "proof_digest_mismatch");
 });
 
 test("metadata mismatch preserves existing workspace metadata and fails dispatch", async () => {

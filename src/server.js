@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { commentBody } from "./fizzy-normalize.js";
+import { normalizeTag } from "./domain.js";
+import { cardBoardId, commentBody } from "./fizzy-normalize.js";
 
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -251,7 +252,7 @@ function candidateHintFromWebhookEvent(event, { config = {}, now = () => new Dat
   const card = event.card ?? event.data?.card ?? event.payload?.card ?? {};
   const board = event.board ?? event.data?.board ?? event.payload?.board ?? {};
   const cardId = event.card_id ?? event.cardId ?? card.id ?? card.card_id;
-  const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? card.board_id ?? card.boardId;
+  const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? board.boardId ?? cardBoardId(card);
   const action = normalizeAction(event.action ?? event.type ?? event.event_type ?? event.eventType);
   const rerunRequested = hasExplicitRerunSignal(event, card);
 
@@ -381,8 +382,8 @@ function isGoldenTicketCard(card = {}) {
 }
 
 function normalizedTags(card = {}) {
-  return (card.tags ?? card.tag_names ?? [])
-    .map((tag) => String(tag ?? "").trim().replace(/^#/u, "").toLowerCase())
+  return (card.tags ?? card.tag_names ?? card.tagNames ?? [])
+    .map(normalizeTag)
     .filter(Boolean);
 }
 

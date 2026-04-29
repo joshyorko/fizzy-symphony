@@ -190,8 +190,8 @@ test("webhook ignores self-authored daemon comments unless rerun is explicit", a
       body: JSON.stringify({
         event_id: "event_self_rerun",
         action: "comment_created",
-        comment: { body: "agent-rerun", author: { id: "bot_1" } },
-        card: { id: "card_1", board_id: "board_1", tags: ["agent-rerun"] }
+        comment: { body: "daemon status update", author: { id: "bot_1" } },
+        card: { id: "card_1", board: { id: "board_1" }, tags: [{ name: "agent-rerun" }] }
       })
     });
 
@@ -242,7 +242,7 @@ test("webhook maps lifecycle actions to cancellation and golden-ticket refresh h
       body: JSON.stringify({
         event_id: "event_golden",
         action: "comment_created",
-        card: { id: "golden_1", board_id: "board_1", golden: true, tags: ["agent-instructions"] }
+        card: { id: "golden_1", board: { id: "board_1" }, tags: [{ name: "agent-instructions" }] }
       })
     });
     assert.equal(golden.response.status, 202);

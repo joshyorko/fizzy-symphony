@@ -38,7 +38,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Workspace isolation
 - Status: passing
 - Tests: `test/config.test.js`, `test/workspace.test.js`, `test/recovery.test.js`
-- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
+- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, symlink/canonical allowed-root containment, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
 
 ### Port allocation
 - Status: newly covered
@@ -54,12 +54,12 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Safe cleanup
 - Status: newly covered
 - Tests: `test/completion.test.js`, `test/recovery.test.js`, `test/workspace.test.js`
-- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, force removal forbidden by policy validation, and interrupted cleanup recovery.
+- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, proof file existence and digest verification before removal, force removal forbidden by policy validation, and interrupted cleanup recovery.
 
 ### Runner health checks
 - Status: passing
 - Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, session stop after completion-policy failure, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, incomplete close escalation, session stop after completion-policy failure, prompt front matter/workpad context, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
 
 ### Status snapshot
 - Status: newly covered
