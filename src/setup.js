@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
-import { FizzySymphonyError } from "./errors.js";
+import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
 const DEFAULT_WEBHOOK_ACTIONS = [
@@ -25,6 +25,7 @@ export async function runSetup(options = {}) {
     fizzy,
     runner,
     env = process.env,
+    apiUrl,
     workspaceRepo = ".",
     webhook = {},
     prompts
@@ -33,9 +34,24 @@ export async function runSetup(options = {}) {
   const identity = await validateIdentity(fizzy);
   const account = await selectAccount(identity, options.account, prompts);
 
-  const boards = await fizzy.listBoards(account);
-  const users = await fizzy.listUsers(account);
-  const tags = await fizzy.listTags(account);
+  const boards = await callFizzySetupStep(
+    () => fizzy.listBoards(account),
+    "FIZZY_BOARDS_UNAVAILABLE",
+    "Unable to list Fizzy boards for setup.",
+    { account }
+  );
+  const users = await callFizzySetupStep(
+    () => fizzy.listUsers(account),
+    "FIZZY_USERS_UNAVAILABLE",
+    "Unable to list Fizzy users for setup.",
+    { account }
+  );
+  const tags = await callFizzySetupStep(
+    () => fizzy.listTags(account),
+    "FIZZY_TAGS_UNAVAILABLE",
+    "Unable to list Fizzy tags for setup.",
+    { account }
+  );
   const runnerReport = await detectRunner(runner);
 
   const setupMode = await selectSetupMode(options, prompts);
@@ -51,7 +67,12 @@ export async function runSetup(options = {}) {
   } else {
     selectedBoardIds = await selectBoardIds(boards, options, prompts);
     for (const boardId of selectedBoardIds) {
-      selectedBoards.push(await fizzy.getBoard(boardId));
+      selectedBoards.push(await callFizzySetupStep(
+        () => fizzy.getBoard(boardId, { account }),
+        "FIZZY_BOARD_UNAVAILABLE",
+        "Unable to read selected Fizzy board for setup.",
+        { account, board_id: boardId }
+      ));
     }
     if (setupMode === "adopt_starter") {
       starter = { created: false, board_id: selectedBoardIds[0] };
@@ -101,6 +122,7 @@ export async function runSetup(options = {}) {
     runnerFallback: "cli_app_server",
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
+    apiUrl,
     botUserId: options.botUserId ?? "",
     workspaceRepo,
     webhook,
@@ -132,8 +154,22 @@ async function validateIdentity(fizzy) {
   try {
     return await fizzy.getIdentity();
   } catch (error) {
-    throw new FizzySymphonyError("FIZZY_IDENTITY_INVALID", "Unable to validate Fizzy identity.", {
-      cause: error.message
+    throw new FizzySymphonyError(
+      "FIZZY_IDENTITY_INVALID",
+      "Unable to validate Fizzy identity.",
+      fizzyAccessFailureDetails(error)
+    );
+  }
+}
+
+async function callFizzySetupStep(action, code, message, details = {}) {
+  try {
+    return await action();
+  } catch (error) {
+    if (isFizzySymphonyError(error)) throw error;
+    throw new FizzySymphonyError(code, message, {
+      ...details,
+      ...fizzyAccessFailureDetails(error)
     });
   }
 }
@@ -215,7 +251,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     if (!boardId) {
       throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Starter board creation did not return a board ID.");
     }
-    return await fizzy.getBoard(boardId);
+    return await fizzy.getBoard(boardId, { account });
   }
 
   if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard) {
@@ -238,7 +274,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     await fizzy.markGolden({ account, board_id: board.id, card_id: golden.id });
   }
 
-  return await fizzy.getBoard(board.id);
+  return await fizzy.getBoard(board.id, { account });
 }
 
 function validateBotUser(botUserId, users) {
@@ -362,4 +398,17 @@ function sameActions(left = [], right = []) {
 
 function omitUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined && value !== ""));
+}
+
+function fizzyAccessFailureDetails(error) {
+  const status = error.status ?? error.metadata?.status;
+  const authenticationFailure = status === 401 || status === 403;
+  return omitUndefined({
+    cause: error.message,
+    status,
+    request_id: error.metadata?.request_id,
+    remediation: authenticationFailure
+      ? "Check FIZZY_API_TOKEN and confirm the token can access the selected Fizzy account, then rerun setup."
+      : "Check FIZZY_API_URL, network access, and Fizzy API availability, then rerun setup."
+  });
 }
