@@ -38,7 +38,7 @@ test("Codex CLI app-server runner detects command/version and validates with ini
     protocol: {
       source: "codex app-server generate-ts",
       version: "0.125.0",
-      methods: ["initialize", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe", "thread/archive"]
+      methods: ["initialize", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe"]
     }
   });
 
@@ -117,6 +117,7 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   assert.equal(transport.requests[1].params.approvalPolicy, "on-request");
   assert.equal(transport.requests[1].params.approvalsReviewer, "user");
   assert.equal(transport.requests[1].params.sandbox, "workspace-write");
+  assert.equal(transport.requests[1].params.sessionStartSource, "clear");
 
   assert.equal(transport.requests[2].method, "turn/start");
   assert.deepEqual(transport.requests[2].params.input, [{ type: "text", text: "Implement the card.", text_elements: [] }]);
@@ -216,11 +217,11 @@ test("Codex CLI app-server runner cancels, stops sessions, and only terminates o
     session_id: "thread_1",
     thread_id: "thread_1"
   });
-  assert.deepEqual(transport.requests.slice(-3).map((request) => request.method), [
+  assert.deepEqual(transport.requests.slice(-2).map((request) => request.method), [
     "turn/interrupt",
-    "thread/unsubscribe",
-    "thread/archive"
+    "thread/unsubscribe"
   ]);
+  assert.equal(transport.closed, true);
 
   const terminatingTransport = cancellableTransport();
   const terminatingRunner = createCodexCliAppServerRunner({ transportFactory: () => terminatingTransport });
@@ -245,8 +246,7 @@ function cancellableTransport() {
     "thread/start": () => threadStartResult(),
     "turn/start": () => turnStartResult(),
     "turn/interrupt": () => ({}),
-    "thread/unsubscribe": () => ({ status: "unsubscribed" }),
-    "thread/archive": () => ({})
+    "thread/unsubscribe": () => ({ status: "unsubscribed" })
   });
 }
 
