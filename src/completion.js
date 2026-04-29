@@ -316,6 +316,7 @@ export function evaluateCleanupEligibility({
   config = {},
   workspace = {},
   proof,
+  result = {},
   resultComment,
   completionMarker,
   completionPolicyResult = { success: true },
@@ -331,6 +332,10 @@ export function evaluateCleanupEligibility({
   if (!completionMarker?.id && !completionMarker?.body && !completionMarker?.payload) {
     return preserve("completion_marker_missing");
   }
+  const missingHandoff = missingCodeHandoff({ proof, result, workspace });
+  if (missingHandoff.length > 0) {
+    return { ...preserve("code_handoff_missing"), missing: missingHandoff };
+  }
   if (claimRelease && claimRelease.released !== true && claimRelease.status !== "released" && claimRelease.status !== "completed") {
     return preserve("claim_release_missing");
   }
@@ -341,6 +346,24 @@ export function evaluateCleanupEligibility({
 
 function preserve(reason) {
   return { action: "preserve", reason };
+}
+
+function missingCodeHandoff({ proof = {}, result = {}, workspace = {} } = {}) {
+  const payload = proof.payload ?? {};
+  const noCodeChange = payload.no_code_change === true ||
+    proof.no_code_change === true ||
+    result.no_code_change === true ||
+    workspace.no_code_change === true;
+  if (noCodeChange) return [];
+
+  const handoff = {
+    branch_name: payload.branch_name ?? result.branch_name ?? workspace.branch_name,
+    commit_sha: payload.commit_sha ?? result.commit_sha ?? workspace.commit_sha,
+    pr_url: payload.pr_url ?? payload.pull_request_url ?? result.pr_url ?? result.pull_request_url ?? workspace.pr_url
+  };
+  return Object.entries(handoff)
+    .filter(([, value]) => value === undefined || value === null || value === "")
+    .map(([field]) => field);
 }
 
 function markerBody(marker, payload) {

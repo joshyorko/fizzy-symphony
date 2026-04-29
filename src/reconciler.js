@@ -86,6 +86,14 @@ export async function runReconciliationTick(options = {}) {
       }
 
       const workspaceIdentity = await resolveWorkspaceIdentity({ config, card, decision, workspaceManager });
+      await workspaceManager?.preflight?.({
+        config,
+        card,
+        route: decision.route,
+        decision,
+        identity: workspaceIdentity,
+        workspace: workspaceIdentity
+      });
       const claimResult = await claims.acquire({
         config,
         card,
@@ -656,21 +664,59 @@ async function runCard({
     const claimRelease = await claims.release({ config, claim, run: completed ?? run, status: "completed", now });
     orchestratorState?.completeRun?.(runId, { proof, result_comment_id: resultComment?.id });
     recordLifecycle(status, orchestratorState);
-    const cleanup = evaluateCleanupEligibility({
+    let cleanup = evaluateCleanupEligibility({
       config,
       workspace,
       proof,
+      result: streamResult,
       resultComment,
       completionMarker: recordedCompletionMarker,
       completionPolicyResult,
       claimRelease
     });
+
+    if (cleanup.action === "eligible" && typeof workspaceManager?.cleanup === "function") {
+      status?.recordCleanupState?.({
+        status: "cleanup_started",
+        reason: cleanup.reason
+      });
+      await writeRunAttempt(status, {
+        ...(completed ?? run),
+        proof,
+        result_comment_id: resultComment?.id,
+        completion_marker: recordedCompletionMarker,
+        cleanup_state: "cleanup_started"
+      }, "cleanup_started");
+      try {
+        cleanup = await workspaceManager.cleanup({
+          config,
+          run: completed ?? run,
+          card: refreshedCard,
+          route,
+          workspace,
+          proof,
+          result: streamResult,
+          resultComment,
+          completionMarker: recordedCompletionMarker,
+          completionPolicyResult,
+          claimRelease
+        });
+      } catch (error) {
+        cleanup = {
+          action: "preserve",
+          reason: "cleanup_failed",
+          error: normalizeError(error)
+        };
+      }
+    }
+
+    const cleanupStatus = cleanupStatusName(cleanup);
     status?.recordCleanupState?.({
-      status: cleanup.action === "eligible" ? "cleanup_planned" : "cleanup_preserved",
+      status: cleanupStatus,
       reason: cleanup.reason
     });
     await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: completed ?? run, workspace, phase: "handoff", proof, resultComment, now });
-    await writeRunAttempt(status, { ...(completed ?? run), cleanup_state: cleanup.action }, "completed");
+    await writeRunAttempt(status, { ...(completed ?? run), cleanup_state: cleanupStatus }, "completed");
     return { status: "completed", run: completed ?? run };
   } catch (error) {
     orchestratorState?.recordFailure?.(runId, error, {
@@ -779,6 +825,13 @@ function runnerFailure(result) {
 function isRetryableRunnerError(error = {}) {
   return !String(error.code ?? "").startsWith("COMPLETION_") &&
     error.code !== "STALE_ROUTE_FINGERPRINT";
+}
+
+function cleanupStatusName(cleanup = {}) {
+  if (cleanup.status) return cleanup.status;
+  if (cleanup.action === "removed") return "cleanup_completed";
+  if (cleanup.action === "eligible") return "cleanup_planned";
+  return "cleanup_preserved";
 }
 
 async function withOptionalTimeout(promise, timeoutMs) {
