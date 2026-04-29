@@ -258,8 +258,94 @@ export function parseConfig(input, options = {}) {
   validateKnownKeys(input, schema);
 
   const resolved = resolveEnvironmentReferences(clone(input), options.env ?? process.env);
+  validateConfigValues(resolved);
   resolveRelativePaths(resolved, dirname(configPath));
   return resolved;
+}
+
+function validateConfigValues(config) {
+  validateEnum(config.safety?.cleanup?.policy, ["preserve", "remove_clean_only", "archive_after_retention"], "safety.cleanup.policy");
+  validateEnum(config.claims?.mode, ["structured_comment"], "claims.mode");
+  validateEnum(config.runner?.preferred, ["sdk", "cli_app_server"], "runner.preferred");
+  validateEnum(config.runner?.fallback, ["cli_app_server", "none"], "runner.fallback");
+  validateEnum(config.server?.port_allocation, ["fixed", "next_available", "random"], "server.port_allocation");
+
+  validateServerPort(config.server ?? {});
+
+  for (const path of durationPaths()) {
+    const value = getPath(config, path);
+    if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+      throw new FizzySymphonyError("CONFIG_INVALID_DURATION", `Config duration must be a positive integer: ${path}`, {
+        path,
+        value
+      });
+    }
+  }
+
+  if (config.webhook?.manage && !config.webhook?.callback_url) {
+    throw new FizzySymphonyError("CONFIG_INVALID_WEBHOOK", "webhook.manage requires webhook.callback_url.", {
+      path: "webhook.callback_url"
+    });
+  }
+}
+
+function validateEnum(value, allowed, path) {
+  if (value === undefined) return;
+  if (!allowed.includes(value)) {
+    throw new FizzySymphonyError("CONFIG_INVALID_ENUM", `Invalid enum value at ${path}.`, {
+      path,
+      value,
+      allowed
+    });
+  }
+}
+
+function validateServerPort(server) {
+  const portAllocation = server.port_allocation;
+  if (server.port !== undefined && !isValidPortValue(server.port)) {
+    throw new FizzySymphonyError("CONFIG_INVALID_SERVER_PORT", "server.port must be auto or a valid TCP port.", {
+      path: "server.port",
+      value: server.port
+    });
+  }
+  if (server.base_port !== undefined && !isTcpPort(server.base_port)) {
+    throw new FizzySymphonyError("CONFIG_INVALID_SERVER_PORT", "server.base_port must be a valid TCP port.", {
+      path: "server.base_port",
+      value: server.base_port
+    });
+  }
+  if (portAllocation === "fixed" && server.port === "auto") {
+    throw new FizzySymphonyError("CONFIG_INVALID_SERVER_PORT", "server.port_allocation=fixed requires an explicit port.", {
+      path: "server.port"
+    });
+  }
+  if (portAllocation === "random" && server.port !== "auto") {
+    throw new FizzySymphonyError("CONFIG_INVALID_SERVER_PORT", "server.port_allocation=random requires port=auto.", {
+      path: "server.port"
+    });
+  }
+}
+
+function durationPaths() {
+  return [
+    "server.heartbeat_interval_ms",
+    "polling.interval_ms",
+    "agent.turn_timeout_ms",
+    "agent.stall_timeout_ms",
+    "agent.max_retry_backoff_ms",
+    "runner.health.interval_ms",
+    "claims.lease_ms",
+    "claims.renew_interval_ms",
+    "claims.steal_grace_ms",
+    "claims.max_clock_skew_ms",
+    "workpad.update_interval_ms",
+    "safety.cleanup.retention_ms",
+    "observability.status_retention_ms"
+  ];
+}
+
+function getPath(object, path) {
+  return path.split(".").reduce((value, part) => value?.[part], object);
 }
 
 function validateKnownKeys(value, shape, path = "") {
@@ -350,6 +436,14 @@ function resolveRelativePaths(config, configDir) {
 function resolveFrom(base, value) {
   if (typeof value !== "string" || value === "") return value;
   return isAbsolute(value) ? value : resolve(base, value);
+}
+
+function isValidPortValue(value) {
+  return value === "auto" || isTcpPort(value);
+}
+
+function isTcpPort(value) {
+  return Number.isInteger(value) && value > 0 && value <= 65535;
 }
 
 function setPath(object, parts, value) {

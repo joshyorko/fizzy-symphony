@@ -2,6 +2,7 @@ const CONTRACT = "codex-runner-fake-v1";
 
 export function createFakeCodexRunner(options = {}) {
   let sessionCounter = 0;
+  let turnCounter = 0;
 
   return {
     async detect() {
@@ -14,11 +15,12 @@ export function createFakeCodexRunner(options = {}) {
       return report;
     },
 
-    async validate(config = {}) {
+    async validate(config = {}, workspace = null) {
       return {
         ok: true,
         kind: config.preferred ?? options.kind ?? "cli_app_server",
-        contract: options.contract ?? CONTRACT
+        contract: options.contract ?? CONTRACT,
+        workspace
       };
     },
 
@@ -30,26 +32,34 @@ export function createFakeCodexRunner(options = {}) {
       };
     },
 
-    async startSession(request = {}) {
+    async startSession(workspace, policies = {}, metadata = {}) {
       sessionCounter += 1;
       return {
         session_id: `session_${sessionCounter}`,
-        workspace: request.workspace,
-        metadata: request.metadata ?? {}
+        workspace,
+        policies,
+        metadata
       };
     },
 
-    async initSession(session) {
-      return { ok: true, session_id: session.session_id };
+    async startTurn(session, prompt, metadata = {}) {
+      turnCounter += 1;
+      return {
+        turn_id: `turn_${turnCounter}`,
+        session_id: session.session_id,
+        session,
+        prompt,
+        metadata
+      };
     },
 
-    async runTurn(session, request = {}) {
+    async stream(turn, onEvent) {
       if (options.mode === "input_required") {
-        return turnFailure("input_required", "RUNNER_INPUT_REQUIRED", "Runner requested operator input in unattended mode.");
+        return turnFailure(turn, "input_required", "RUNNER_INPUT_REQUIRED", "Runner requested operator input in unattended mode.");
       }
 
       if (options.mode === "error") {
-        return turnFailure("runner_error", options.errorCode ?? "RUNNER_ERROR", "Fake runner error.");
+        return turnFailure(turn, "runner_error", options.errorCode ?? "RUNNER_ERROR", "Fake runner error.");
       }
 
       const events = options.events ?? [
@@ -59,32 +69,44 @@ export function createFakeCodexRunner(options = {}) {
       ];
 
       for (const event of events) {
-        request.onEvent?.({ ...event, session_id: session.session_id });
+        onEvent?.({ ...event, session_id: turn.session_id, turn_id: turn.turn_id });
       }
 
       return {
         type: "TurnResult",
         status: "completed",
-        session_id: session.session_id,
+        session_id: turn.session_id,
+        turn_id: turn.turn_id,
         events
       };
     },
 
-    async cancel(session, request = {}) {
+    async cancel(turn, reason = "cancelled") {
       return {
-        type: "TurnResult",
+        type: "CancelResult",
         status: "cancelled",
-        session_id: session.session_id,
-        cancellation: { reason: request.reason ?? "cancelled" }
+        session_id: turn.session_id,
+        turn_id: turn.turn_id,
+        reason
+      };
+    },
+
+    async stopSession(session) {
+      return {
+        type: "StopSessionResult",
+        status: "stopped",
+        session_id: session.session_id
       };
     }
   };
 }
 
-function turnFailure(failureKind, code, message) {
+function turnFailure(turn, failureKind, code, message) {
   return {
     type: "TurnResult",
     status: "failed",
+    session_id: turn.session_id,
+    turn_id: turn.turn_id,
     failure_kind: failureKind,
     error: {
       type: "RunnerError",

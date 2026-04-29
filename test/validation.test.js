@@ -142,6 +142,12 @@ function fakeFizzy({
 
 function fakeRunner(health = { status: "ready", kind: "cli_app_server" }) {
   return {
+    async detect() {
+      return { kind: "cli_app_server", available: true };
+    },
+    async validate() {
+      return { ok: true, kind: "cli_app_server" };
+    },
     async health() {
       return health;
     }
@@ -204,6 +210,7 @@ test("validateStartup rejects SDK runner without an exact package and contract",
   const { config } = await parsedConfig();
   config.runner.preferred = "sdk";
   config.runner.sdk = { package: "@openai/codex" };
+  config.runner.allow_fallback = false;
 
   const report = await validateStartup({
     config,
@@ -215,32 +222,118 @@ test("validateStartup rejects SDK runner without an exact package and contract",
   assert.ok(errorCodes(report).includes("INVALID_RUNNER"));
 });
 
-test("validateStartup accepts SDK runner only when exact package and contract validate", async () => {
+test("validateStartup rejects arbitrary non-empty SDK package and contract when fallback is disabled", async () => {
+  const { config } = await parsedConfig();
+  config.runner.preferred = "sdk";
+  config.runner.sdk = { package: "@vendor/agent-sdk", contract: "vendor-contract-v9" };
+  config.runner.allow_fallback = false;
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(errorCodes(report).includes("INVALID_RUNNER"));
+});
+
+test("validateStartup falls back from arbitrary SDK package and contract when fallback is allowed", async () => {
   const { config } = await parsedConfig();
   config.runner.preferred = "sdk";
   config.runner.sdk = { package: "@openai/codex-sdk", contract: "codex-sdk-js-v1" };
+  config.runner.allow_fallback = true;
+  config.runner.fallback = "cli_app_server";
   const calls = [];
 
   const report = await validateStartup({
     config,
     fizzy: fakeFizzy(),
     runner: {
-      async validate(runnerConfig) {
-        calls.push(["validate", runnerConfig.preferred, runnerConfig.sdk.package, runnerConfig.sdk.contract]);
-        return { ok: true, kind: "sdk", contract: "codex-sdk-js-v1" };
+      async detect(runnerConfig) {
+        calls.push(["detect", runnerConfig.preferred]);
+        return { kind: "cli_app_server", available: true };
       },
-      async health() {
-        calls.push(["health"]);
-        return { status: "ready", kind: "sdk" };
+      async validate(runnerConfig) {
+        calls.push(["validate", runnerConfig.preferred]);
+        return { ok: true, kind: "cli_app_server" };
+      },
+      async health(runnerConfig) {
+        calls.push(["health", runnerConfig.preferred]);
+        return { status: "ready", kind: "cli_app_server" };
       }
     }
   });
 
   assert.equal(report.ok, true);
   assert.deepEqual(calls, [
-    ["validate", "sdk", "@openai/codex-sdk", "codex-sdk-js-v1"],
-    ["health"]
+    ["detect", "cli_app_server"],
+    ["validate", "cli_app_server"],
+    ["health", "cli_app_server"]
   ]);
+});
+
+test("validateStartup calls runner detect, validate, and health in order and reports detect failures distinctly", async () => {
+  const { config } = await parsedConfig();
+  const calls = [];
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: {
+      async detect(runnerConfig) {
+        calls.push(["detect", runnerConfig.preferred]);
+        return { kind: "cli_app_server", available: true };
+      },
+      async validate(runnerConfig) {
+        calls.push(["validate", runnerConfig.preferred]);
+        return { ok: true };
+      },
+      async health(runnerConfig) {
+        calls.push(["health", runnerConfig.preferred]);
+        return { status: "ready" };
+      }
+    }
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(calls, [
+    ["detect", "cli_app_server"],
+    ["validate", "cli_app_server"],
+    ["health", "cli_app_server"]
+  ]);
+
+  const failed = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: {
+      async detect() {
+        return { kind: "cli_app_server", available: false, reason: "missing executable" };
+      },
+      async validate() {
+        throw new Error("validate should not run after failed detect");
+      },
+      async health() {
+        throw new Error("health should not run after failed detect");
+      }
+    }
+  });
+
+  assert.equal(failed.ok, false);
+  assert.ok(errorCodes(failed).includes("RUNNER_DETECT_FAILED"));
+
+  const thrown = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: {
+      async detect() {
+        throw new Error("spawn failed");
+      }
+    }
+  });
+
+  assert.equal(thrown.ok, false);
+  assert.ok(errorCodes(thrown).includes("RUNNER_DETECT_FAILED"));
 });
 
 test("discoverGoldenTicketRoutes parses aliases and produces stable IDs and fingerprints", () => {
@@ -425,6 +518,9 @@ test("completion-failure markers are structured and malformed marker parsing is 
   const parsed = parseCompletionFailureMarker(marker.body);
 
   assert.match(marker.tag, /^agent-completion-failed-[a-f0-9]{12}$/);
+  assert.match(marker.body, /<!-- fizzy-symphony-marker -->/);
+  assert.match(marker.body, /fizzy-symphony:completion-failed:v1/);
+  assert.match(marker.body, /```json/);
   assert.equal(parsed.marker, "fizzy-symphony:completion-failed:v1");
   assert.equal(parsed.kind, "completion_failed");
   assert.equal(parsed.run_id, "run_1");
@@ -437,8 +533,16 @@ test("completion-failure markers are structured and malformed marker parsing is 
   assert.equal(parsed.proof_digest, "sha256:proof");
   assert.equal(parsed.card_digest, "sha256:def");
 
+  const wrapped = `operator note\n\n${marker.body}\n\nmore text`;
+  assert.deepEqual(parseCompletionFailureMarker(wrapped), parsed);
+
   assert.throws(
     () => parseCompletionFailureMarker("not-json"),
+    (error) => error.code === "MALFORMED_COMPLETION_FAILURE_MARKER"
+  );
+
+  assert.throws(
+    () => parseCompletionFailureMarker("<!-- fizzy-symphony-marker -->\nfizzy-symphony:completion-failed:v1\n\n```json\n{ nope\n```"),
     (error) => error.code === "MALFORMED_COMPLETION_FAILURE_MARKER"
   );
 });

@@ -141,8 +141,8 @@ test("runSetup falls back to cli_app_server when SDK detection lacks an exact pa
   assert.match(await readFile(join(dir, "config.yml"), "utf8"), /preferred: cli_app_server/);
 });
 
-test("runSetup accepts SDK detection only with exact package and contract", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-sdk-accepted-"));
+test("runSetup falls back from arbitrary SDK package and contract because no SDK is selected for MVP", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-sdk-arbitrary-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
 
   const result = await runSetup({
@@ -162,12 +162,12 @@ test("runSetup accepts SDK detection only with exact package and contract", asyn
     env: { FIZZY_API_TOKEN: "token" }
   });
 
-  assert.equal(result.runner.kind, "sdk");
-  assert.equal(result.runner.package, "@openai/codex-sdk");
+  assert.equal(result.runner.kind, "cli_app_server");
+  assert.equal(result.runner.fallback_from, "sdk");
   const written = await readFile(join(dir, "config.yml"), "utf8");
-  assert.match(written, /preferred: sdk/);
-  assert.match(written, /package: @openai\/codex-sdk/);
-  assert.match(written, /contract: codex-sdk-js-v1/);
+  assert.match(written, /preferred: cli_app_server/);
+  assert.match(written, /package: ""/);
+  assert.match(written, /contract: ""/);
 });
 
 test("runSetup fails existing-board validation when required managed tags cannot be resolved", async () => {
