@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  applyCompletionPolicy,
   createCompletionFailureMarker,
   createCompletionMarker,
   evaluateCleanupEligibility,
@@ -190,4 +191,33 @@ test("cleanup eligibility preserves workspace when proof, result, marker, releas
     "durable_proof_outside_workspace_missing"
   );
   assert.equal(evaluateCleanupEligibility(complete).action, "eligible");
+});
+
+test("completion policy fails loudly when required Fizzy mutators are unavailable", async () => {
+  assert.deepEqual(
+    await applyCompletionPolicy({
+      fizzy: {},
+      card: card(),
+      route: route({ completion: { policy: "close" } })
+    }),
+    {
+      success: false,
+      code: "COMPLETION_MUTATOR_UNAVAILABLE",
+      message: "Fizzy client cannot close cards for completion."
+    }
+  );
+
+  assert.deepEqual(
+    await applyCompletionPolicy({
+      fizzy: {},
+      card: card(),
+      route: route({ completion: { policy: "move_to_column", target_column_id: "col_done" } })
+    }),
+    {
+      success: false,
+      code: "COMPLETION_MUTATOR_UNAVAILABLE",
+      message: "Fizzy client cannot move cards for completion.",
+      details: { target_column_id: "col_done" }
+    }
+  );
 });

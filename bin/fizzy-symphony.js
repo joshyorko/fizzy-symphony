@@ -42,7 +42,7 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
 }
 
 async function statusDiscoveryCommand(args, io) {
-  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.json";
+  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
   const instanceId = optionValue(args, "--instance");
   const config = await loadConfig(configPath, { env: io.env ?? process.env });
   const discovery = await discoverStatusEndpoints(config, {
@@ -92,7 +92,7 @@ async function setupCommand(args, io) {
 }
 
 async function validateCommand(args, io) {
-  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.json";
+  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
   if (!args.includes("--parse-only")) {
     throw new Error("Task 1 CLI validate supports --parse-only. Full startup validation requires injected Fizzy and runner clients.");
   }
@@ -102,7 +102,7 @@ async function validateCommand(args, io) {
 }
 
 async function daemonCommand(args, io) {
-  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.json";
+  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
   const daemon = await startDaemon({
     configPath,
     env: io.env ?? process.env,

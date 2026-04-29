@@ -21,7 +21,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Unsafe completion policy rejection
 - Status: passing
 - Tests: `test/validation.test.js`, `test/completion.test.js`
-- Coverage: missing completion, conflicting completion tags, missing move target, malformed completion-failure marker parsing, completion-failure marker creation, and cleanup eligibility gates tied to proof/result/marker/release evidence.
+- Coverage: missing completion, conflicting completion tags, missing move target, unavailable completion mutators failing loudly, malformed completion-failure marker parsing, completion-failure marker creation, and cleanup eligibility gates tied to proof/result/marker/release evidence.
 
 ### Card routing precedence
 - Status: passing
@@ -49,7 +49,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Multi-instance claim behavior
 - Status: newly covered
 - Tests: `test/claims.test.js`, `test/orchestrator-state.test.js`, `test/reconciler.test.js`
-- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, multiple renewal comments, renewal failure cancellation, release failure reporting, and stale instance registry surfaces.
+- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, long-running active-run renewal before steal, multiple renewal comments, renewal failure cancellation, release failure reporting, and stale instance registry surfaces.
 
 ### Safe cleanup
 - Status: newly covered
@@ -60,7 +60,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Runner health checks
 - Status: passing
 - Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, cancellation, metadata extraction, same-thread continuation, owned-process termination, and runner failure release/status behavior.
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
 
 ### Status snapshot
 - Status: newly covered
@@ -68,8 +68,8 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 - Coverage: health, readiness, runner health, active runs, claims, retry queue, recent completions/failures, workspace cleanup state, validation errors, token/rate metadata, managed webhook warnings, startup recovery, lifecycle recovery, instance registry discovery, and operator-readable status output.
 
 ### Event ingestion
-- Status: deferred
-- Tests: `test/reconciler.test.js`, `test/polling.test.js`
-- Coverage: webhook hints are routed through fresh router validation before claims, polling candidate discovery applies API filters, and active-card route mismatches are preempted.
-- Reason: there is no dedicated webhook ingestion/dedupe server module yet, so webhook dedupe, self-authored event ignore, missed-webhook polling reconciliation, and preempted completion-policy application are only partially represented.
-- Follow-up: `fizzy-symphony: implement webhook ingestion dedupe and missed-event reconciliation`.
+- Status: newly covered
+- Tests: `test/server.test.js`, `test/daemon.test.js`, `test/reconciler.test.js`, `test/polling.test.js`
+- Coverage: webhook signature verification, event ID dedupe, stale timestamp rejection, self-authored daemon comment ignore unless rerun is explicit, lifecycle action mapping to candidate/cancel/route-refresh hints, webhook hints routed through fresh router validation before claims, polling candidate discovery with API filters, missed-webhook reconciliation through polling, and active-card route mismatch preemption.
+- Remaining: live disposable-board webhook smoke still requires credentials and an explicit operator-approved environment.
+- Follow-up: `fizzy-symphony: live Fizzy API smoke test with disposable board`.

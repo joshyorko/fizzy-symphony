@@ -80,14 +80,29 @@ export function createOrchestratorState(options = {}) {
     if (!run) return { ignored: true, reason: "missing_run" };
 
     try {
-      const renewal = await claims?.renew?.({ run });
-      run.claim = { ...(run.claim ?? {}), ...clone(renewal ?? {}) };
-      const entry = { run_id: run.run_id, status: "renewed", renewed_at: nowIso(clock), lease_expires_at: renewal?.lease_expires_at };
+      const renewal = await claims?.renew?.({
+        config,
+        run,
+        card: run.card,
+        route: run.route,
+        claim: run.claim,
+        workspace: run.workspace,
+        now: nowIso(clock)
+      });
+      run.claim = { ...(run.claim ?? {}), ...clone(renewal?.claim ?? renewal ?? {}) };
+      const entry = {
+        run_id: run.run_id,
+        status: "renewed",
+        renewed_at: nowIso(clock),
+        lease_expires_at: renewal?.lease_expires_at ?? renewal?.claim?.expires_at ?? renewal?.claim?.lease_expires_at
+      };
       claimRenewals.push(entry);
       trim(claimRenewals);
+      scheduleRenewal(run);
       return clone(entry);
     } catch (error) {
-      const expired = run.claim?.lease_expires_at && Date.parse(run.claim.lease_expires_at) <= Date.parse(nowIso(clock));
+      const expiresAt = run.claim?.lease_expires_at ?? run.claim?.expires_at;
+      const expired = expiresAt && Date.parse(expiresAt) <= Date.parse(nowIso(clock));
       const entry = {
         run_id: run.run_id,
         status: expired ? "failed_expired" : "failed",
@@ -190,6 +205,7 @@ export function createOrchestratorState(options = {}) {
   function scheduleRenewal(run) {
     const delay = config.claims?.renew_interval_ms;
     if (!delay || !scheduler?.setTimeout) return;
+    if (run.renewal_timer) scheduler?.clearTimeout?.(run.renewal_timer);
     run.renewal_timer = scheduler.setTimeout(() => {
       const current = activeRuns.get(run.run_id);
       if (current?.attempt_id !== run.attempt_id) return { ignored: true, reason: "stale_timer" };
