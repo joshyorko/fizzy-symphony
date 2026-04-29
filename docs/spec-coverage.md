@@ -59,13 +59,13 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 
 ### Runner health checks
 - Status: passing
-- Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, incomplete close escalation, session stop after completion-policy failure, prompt front matter/workpad context, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, runner failure release/status behavior, and non-looping runner failure marker recording.
+- Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/daemon.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, periodic non-mutating health checks, readiness transitions, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, incomplete close escalation, session stop after completion-policy failure, prompt front matter/workpad context, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, runner failure release/status behavior, and non-looping runner failure marker recording.
 
 ### Status snapshot
 - Status: newly covered
 - Tests: `test/status.test.js`, `test/status-cli.test.js`, `test/status-discovery.test.js`
-- Coverage: health, readiness, runner health, active runs, claims, retry queue, recent completions/failures, workflow reload errors, capacity refusals, workspace cleanup state, validation errors, token/rate metadata, managed webhook warnings, startup recovery, lifecycle recovery, instance registry discovery, and operator-readable status output.
+- Coverage: health, readiness, runner health, active runs, claims, retry queue, recent completions/failures, recent runtime warnings, workpad failures, workflow reload errors, capacity refusals, workspace cleanup state, validation errors, token/rate metadata, managed webhook warnings, startup recovery, lifecycle recovery, instance registry discovery, and operator-readable status output.
 
 ### Event ingestion
 - Status: newly covered

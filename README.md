@@ -5,7 +5,7 @@ Fizzy-backed Symphony daemon scaffold.
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 241/241 passing via `npm test` on Node v25.9.0. `package.json`
+current local baseline is 258/258 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
@@ -32,6 +32,7 @@ cd /var/home/kdlocpanda/second_brain/Resources/virtualization/docker/37signals/a
 npm test
 node bin/fizzy-symphony.js setup --template-only --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js validate --parse-only --config .fizzy-symphony/config.yml
+FIZZY_API_TOKEN=... node bin/fizzy-symphony.js validate --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js daemon
 ```
 

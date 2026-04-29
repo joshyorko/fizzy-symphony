@@ -5,6 +5,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path
 import { FizzySymphonyError } from "./errors.js";
 
 const TEMPLATE_PATH = new URL("../config.example.yml", import.meta.url);
+const DEFAULT_FIZZY_API_URL = "https://app.fizzy.do";
 
 const allowedCardOverridesSchema = {
   backend: true,
@@ -219,6 +220,7 @@ export function generateAnnotatedConfig(options = {}) {
     runnerFallback = "cli_app_server",
     sdkPackage = "",
     sdkContract = "",
+    apiUrl = DEFAULT_FIZZY_API_URL,
     botUserId = "",
     webhook = {},
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
@@ -232,6 +234,7 @@ export function generateAnnotatedConfig(options = {}) {
   const safetyAllowedRoots = allowedRoots?.length ? allowedRoots : uniqueStrings([workspaceRepoPath, "."]);
   let template = readFileSync(TEMPLATE_PATH, "utf8");
   template = template.replace(/account: my-account/u, `account: ${yamlScalar(account)}`);
+  template = template.replace(/api_url: https:\/\/app\.fizzy\.do/u, `api_url: ${yamlScalar(apiUrl)}`);
   template = template.replace(
     /  entries:\n[\s\S]*?\nserver:/u,
     `  entries:\n${renderBoardEntries(boardEntries, boardMaxConcurrent)}\nserver:`
@@ -479,7 +482,8 @@ function resolveEnvironmentReferences(value, env, path = "") {
         }
         throw new FizzySymphonyError("CONFIG_MISSING_ENV", `Missing environment variable ${variable}`, {
           variable,
-          path
+          path,
+          remediation: `Set ${variable} before running setup, validate, or daemon commands, or replace the config reference with an explicit non-secret value where appropriate.`
         });
       }
       return env[variable];

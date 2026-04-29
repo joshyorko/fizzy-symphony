@@ -16,7 +16,7 @@ operate the local scaffold safely while `fizzy-symphony` is still under construc
 ## Current Implementation Status
 
 The current scaffold is a Node.js ESM project with no external runtime dependencies. The local
-baseline on 2026-04-29 is 232/232 passing via `npm test` on Node v25.9.0.
+baseline on 2026-04-29 is 236/236 passing via `npm test` on Node v25.9.0.
 
 Implemented scaffold behavior:
 

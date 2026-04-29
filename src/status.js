@@ -66,6 +66,8 @@ export function createStatusStore(options = {}) {
       recent_reload_errors: []
     },
     capacity_refusals: [],
+    recent_warnings: [],
+    workpad_failures: [],
     rerun_consumptions: [],
     token_rate_limit: { available: false, reason: "not_recorded" },
     last_updated_at: started_at
@@ -186,6 +188,8 @@ export function createStatusStore(options = {}) {
         recent_reload_errors: clone(state.workflow_cache.recent_reload_errors)
       },
       capacity_refusals: clone(state.capacity_refusals),
+      recent_warnings: clone(state.recent_warnings),
+      workpad_failures: clone(state.workpad_failures),
       workspace_paths: runningRuns
         .map((run) => run.workspace_path ?? run.workspace?.path)
         .filter(Boolean),
@@ -495,6 +499,42 @@ export function createStatusStore(options = {}) {
     return workpad ? clone(workpad) : null;
   }
 
+  function recordRuntimeWarning(warning = {}) {
+    const normalized = {
+      code: warning.code ?? "RUNTIME_WARNING",
+      message: warning.message ?? "Runtime warning.",
+      ...clone(warning),
+      recorded_at: warning.recorded_at ?? new Date().toISOString()
+    };
+    state.recent_warnings.push(normalized);
+    trimHistory(state.recent_warnings);
+    touch();
+    return clone(normalized);
+  }
+
+  function recordWorkpadFailure(failure = {}) {
+    const normalized = {
+      code: failure.code ?? "WORKPAD_UPDATE_FAILED",
+      message: failure.message ?? "Workpad update failed.",
+      ...clone(failure),
+      occurred_at: failure.occurred_at ?? new Date().toISOString()
+    };
+    state.workpad_failures.push(normalized);
+    trimHistory(state.workpad_failures);
+    recordRuntimeWarning({
+      code: normalized.code,
+      message: normalized.message,
+      card_id: normalized.card_id,
+      run_id: normalized.run_id,
+      failed_comment_id: normalized.failed_comment_id,
+      replacement_comment_id: normalized.replacement_comment_id,
+      replacement_skipped_reason: normalized.replacement_skipped_reason,
+      recorded_at: normalized.occurred_at
+    });
+    touch();
+    return clone(normalized);
+  }
+
   function recordRerunConsumption(consumption = {}) {
     const normalized = clone(consumption);
     state.rerun_consumptions.push(normalized);
@@ -586,6 +626,8 @@ export function createStatusStore(options = {}) {
     recordClaim,
     recordWorkpad,
     getWorkpad,
+    recordRuntimeWarning,
+    recordWorkpadFailure,
     recordRerunConsumption,
     recordWarning,
     recordError,
