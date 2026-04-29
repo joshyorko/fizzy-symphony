@@ -1,0 +1,17 @@
+{
+  "name": "fizzy-symphony",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fizzy-backed Symphony daemon scaffold using Node.js ESM and built-in modules.",
+  "bin": {
+    "fizzy-symphony": "./bin/fizzy-symphony.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=25"
+  },
+  "dependencies": {}
+}

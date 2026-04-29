@@ -1,0 +1,815 @@
+import { buildCandidateQuery, discoverPollingCandidates } from "./polling.js";
+import {
+  applyCompletionPolicy,
+  createCompletionFailureMarker,
+  createCompletionMarker,
+  evaluateCleanupEligibility,
+  requiredUncheckedSteps,
+  upsertWorkpad,
+  writeDurableProof
+} from "./completion.js";
+import { cardDigest } from "./domain.js";
+
+export async function runReconciliationTick(options = {}) {
+  const {
+    config = {},
+    status,
+    fizzy,
+    router,
+    claims,
+    workspaceManager,
+    workflowLoader,
+    runner,
+    orchestratorState,
+    routes,
+    webhookEvents = [],
+    now = () => new Date()
+  } = options;
+
+  const startedAt = currentIso(now);
+  status?.recordPoll?.({ startedAt, error: null });
+
+  const result = {
+    discovered: 0,
+    dispatched: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    preempted: 0,
+    ignored: 0,
+    claim_blocked: 0
+  };
+
+  try {
+    const reconciled = await reconcileActiveRuns({
+      config,
+      status,
+      fizzy,
+      router,
+      claims,
+      workspaceManager,
+      runner,
+      orchestratorState,
+      now: startedAt
+    });
+    result.cancelled = reconciled.cancelled;
+    result.preempted = reconciled.preempted;
+
+    const hints = webhookEvents.map((event) => ({
+      event_id: event.id ?? event.event_id,
+      card_id: event.card_id,
+      board_id: event.board_id
+    }));
+    const knownRoutes = routes ?? status?.status?.().routes ?? [];
+    const query = buildCandidateQuery({ config, routes: knownRoutes });
+    const candidatesResult = typeof fizzy.discoverCandidates === "function"
+      ? await fizzy.discoverCandidates({ config, hints, routes: knownRoutes, query })
+      : await discoverPollingCandidates({ config, routes: knownRoutes, fizzy });
+    const candidates = normalizeCandidates(candidatesResult);
+    result.discovered = candidates.length;
+    recordEtagStats(status, candidatesResult, fizzy);
+
+    const capacity = Math.max(0, (config.agent?.max_concurrent ?? 1) - (status?.activeRunCount?.() ?? 0));
+    let dispatchesRemaining = capacity;
+
+    for (const card of candidates) {
+      if (dispatchesRemaining <= 0) break;
+      if (reconciled.card_ids.has(card.id)) {
+        result.ignored += 1;
+        continue;
+      }
+
+      const decision = await router.validateCandidate({ config, card, status });
+      if (decision?.action !== "spawn" && decision?.spawn !== true) {
+        result.ignored += 1;
+        continue;
+      }
+
+      const workspaceIdentity = await resolveWorkspaceIdentity({ config, card, decision, workspaceManager });
+      const claimResult = await claims.acquire({
+        config,
+        card,
+        route: decision.route,
+        decision,
+        workspace: workspaceIdentity,
+        now: startedAt
+      });
+      if (!claimResult?.acquired) {
+        result.claim_blocked += 1;
+        continue;
+      }
+
+      if (decision.rerun_requested) {
+        await consumeRerunSignal({ config, status, fizzy, card, route: decision.route, decision, now: startedAt });
+      }
+
+      dispatchesRemaining -= 1;
+      result.dispatched += 1;
+
+      const runResult = await runCard({
+        config,
+        status,
+        fizzy,
+        claims,
+        workspaceManager,
+        workflowLoader,
+        runner,
+        orchestratorState,
+        card,
+        decision,
+        claim: claimResult.claim,
+        workspaceIdentity,
+        now: startedAt
+      });
+
+      if (runResult.status === "completed") result.completed += 1;
+      if (runResult.status === "failed") result.failed += 1;
+    }
+
+    recordLifecycle(status, orchestratorState);
+    status?.recordPoll?.({ completedAt: startedAt, error: null });
+    return result;
+  } catch (error) {
+    recordLifecycle(status, orchestratorState);
+    status?.recordPoll?.({ completedAt: currentIso(now), error });
+    throw error;
+  }
+}
+
+async function resolveWorkspaceIdentity({ config, card, decision, workspaceManager }) {
+  if (typeof workspaceManager?.resolveIdentity !== "function") return null;
+  return workspaceManager.resolveIdentity({
+    config,
+    card,
+    route: decision.route,
+    decision
+  });
+}
+
+async function reconcileActiveRuns({
+  config,
+  status,
+  fizzy,
+  router,
+  claims,
+  workspaceManager,
+  runner,
+  orchestratorState,
+  now
+}) {
+  const result = emptyReconciliation();
+  if (!fizzy?.refreshActiveCards) {
+    recordLifecycle(status, orchestratorState);
+    return result;
+  }
+
+  const statusActiveRuns = status?.status?.().runs?.running ?? [];
+  if (statusActiveRuns.length > 0) {
+    const cards = normalizeCandidates(await fizzy.refreshActiveCards({ config, activeRuns: statusActiveRuns }));
+    const cardsById = new Map(cards.map((card) => [card.id, card]));
+
+    for (const activeRun of statusActiveRuns) {
+      const refreshedCard = cardsById.get(activeRun.card_id);
+      const renewal = await claims?.renew?.({ config, run: activeRun, claim: activeRun.claim, now });
+      if (renewal?.renewed === false) {
+        await cancelStatusRun({
+          config,
+          status,
+          fizzy,
+          claims,
+          workspaceManager,
+          runner,
+          run: activeRun,
+          card: refreshedCard,
+          reason: "claim_renewal_failed",
+          finalStatus: "cancelled",
+          now
+        });
+        result.cancelled += 1;
+        result.card_ids.add(activeRun.card_id);
+        continue;
+      }
+
+      const ineligibleReason = activeRunIneligibleReason(activeRun, refreshedCard);
+      if (ineligibleReason) {
+        await cancelStatusRun({
+          config,
+          status,
+          fizzy,
+          claims,
+          workspaceManager,
+          runner,
+          run: activeRun,
+          card: refreshedCard,
+          reason: ineligibleReason,
+          finalStatus: "cancelled",
+          now
+        });
+        result.cancelled += 1;
+        result.card_ids.add(activeRun.card_id);
+        continue;
+      }
+
+      const decision = await router?.validateCandidate?.({ config, card: refreshedCard, status, activeRun });
+      const currentFingerprint = decision?.route?.fingerprint ?? refreshedCard?.route_fingerprint;
+      if (currentFingerprint && currentFingerprint !== activeRun.route_fingerprint) {
+        await cancelStatusRun({
+          config,
+          status,
+          fizzy,
+          claims,
+          workspaceManager,
+          runner,
+          run: activeRun,
+          card: refreshedCard,
+          reason: "route_fingerprint_changed",
+          finalStatus: "preempted",
+          now,
+          cancellationDetails: {
+            previous_route_fingerprint: activeRun.route_fingerprint,
+            current_route_fingerprint: currentFingerprint
+          }
+        });
+        result.preempted += 1;
+        result.card_ids.add(activeRun.card_id);
+      }
+    }
+  }
+
+  const lifecycleActiveRuns = orchestratorState?.snapshot?.().active_runs ?? [];
+  if (lifecycleActiveRuns.length > 0) {
+    const cards = normalizeCandidates(await fizzy.refreshActiveCards({ config, activeRuns: lifecycleActiveRuns }));
+    const before = orchestratorState.snapshot();
+    await orchestratorState.reconcileActiveCards({ cards });
+    const after = orchestratorState.snapshot();
+    const newCancellations = (after.cancellations ?? []).slice((before.cancellations ?? []).length);
+    for (const cancellation of newCancellations) {
+      if (cancellation.reason === "route_fingerprint_mismatch") {
+        result.preempted += 1;
+      } else {
+        result.cancelled += 1;
+      }
+      if (cancellation.card_id) result.card_ids.add(cancellation.card_id);
+    }
+  }
+
+  recordLifecycle(status, orchestratorState);
+  return result;
+}
+
+function emptyReconciliation() {
+  return { cancelled: 0, preempted: 0, card_ids: new Set() };
+}
+
+async function cancelStatusRun({
+  config,
+  status,
+  fizzy,
+  claims,
+  workspaceManager,
+  runner,
+  run,
+  card,
+  reason,
+  finalStatus,
+  now,
+  cancellationDetails = {}
+}) {
+  const cancellation = {
+    final_status: finalStatus,
+    reason,
+    requested_at: currentIso(now),
+    states: {
+      cancel_requested: { status: "done", at: currentIso(now) },
+      runner_cancel_sent: { status: "skipped" },
+      session_stopped: { status: "skipped" },
+      claim_cancelled: { status: "pending" },
+      workspace_preserved: { status: "pending" }
+    },
+    workspace_preserved: false,
+    manual_intervention_required: false,
+    ...cancellationDetails
+  };
+
+  const cancelResult = await cancelRunnerTurn({ config, runner, run, reason });
+  cancellation.states.runner_cancel_sent = cancelResult.state;
+  if (cancelResult.result) cancellation.runner_cancel = cancelResult.result;
+
+  if (cancelResult.state.status !== "succeeded") {
+    const stopResult = await stopRunnerSession({ runner, run });
+    cancellation.states.session_stopped = stopResult.state;
+    if (stopResult.result) cancellation.session_stop = stopResult.result;
+
+    const ownedProcess = run.session?.process_owned === true ||
+      (run.session?.process_owned === undefined && cancelResult.state.status === "failed");
+    if (ownedProcess) {
+      const terminateResult = await terminateOwnedRunnerProcess({ runner, run });
+      cancellation.states.process_terminated = terminateResult.state;
+      if (terminateResult.result) cancellation.process_termination = terminateResult.result;
+    } else {
+      cancellation.manual_intervention_required = true;
+    }
+  }
+
+  try {
+    const release = await claims?.release?.({ config, claim: run.claim, run, status: "cancelled", now, reason });
+    cancellation.claim_release = release ?? { released: true };
+    cancellation.states.claim_cancelled = release?.released === false || release?.status === "failed"
+      ? { status: "failed", at: currentIso(now), result: release }
+      : { status: "succeeded", at: currentIso(now), result: release };
+  } catch (error) {
+    cancellation.claim_release = { released: false, error: normalizeError(error) };
+    cancellation.states.claim_cancelled = { status: "failed", at: currentIso(now), error: normalizeError(error) };
+  }
+
+  try {
+    const preservation = await workspaceManager?.preserve?.({ config, run, card, reason, finalStatus });
+    cancellation.workspace_preserved = true;
+    cancellation.workspace_preservation = preservation ?? { status: "preserved" };
+    cancellation.states.workspace_preserved = {
+      status: "preserved",
+      at: currentIso(now),
+      reason,
+      workspace_path: preservation?.workspace_path ?? run.workspace_path ?? run.workspace?.path,
+      result: preservation
+    };
+  } catch (error) {
+    cancellation.workspace_preserved = false;
+    cancellation.workspace_preservation = { status: "failed", error: normalizeError(error) };
+    cancellation.states.workspace_preserved = { status: "failed", at: currentIso(now), error: normalizeError(error) };
+    cancellation.manual_intervention_required = true;
+  }
+
+  cancellation.manual_intervention_required = cancellation.manual_intervention_required ||
+    cancellation.states.runner_cancel_sent.status === "timeout" ||
+    cancellation.states.claim_cancelled.status === "failed" ||
+    (
+      cancellation.states.session_stopped?.status === "failed" &&
+      cancellation.states.process_terminated?.status !== "succeeded"
+    );
+
+  const comment = await fizzy?.postCancellationComment?.({ run, card, reason, finalStatus, cancellation });
+  const details = {
+    cancellation,
+    cancellation_comment_id: comment?.id,
+    final_status: finalStatus
+  };
+  const cancelled = finalStatus === "preempted"
+    ? status?.preemptRun?.(run.id, cancellation, details)
+    : status?.cancelRun?.(run.id, cancellation, details);
+  await writeRunAttempt(status, cancelled ?? { ...run, cancellation }, finalStatus);
+  return cancelled;
+}
+
+async function cancelRunnerTurn({ config, runner, run, reason }) {
+  if (!runner?.cancel || !run.turn) {
+    return { state: { status: "skipped", reason: "no_active_turn" } };
+  }
+
+  try {
+    const result = await withOptionalTimeout(runner.cancel(run.turn, reason), config.runner?.cancel_timeout_ms);
+    if (result?.timeout) return { state: { status: "timeout" } };
+    const succeeded = result?.success !== false && result?.status !== "failed" && result?.status !== "timeout";
+    return { state: { status: succeeded ? "succeeded" : "failed" }, result };
+  } catch (error) {
+    return { state: { status: "failed" }, result: { status: "failed", error: normalizeError(error) } };
+  }
+}
+
+async function stopRunnerSession({ runner, run }) {
+  if (!runner?.stopSession || !run.session) {
+    return { state: { status: "skipped", reason: "no_session" } };
+  }
+  try {
+    const result = await runner.stopSession(run.session);
+    const succeeded = result?.success !== false && result?.status !== "failed";
+    return { state: { status: succeeded ? "succeeded" : "failed" }, result };
+  } catch (error) {
+    return { state: { status: "failed" }, result: { status: "failed", error: normalizeError(error) } };
+  }
+}
+
+async function terminateOwnedRunnerProcess({ runner, run }) {
+  if (!runner?.terminateOwnedProcess || !run.session) {
+    return { state: { status: "skipped", reason: "no_owned_process_terminator" } };
+  }
+  try {
+    const result = await runner.terminateOwnedProcess(run.session);
+    const succeeded = result?.success !== false && result?.status !== "failed";
+    return { state: { status: succeeded ? "succeeded" : "failed" }, result };
+  } catch (error) {
+    return { state: { status: "failed" }, result: { status: "failed", error: normalizeError(error) } };
+  }
+}
+
+function activeRunIneligibleReason(run, card) {
+  if (!card) return "card_missing";
+  const status = String(card.status ?? "").toLowerCase();
+  if (card.closed === true || status === "closed") return "card_closed";
+  if (card.auto_postponed === true) return "card_auto_postponed";
+  if (card.postponed === true || status === "postponed" || status === "not_now" || status === "not now") {
+    return "card_postponed";
+  }
+  if (card.board_id && run.board_id && card.board_id !== run.board_id) return "card_board_changed";
+  if (run.route?.source_column_id && card.column_id && card.column_id !== run.route.source_column_id) {
+    return "card_left_routed_column";
+  }
+  return null;
+}
+
+function normalizeCandidates(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.candidates)) return result.candidates;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.snapshot)) return result.snapshot;
+  return [];
+}
+
+function recordEtagStats(status, candidatesResult, fizzy) {
+  const etagCache = candidatesResult?.etag_cache ?? fizzy?.etagStats?.();
+  if (etagCache) {
+    status?.recordPoll?.({ etag_cache: etagCache });
+  }
+}
+
+function recordLifecycle(status, orchestratorState) {
+  if (!status?.recordLifecycleSnapshot || !orchestratorState?.snapshot) return;
+  const snapshot = orchestratorState.snapshot();
+  status.recordLifecycleSnapshot({
+    active_runs: snapshot.active_runs ?? [],
+    claims: snapshot.claims ?? [],
+    claim_renewals: snapshot.claim_renewals ?? [],
+    retry_queue: snapshot.retry_queue ?? [],
+    stalled_runs: snapshot.stalled_runs ?? [],
+    cancellations: snapshot.cancellations ?? [],
+    recent_failures: snapshot.recent_failures ?? []
+  });
+}
+
+async function runCard({
+  config,
+  status,
+  fizzy,
+  claims,
+  workspaceManager,
+  workflowLoader,
+  runner,
+  orchestratorState,
+  card,
+  decision,
+  claim,
+  workspaceIdentity,
+  now
+}) {
+  const runId = claim.run_id ?? claim.runId ?? `run_${card.id}`;
+  const attemptId = claim.attempt_id ?? claim.attemptId;
+  const route = decision.route;
+  const initialCardDigest = cardDigest(card, route);
+
+  let run = status?.startRun?.({
+    id: runId,
+    attempt_id: attemptId,
+    card,
+    board_id: card.board_id ?? route?.board_id,
+    route,
+    card_digest: initialCardDigest,
+    claim,
+    runner: { kind: config.runner?.preferred ?? route?.backend },
+    started_at: now,
+    updated_at: now
+  }) ?? { id: runId, attempt_id: attemptId, card, route, claim };
+
+  await writeRunAttempt(status, run, "claimed");
+  await writeRunAttempt(status, run, "preparing_workspace");
+
+  const workspace = await workspaceManager.prepare({
+    config,
+    card,
+    route,
+    claim,
+    decision,
+    identity: workspaceIdentity,
+    workspace: workspaceIdentity,
+    now
+  });
+  const workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
+  run = status?.startRun?.({
+    ...run,
+    workspace,
+    workflow: workflowSummary(workflow)
+  }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
+
+  await writeRunAttempt(status, run, "running");
+
+  try {
+    await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
+
+    const session = await runner.startSession(workspace.path, { config, route, workflow }, { run_id: runId });
+    run = status?.startRun?.({ ...run, session }) ?? { ...run, session };
+    await writeRunAttempt(status, run, "running");
+
+    const prompt = decision.prompt ?? workflow?.prompt ?? workflow?.body ?? "";
+    const turn = await runner.startTurn(session, prompt, { run_id: runId, card_id: card.id, route_id: route?.id });
+    run = status?.startRun?.({ ...run, turn }) ?? { ...run, turn };
+    await writeRunAttempt(status, run, "running");
+    orchestratorState?.startRun?.({
+      run_id: runId,
+      attempt_id: attemptId,
+      attempt_number: claim.attempt_number ?? claim.attemptNumber ?? 1,
+      card,
+      route,
+      claim,
+      workspace,
+      session,
+      turn,
+      runner: { kind: config.runner?.preferred ?? route?.backend }
+    });
+    recordLifecycle(status, orchestratorState);
+
+    const streamResult = await runner.stream(turn, (event) => {
+      status?.recordRunnerEvent?.(runId, event);
+      orchestratorState?.recordRunnerActivity?.(runId, event);
+    });
+
+    if (streamResult?.status !== "completed") {
+      throw runnerFailure(streamResult);
+    }
+
+    await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "runner_completed", now });
+
+    const refreshedCard = await refreshCardForCompletion({ fizzy, card, route });
+    assertRouteStillCurrent(refreshedCard, route);
+
+    const proofReference = durableProofReference({ config, run });
+    const resultComment = await fizzy.postResultComment({ run, card: refreshedCard, route, workspace, result: streamResult, proof: proofReference });
+    const proof = await writeDurableProof({
+      config,
+      run,
+      card: refreshedCard,
+      route,
+      workspace,
+      result: streamResult,
+      resultComment,
+      completedAt: now
+    });
+
+    const blockers = requiredUncheckedSteps(refreshedCard, route, workflow);
+    if (blockers.length > 0) {
+      const failureMarker = createCompletionFailureMarker({
+        run,
+        card: refreshedCard,
+        route,
+        instance: config.instance,
+        workspace,
+        reason: "required steps remain unchecked",
+        resultComment,
+        proof,
+        createdAt: now
+      });
+      const recordedFailureMarker = await recordCompletionFailureMarker({
+        fizzy,
+        run,
+        card: refreshedCard,
+        route,
+        workspace,
+        result: streamResult,
+        resultComment,
+        proof,
+        marker: failureMarker
+      });
+      const error = completionFailure("COMPLETION_BLOCKED_BY_REQUIRED_STEPS", "Required steps remain unchecked.", {
+        unchecked_steps: blockers.map(normalizeStepForError)
+      });
+      const failed = status?.failRun?.(runId, error);
+      orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
+      recordLifecycle(status, orchestratorState);
+      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
+      await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      return { status: "failed", run: failed ?? run, error };
+    }
+
+    const completionPolicyResult = await applyCompletionPolicy({ fizzy, card: refreshedCard, route });
+    if (completionPolicyResult.success === false) {
+      const failureMarker = createCompletionFailureMarker({
+        run,
+        card: refreshedCard,
+        route,
+        instance: config.instance,
+        workspace,
+        reason: completionPolicyResult.message,
+        resultComment,
+        proof,
+        createdAt: now
+      });
+      const recordedFailureMarker = await recordCompletionFailureMarker({
+        fizzy,
+        run,
+        card: refreshedCard,
+        route,
+        workspace,
+        result: streamResult,
+        resultComment,
+        proof,
+        marker: failureMarker
+      });
+      const error = completionFailure(completionPolicyResult.code, completionPolicyResult.message, completionPolicyResult.details);
+      const failed = status?.failRun?.(runId, error);
+      orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
+      recordLifecycle(status, orchestratorState);
+      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
+      await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      return { status: "failed", run: failed ?? run, error };
+    }
+
+    const completionMarker = createCompletionMarker({
+      run,
+      card: refreshedCard,
+      route,
+      instance: config.instance,
+      workspace,
+      resultComment,
+      proof,
+      completedAt: now
+    });
+    const recordedCompletionMarker = await recordCompletionMarker({
+      fizzy,
+      run,
+      card: refreshedCard,
+      route,
+      workspace,
+      result: streamResult,
+      resultComment,
+      proof,
+      marker: completionMarker
+    });
+
+    const completed = status?.completeRun?.(runId, {
+      proof,
+      result_comment_id: resultComment?.id,
+      completion_marker: recordedCompletionMarker,
+      runner_result: streamResult,
+      completed_at: now
+    });
+
+    const claimRelease = await claims.release({ config, claim, run: completed ?? run, status: "completed", now });
+    orchestratorState?.completeRun?.(runId, { proof, result_comment_id: resultComment?.id });
+    recordLifecycle(status, orchestratorState);
+    const cleanup = evaluateCleanupEligibility({
+      config,
+      workspace,
+      proof,
+      resultComment,
+      completionMarker: recordedCompletionMarker,
+      completionPolicyResult,
+      claimRelease
+    });
+    status?.recordCleanupState?.({
+      status: cleanup.action === "eligible" ? "cleanup_planned" : "cleanup_preserved",
+      reason: cleanup.reason
+    });
+    await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: completed ?? run, workspace, phase: "handoff", proof, resultComment, now });
+    await writeRunAttempt(status, { ...(completed ?? run), cleanup_state: cleanup.action }, "completed");
+    return { status: "completed", run: completed ?? run };
+  } catch (error) {
+    orchestratorState?.recordFailure?.(runId, error, {
+      retryable: isRetryableRunnerError(error),
+      failure_kind: "runner"
+    });
+    recordLifecycle(status, orchestratorState);
+    const failed = status?.failRun?.(runId, error);
+    await writeRunAttempt(status, failed ?? run, "failed");
+    await claims.release?.({ config, claim, run: failed ?? run, status: "failed", now, error });
+    return { status: "failed", run: failed ?? run, error };
+  }
+}
+
+async function consumeRerunSignal({ status, fizzy, card, route, decision, now }) {
+  const record = {
+    card_id: card.id,
+    route_id: route?.id,
+    route_fingerprint: route?.fingerprint,
+    consumed_at: now,
+    tag: "agent-rerun"
+  };
+  status?.recordRerunConsumption?.(record);
+  if (fizzy?.removeTag) {
+    await fizzy.removeTag({ card, tag: "agent-rerun", route, decision });
+    return { ...record, removed: true };
+  }
+  return { ...record, removed: false };
+}
+
+function durableProofReference({ config = {}, run = {} }) {
+  const stateDir = config.observability?.state_dir ?? ".fizzy-symphony/run";
+  const runId = run.id ?? run.run_id ?? "run";
+  return {
+    file: `${String(stateDir).replace(/\/$/u, "")}/proof/${String(runId).replace(/[^A-Za-z0-9._-]/gu, "_")}.json`
+  };
+}
+
+async function refreshCardForCompletion({ fizzy, card, route }) {
+  if (fizzy?.refreshCard) return fizzy.refreshCard({ card, route });
+  if (fizzy?.getCard) return fizzy.getCard(card.id ?? card.card_id);
+  return card;
+}
+
+function assertRouteStillCurrent(card, route) {
+  const currentFingerprint = card?.current_route_fingerprint ?? card?.route_fingerprint ?? card?.route?.fingerprint;
+  if (!currentFingerprint || currentFingerprint === route?.fingerprint) return;
+
+  throw completionFailure("STALE_ROUTE_FINGERPRINT", "Route fingerprint changed before completion; preserving workspace.", {
+    route_id: route?.id,
+    expected_route_fingerprint: route?.fingerprint,
+    current_route_fingerprint: currentFingerprint,
+    preserve_workspace: true
+  });
+}
+
+async function recordCompletionMarker({ fizzy, marker, ...context }) {
+  const response = fizzy?.recordCompletionMarker
+    ? await fizzy.recordCompletionMarker({ ...context, marker, body: marker.body, tag: marker.tag, payload: marker.payload })
+    : null;
+  return { ...marker, ...(response ?? {}) };
+}
+
+async function recordCompletionFailureMarker({ fizzy, marker, ...context }) {
+  const response = fizzy?.recordCompletionFailureMarker
+    ? await fizzy.recordCompletionFailureMarker({ ...context, marker, body: marker.body, tag: marker.tag, payload: marker.payload })
+    : null;
+  return { ...marker, ...(response ?? {}) };
+}
+
+function completionFailure(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code ?? "COMPLETION_POLICY_FAILED";
+  error.details = details;
+  return error;
+}
+
+function normalizeStepForError(step) {
+  if (typeof step === "string") return { id: null, title: step };
+  return {
+    id: step?.id ?? step?.step_id ?? null,
+    title: step?.title ?? step?.name ?? step?.text ?? step?.description ?? step?.body ?? ""
+  };
+}
+
+async function writeRunAttempt(status, run, runStatus) {
+  if (!status?.writeRunAttemptRecord) return null;
+  return status.writeRunAttemptRecord({ ...run, status: runStatus });
+}
+
+function workflowSummary(workflow) {
+  if (!workflow) return null;
+  return {
+    front_matter: workflow.front_matter ?? workflow.frontMatter ?? {},
+    body_length: String(workflow.body ?? "").length
+  };
+}
+
+function runnerFailure(result) {
+  const error = new Error(result?.error?.message ?? `Runner turn did not complete: ${result?.status ?? "unknown"}`);
+  error.code = result?.error?.code ?? "RUNNER_TURN_FAILED";
+  error.details = { result };
+  return error;
+}
+
+function isRetryableRunnerError(error = {}) {
+  return !String(error.code ?? "").startsWith("COMPLETION_") &&
+    error.code !== "STALE_ROUTE_FINGERPRINT";
+}
+
+async function withOptionalTimeout(promise, timeoutMs) {
+  if (!Number.isFinite(Number(timeoutMs)) || Number(timeoutMs) <= 0) {
+    return promise;
+  }
+
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve({ timeout: true }), Number(timeoutMs));
+        timeout.unref?.();
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeError(error = {}) {
+  if (typeof error === "string") return { code: "ERROR", message: error };
+  return {
+    code: error.code ?? "ERROR",
+    message: error.message ?? String(error),
+    details: error.details ?? {}
+  };
+}
+
+function currentIso(now) {
+  const value = typeof now === "function" ? now() : now;
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
