@@ -1,23 +1,4 @@
 {
   "name": "fizzy-symphony",
-  "image": "ghcr.io/joshyorko/ror:latest",
-  "workspaceFolder": "/workspaces/fizzy-symphony",
-  "containerEnv": {
-    "FIZZY_API_URL": "${localEnv:FIZZY_API_URL}",
-    "FIZZY_BOARD": "${localEnv:FIZZY_BOARD}",
-    "FIZZY_PROFILE": "${localEnv:FIZZY_PROFILE}",
-    "FIZZY_TOKEN": "${localEnv:FIZZY_TOKEN}"
-  },
-  "mounts": [
-    "source=${localEnv:HOME}/.config/fizzy,target=/home/vscode/.config/fizzy,type=bind,consistency=cached"
-  ],
-  "postCreateCommand": "brew tap joshyorko/tools && brew install joshyorko/tools/rcc && rcc ht vars -r robots/workitems/robot.yaml --json",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance"
-      ]
-    }
-  }
+  "image": "ghcr.io/joshyorko/ror:latest"
 }
