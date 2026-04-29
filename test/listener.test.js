@@ -6,7 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import net from "node:net";
 
-import { bindServerListener, createWebhookHintQueue, startLocalHttpServer } from "../src/listener.js";
+import {
+  bindServerListener,
+  createLocalHttpHandler as createListenerLocalHttpHandler,
+  createWebhookHintQueue,
+  startLocalHttpServer
+} from "../src/listener.js";
+import {
+  createLocalHttpHandler as createServerLocalHttpHandler,
+  createWebhookHintQueue as createServerWebhookHintQueue
+} from "../src/server.js";
 import { startLocalInstance } from "../src/instance-registry.js";
 import { coordinationConfig, tempProject } from "./helpers.js";
 
@@ -105,6 +114,11 @@ test("bindServerListener supports direct fixed bind-and-hold without registry si
   }
 });
 
+test("listener exports delegate HTTP semantics to the production server module", () => {
+  assert.equal(createListenerLocalHttpHandler, createServerLocalHttpHandler);
+  assert.equal(createWebhookHintQueue, createServerWebhookHintQueue);
+});
+
 test("local HTTP server serves health, readiness, and live status JSON", async () => {
   const liveSnapshot = {
     schema_version: "fizzy-symphony-status-v1",
@@ -186,14 +200,15 @@ test("webhook accepts a valid signature and enqueues a candidate hint only", asy
   try {
     const body = JSON.stringify({
       id: "event_1",
-      action: "card.updated",
+      action: "card_triaged",
       card: { id: "card_1", board_id: "board_1", title: "Implement server" }
     });
     const accepted = await fetchJson(`${server.endpoint.base_url}/webhook`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-webhook-signature": signature(body, config.webhook.secret)
+        "x-webhook-signature": signature(body, config.webhook.secret),
+        "x-webhook-timestamp": "2026-04-29T12:00:00.000Z"
       },
       body
     });
@@ -201,16 +216,26 @@ test("webhook accepts a valid signature and enqueues a candidate hint only", asy
     assert.equal(accepted.response.status, 202);
     assert.equal(accepted.body.status, "accepted");
     assert.equal(accepted.body.signature_verification, "enabled");
-    assert.deepEqual(accepted.body.hint, { event_id: "event_1", card_id: "card_1", board_id: "board_1" });
+    assert.deepEqual(accepted.body.hint, {
+      intent: "spawn",
+      reason: "card_triaged",
+      event_id: "event_1",
+      action: "card_triaged",
+      card_id: "card_1",
+      board_id: "board_1"
+    });
     assert.deepEqual(hints, [{
       source: "webhook",
+      intent: "spawn",
+      reason: "card_triaged",
       event_id: "event_1",
+      action: "card_triaged",
       card_id: "card_1",
       board_id: "board_1",
       received_at: "2026-04-29T12:00:00.000Z"
     }]);
     assert.equal(Object.hasOwn(hints[0], "event"), false);
-    assert.equal(Object.hasOwn(hints[0], "action"), false);
+    assert.equal(hints[0].action, "card_triaged");
   } finally {
     await server.close();
   }
@@ -228,7 +253,7 @@ test("webhook rejects missing or invalid signatures when a secret is configured"
   });
 
   try {
-    const body = JSON.stringify({ id: "event_1", card_id: "card_1", board_id: "board_1" });
+    const body = JSON.stringify({ id: "event_1", action: "card_triaged", card_id: "card_1", board_id: "board_1" });
 
     const missing = await fetchJson(`${server.endpoint.base_url}/webhook`, {
       method: "POST",
@@ -242,7 +267,8 @@ test("webhook rejects missing or invalid signatures when a secret is configured"
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-webhook-signature": "not-a-valid-signature"
+        "x-webhook-signature": "not-a-valid-signature",
+        "x-webhook-timestamp": "2026-04-29T12:00:00.000Z"
       },
       body
     });
@@ -270,14 +296,17 @@ test("webhook accepts valid JSON without a signature when no secret is configure
     const accepted = await fetchJson(`${server.endpoint.base_url}/custom-webhook`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event_id: "event_2", card_id: "card_2", board_id: "board_1" })
+      body: JSON.stringify({ event_id: "event_2", action: "card_triaged", card_id: "card_2", board_id: "board_1" })
     });
 
     assert.equal(accepted.response.status, 202);
     assert.equal(accepted.body.signature_verification, "disabled");
     assert.deepEqual(queue.drain(), [{
       source: "webhook",
+      intent: "spawn",
+      reason: "card_triaged",
       event_id: "event_2",
+      action: "card_triaged",
       card_id: "card_2",
       board_id: "board_1",
       received_at: "2026-04-29T12:05:00.000Z"
@@ -338,7 +367,7 @@ test("webhook intake disabled returns a clear error while unmanaged intake can s
   try {
     const accepted = await fetchJson(`${unmanaged.endpoint.base_url}/webhook`, {
       method: "POST",
-      body: JSON.stringify({ id: "event_unmanaged", card_id: "card_1", board_id: "board_1" })
+      body: JSON.stringify({ id: "event_unmanaged", action: "card_triaged", card_id: "card_1", board_id: "board_1" })
     });
     assert.equal(accepted.response.status, 202);
     assert.equal(accepted.body.webhook_management, "unmanaged");

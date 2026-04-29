@@ -210,6 +210,7 @@ test("daemon webhooks enqueue through the scheduler and trigger reconciliation",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         event_id: "event_1",
+        action: "card_triaged",
         card: { id: "card_1", board_id: "board_1" }
       })
     });
@@ -219,7 +220,9 @@ test("daemon webhooks enqueue through the scheduler and trigger reconciliation",
     assert.deepEqual(seenHints[0], [{
       event_id: "event_1",
       card_id: "card_1",
-      board_id: "board_1"
+      board_id: "board_1",
+      action: "card_triaged",
+      intent: "spawn"
     }]);
     assert.equal(calls.includes("startSession"), false);
   } finally {
