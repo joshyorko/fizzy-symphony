@@ -141,13 +141,20 @@ async function validateIdentity(fizzy) {
 async function selectAccount(identity, requestedAccount, prompts) {
   const accounts = identity.accounts ?? [];
   if (requestedAccount) {
-    const match = accounts.find((account) => account.id === requestedAccount || account.name === requestedAccount);
+    const requested = normalizeAccountSlug(requestedAccount);
+    const match = accounts.find((account) => {
+      const slug = normalizeAccountSlug(account.slug ?? account.path);
+      return account.id === requestedAccount ||
+        account.name === requestedAccount ||
+        slug === requested ||
+        accountConfigValue(account) === requested;
+    });
     if (!match) {
       throw new FizzySymphonyError("FIZZY_ACCOUNT_UNAVAILABLE", "Requested Fizzy account is not available.", {
         account: requestedAccount
       });
     }
-    return match.id ?? match.name;
+    return accountConfigValue(match);
   }
 
   const first = accounts[0];
@@ -155,8 +162,18 @@ async function selectAccount(identity, requestedAccount, prompts) {
     throw new FizzySymphonyError("FIZZY_ACCOUNT_UNAVAILABLE", "Fizzy identity did not include any accounts.");
   }
   const prompted = await prompts?.selectAccount?.(accounts);
-  if (prompted && typeof prompted === "object") return prompted.id ?? prompted.name;
-  return prompted ?? first.id ?? first.name;
+  if (prompted && typeof prompted === "object") return accountConfigValue(prompted);
+  if (prompted) return normalizeAccountSlug(prompted);
+  return accountConfigValue(first);
+}
+
+function accountConfigValue(account) {
+  const slug = normalizeAccountSlug(account?.slug ?? account?.path);
+  return slug || account?.id || account?.name;
+}
+
+function normalizeAccountSlug(value) {
+  return String(value ?? "").trim().replace(/^\/+|\/+$/gu, "");
 }
 
 async function selectSetupMode(options, prompts) {

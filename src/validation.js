@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -18,7 +18,7 @@ const defaultAllowedCardOverrides = {
 };
 
 export function normalizeTag(tag) {
-  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.slug ?? tag?.label ?? "";
+  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.title ?? tag?.slug ?? tag?.label ?? "";
   return raw.trim().replace(/^#+/u, "").toLowerCase();
 }
 
@@ -428,6 +428,7 @@ function validateManagedWebhook(config, errors, warnings) {
 
 async function validateWorkspaceRoots(config, errors) {
   const allowedRoots = (config.safety?.allowed_roots ?? []).filter(Boolean).map((root) => resolve(root));
+  const canonicalAllowedRoots = await Promise.all(allowedRoots.map(canonicalPathIfExists));
   const registry = config.workspaces?.registry ?? {};
 
   if (allowedRoots.length > 0) {
@@ -441,10 +442,13 @@ async function validateWorkspaceRoots(config, errors) {
     ];
 
     for (const [path, value] of paths) {
-      if (value && !isInsideAnyRoot(value, allowedRoots)) {
+      if (!value) continue;
+      const canonicalValue = await canonicalPathIfExists(value);
+      if (!isInsideAnyRoot(value, allowedRoots) || !isInsideAnyRoot(canonicalValue, canonicalAllowedRoots)) {
         errors.push(issue("UNSAFE_WORKSPACE_ROOT", "Configured workspace path is outside safety.allowed_roots.", {
           path,
           value,
+          canonical_value: canonicalValue,
           allowed_roots: allowedRoots
         }));
       }
@@ -764,8 +768,17 @@ function isInsideAnyRoot(path, allowedRoots) {
   });
 }
 
+async function canonicalPathIfExists(path) {
+  const resolved = resolve(path);
+  try {
+    return await realpath(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function normalizedTags(card) {
-  return [...new Set((card.tags ?? []).map(normalizeTag).filter(Boolean))];
+  return [...new Set((card.tags ?? card.tag_names ?? card.tagNames ?? []).map(normalizeTag).filter(Boolean))];
 }
 
 function hasTag(card, tag) {

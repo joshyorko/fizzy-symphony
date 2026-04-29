@@ -330,6 +330,55 @@ test("claim renewal failure past lease expiry cancels and preserves without retr
   assert.equal(snapshot.retry_queue.length, 0);
 });
 
+test("claim renewal false result past lease expiry cancels and does not report renewed", async () => {
+  const clock = clockFixture();
+  const cancellations = [];
+  const state = createOrchestratorState({
+    config: configFixture({
+      claims: { renew_interval_ms: 1000 }
+    }),
+    clock,
+    claims: {
+      async renew({ claim }) {
+        return {
+          renewed: false,
+          claim: {
+            ...claim,
+            expires_at: "2026-04-29T12:00:01.000Z",
+            status: "renew_failed"
+          },
+          error: { code: "FIZZY_UNAVAILABLE", message: "post failed" }
+        };
+      }
+    },
+    runner: {
+      async cancel(turn, reason) {
+        cancellations.push({ turn_id: turn.turn_id, reason });
+        return { status: "cancelled" };
+      }
+    }
+  });
+
+  state.startRun({
+    run_id: "run_1",
+    attempt_id: "attempt_1",
+    attempt_number: 1,
+    card: cardFixture(),
+    route: routeFixture(),
+    claim: claimFixture({ lease_expires_at: "2026-04-29T12:00:01.000Z" }),
+    workspace: workspaceFixture(),
+    turn: { turn_id: "turn_1" }
+  });
+
+  clock.advance(1001);
+  const renewal = await state.renewClaimNow("run_1");
+
+  assert.equal(renewal.status, "failed_expired");
+  assert.deepEqual(cancellations, [{ turn_id: "turn_1", reason: "claim_renewal_expired" }]);
+  assert.equal(state.snapshot().claim_renewals[0].status, "failed_expired");
+  assert.equal(state.snapshot().cancellations[0].reason, "claim_renewal_expired");
+});
+
 test("active-card reconciliation cancels closed cards and route fingerprint mismatches", async () => {
   const cancellations = [];
   const state = createOrchestratorState({

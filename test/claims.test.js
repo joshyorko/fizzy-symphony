@@ -242,6 +242,33 @@ test("claim event logs apply renewals and releases so released claims do not blo
   }), { ok: true, reason: "no_active_claim" });
 });
 
+test("claim marker readers parse live Fizzy rich-text comment bodies", () => {
+  const marker = createClaimMarker({
+    claim: claim(),
+    route: route(),
+    card: card(),
+    instance: instance(),
+    workspace: workspace(),
+    now: NOW
+  });
+  const liveComment = {
+    id: "comment_live",
+    body: {
+      plain_text: marker.body,
+      html: `<p>${marker.body}</p>`
+    },
+    created_at: NOW.toISOString()
+  };
+
+  const parsed = readClaims([liveComment]);
+  const reduced = applyClaimEventLog([liveComment]);
+
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].claim_id, "claim_1");
+  assert.equal(reduced.length, 1);
+  assert.equal(reduced[0].claim_id, "claim_1");
+});
+
 test("unexpired claims block acquisition and expired claims are stealable only after grace", () => {
   const marker = createClaimMarker({
     claim: claim(),
@@ -551,9 +578,6 @@ test("expired claims can be stolen after grace when the reread still has no live
 });
 
 test("renewal and release append structured comments and failed release is visible in status", async () => {
-  const fizzy = fakeFizzy();
-  const status = statusRecorder();
-  const store = createBoardClaimStore({ fizzy, status });
   const ownedClaim = createClaimMarker({
     claim: claim(),
     route: route(),
@@ -562,6 +586,17 @@ test("renewal and release append structured comments and failed release is visib
     workspace: workspace(),
     now: NOW
   }).claim;
+  const ownedComment = createClaimMarker({
+    claim: ownedClaim,
+    route: route(),
+    card: card(),
+    instance: instance(),
+    workspace: workspace(),
+    now: NOW
+  });
+  const fizzy = fakeFizzy({ comments: [comment("comment_owned", ownedComment.body, NOW)] });
+  const status = statusRecorder();
+  const store = createBoardClaimStore({ fizzy, status });
 
   const renewal = await store.renew({
     config: config(),
@@ -596,6 +631,92 @@ test("renewal and release append structured comments and failed release is visib
   assert.equal(failed.released, false);
   assert.equal(failingStatus.claims.at(-1).status, "release_failed");
   assert.equal(failingStatus.claims.at(-1).preserve_workspace, true);
+});
+
+test("renewal refuses to resurrect an expired claim after another claim wins", async () => {
+  const oldClaim = createClaimMarker({
+    claim: claim({
+      claim_id: "claim_old",
+      attempt_id: "attempt_old",
+      run_id: "run_old",
+      lease_ms: 60000
+    }),
+    route: route(),
+    card: card(),
+    instance: instance({ id: "instance_old" }),
+    workspace: workspace(),
+    now: new Date("2026-04-29T11:00:00.000Z")
+  });
+  const newClaim = createClaimMarker({
+    claim: claim({
+      claim_id: "claim_new",
+      attempt_id: "attempt_new",
+      run_id: "run_new"
+    }),
+    route: route(),
+    card: card(),
+    instance: instance({ id: "instance_new" }),
+    workspace: workspace(),
+    now: NOW
+  });
+  const fizzy = fakeFizzy({
+    comments: [
+      comment("comment_old", oldClaim.body, new Date("2026-04-29T11:00:00.000Z")),
+      comment("comment_new", newClaim.body, NOW)
+    ]
+  });
+  const status = statusRecorder();
+  const store = createBoardClaimStore({ fizzy, status });
+
+  const renewal = await store.renew({
+    config: config(),
+    card: card(),
+    claim: oldClaim.claim,
+    now: new Date("2026-04-29T12:05:00.000Z")
+  });
+
+  assert.equal(renewal.renewed, false);
+  assert.equal(renewal.reason, "lost_claim");
+  assert.equal(renewal.live_claim.claim_id, "claim_new");
+  assert.equal(status.claims.at(-1).status, "renew_lost");
+  assert.equal(status.claims.at(-1).preserve_workspace, true);
+  assert.deepEqual(fizzy.calls, ["list:card_1"]);
+  assert.deepEqual(fizzy.posted, []);
+});
+
+test("renewal refuses to continue after the claim has a terminal marker", async () => {
+  const owned = createClaimMarker({
+    claim: claim(),
+    route: route(),
+    card: card(),
+    instance: instance(),
+    workspace: workspace(),
+    now: NOW
+  });
+  const terminal = createReleaseMarker({
+    claim: owned.claim,
+    status: "cancelled",
+    now: new Date("2026-04-29T12:01:00.000Z")
+  });
+  const fizzy = fakeFizzy({
+    comments: [
+      comment("comment_owned", owned.body, NOW),
+      comment("comment_terminal", terminal.body, new Date("2026-04-29T12:01:00.000Z"))
+    ]
+  });
+  const store = createBoardClaimStore({ fizzy });
+
+  const renewal = await store.renew({
+    config: config(),
+    card: card(),
+    claim: owned.claim,
+    now: new Date("2026-04-29T12:05:00.000Z")
+  });
+
+  assert.equal(renewal.renewed, false);
+  assert.equal(renewal.reason, "claim_terminal");
+  assert.deepEqual(fizzy.calls, ["list:card_1"]);
+  assert.deepEqual(fizzy.posted, []);
 });
 
 test("startup claim inspection reports self expired, self live, other live, terminal, and malformed markers tolerantly", () => {
