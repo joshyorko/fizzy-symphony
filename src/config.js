@@ -94,6 +94,7 @@ const schema = {
     allow_fallback: true,
     sdk: {
       package: true,
+      contract: true,
       smoke_test: true
     },
     cli_app_server: {
@@ -194,6 +195,8 @@ export function generateAnnotatedConfig(options = {}) {
     board = { id: "board_123", label: "Agent Playground" },
     runnerPreferred = "cli_app_server",
     runnerFallback = "cli_app_server",
+    sdkPackage = "",
+    sdkContract = "",
     botUserId = "",
     webhook = {}
   } = options;
@@ -205,6 +208,8 @@ export function generateAnnotatedConfig(options = {}) {
   template = template.replace(/bot_user_id: ""/u, `bot_user_id: ${yamlScalar(botUserId)}`);
   template = template.replace(/preferred: sdk/u, `preferred: ${yamlScalar(runnerPreferred)}`);
   template = template.replace(/fallback: cli_app_server/u, `fallback: ${yamlScalar(runnerFallback)}`);
+  template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
+  template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
 
   if (Object.hasOwn(webhook, "manage")) {
     template = template.replace(/manage: false/u, `manage: ${Boolean(webhook.manage)}`);

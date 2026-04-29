@@ -21,6 +21,45 @@ export function normalizeTag(tag) {
   return raw.trim().replace(/^#+/u, "").toLowerCase();
 }
 
+export function resolveManagedTags(tags, options = {}) {
+  const byName = new Map();
+  for (const tag of tags ?? []) {
+    const normalized = normalizeTag(tag);
+    if (!normalized) continue;
+    byName.set(normalized, { id: tag.id ?? tag.tag_id ?? normalized, name: normalized, source: tag });
+  }
+
+  const resolved = {};
+  const namesToResolve = new Set([...Object.keys(managedTagFamilies()), ...(options.required ?? []).map(normalizeTag)]);
+  for (const name of namesToResolve) {
+    if (byName.has(name)) {
+      const tag = byName.get(name);
+      resolved[name] = { id: tag.id, name: tag.name };
+    }
+  }
+
+  const missing = (options.required ?? []).map(normalizeTag).filter((name) => !resolved[name]);
+  if (missing.length > 0) {
+    throw new FizzySymphonyError("MANAGED_TAG_NOT_FOUND", "Required managed Fizzy tags could not be resolved.", {
+      missing
+    });
+  }
+
+  return resolved;
+}
+
+export function managedTagsUsedByBoards(boards) {
+  const used = new Set();
+  for (const board of boards ?? []) {
+    for (const card of board.cards ?? []) {
+      for (const tag of normalizedTags(card)) {
+        if (isManagedRouteTag(tag)) used.add(tag);
+      }
+    }
+  }
+  return [...used].sort();
+}
+
 export function discoverGoldenTicketRoutes(boards, options = {}) {
   const routes = [];
 
@@ -153,23 +192,21 @@ export async function validateStartup({ config, fizzy, runner }) {
   }
 
   let users = [];
+  let resolvedTags = {};
   try {
     users = await fizzy?.listUsers?.(config.fizzy?.account) ?? [];
   } catch (error) {
     errors.push(issue("FIZZY_USERS_UNAVAILABLE", "Unable to list Fizzy users.", { cause: error.message }));
   }
 
-  if ((config.claims?.assign_on_claim || config.claims?.watch_on_claim) && config.fizzy?.bot_user_id) {
-    if (!users.some((user) => user.id === config.fizzy.bot_user_id)) {
-      errors.push(issue("INVALID_BOT_USER", "Configured bot_user_id is not present in account users.", {
-        bot_user_id: config.fizzy.bot_user_id
-      }));
-    }
-  }
-
-  validateManagedWebhook(config, errors);
-
   if (identityValid) {
+    let tags = [];
+    try {
+      tags = await fizzy?.listTags?.(config.fizzy?.account) ?? [];
+    } catch (error) {
+      errors.push(issue(error.code ?? "FIZZY_TAGS_UNAVAILABLE", error.message, error.details ?? {}));
+    }
+
     try {
       const entropy = await fizzy?.getEntropy?.(
         config.fizzy?.account,
@@ -199,7 +236,25 @@ export async function validateStartup({ config, fizzy, runner }) {
     } catch (error) {
       errors.push(issue(error.code ?? "GOLDEN_TICKET_VALIDATION_FAILED", error.message, error.details ?? {}));
     }
+
+    try {
+      resolvedTags = resolveManagedTags(tags, {
+        required: ["agent-instructions", ...managedTagsUsedByBoards(boards.filter(Boolean))]
+      });
+    } catch (error) {
+      errors.push(issue(error.code ?? "FIZZY_TAGS_UNAVAILABLE", error.message, error.details ?? {}));
+    }
   }
+
+  if ((config.claims?.assign_on_claim || config.claims?.watch_on_claim) && config.fizzy?.bot_user_id) {
+    if (!users.some((user) => user.id === config.fizzy.bot_user_id)) {
+      errors.push(issue("INVALID_BOT_USER", "Configured bot_user_id is not present in account users.", {
+        bot_user_id: config.fizzy.bot_user_id
+      }));
+    }
+  }
+
+  validateManagedWebhook(config, errors);
 
   await validateWorkflowFiles(config, errors);
 
@@ -216,22 +271,30 @@ export async function validateStartup({ config, fizzy, runner }) {
     ok: errors.length === 0,
     errors,
     warnings,
-    routes
+    routes,
+    resolvedTags
   };
 }
 
-export function createCompletionFailureMarker({ route, card, reason }) {
+export function createCompletionFailureMarker({ run, route, instance, workspace, card, failure_reason, reason, result_comment_id, proof }) {
   const payload = {
     marker: "fizzy-symphony:completion-failed:v1",
+    kind: "completion_failed",
+    run_id: run?.id,
     route_id: route.id,
     route_fingerprint: route.fingerprint,
-    card_id: card.id,
-    reason,
+    instance_id: instance?.id,
+    workspace_key: workspace?.key,
+    failure_reason: failure_reason ?? reason,
+    result_comment_id,
+    proof_file: proof?.file,
+    proof_digest: proof?.digest,
+    card_digest: card?.digest,
     created_at: new Date().toISOString()
   };
 
   return {
-    tag: "agent-completion-failed",
+    tag: `agent-completion-failed-${shortRouteId(route.id)}`,
     body: JSON.stringify(payload)
   };
 }
@@ -246,11 +309,27 @@ export function parseCompletionFailureMarker(body) {
     });
   }
 
-  if (parsed?.marker !== "fizzy-symphony:completion-failed:v1" || !parsed.route_id || !parsed.route_fingerprint) {
+  const required = [
+    "marker",
+    "kind",
+    "run_id",
+    "route_id",
+    "route_fingerprint",
+    "instance_id",
+    "workspace_key",
+    "failure_reason",
+    "card_digest"
+  ];
+  const missing = required.filter((field) => !parsed?.[field]);
+  if (
+    parsed?.marker !== "fizzy-symphony:completion-failed:v1" ||
+    parsed?.kind !== "completion_failed" ||
+    missing.length > 0
+  ) {
     throw new FizzySymphonyError(
       "MALFORMED_COMPLETION_FAILURE_MARKER",
       "Completion failure marker is missing required fields.",
-      { marker: parsed?.marker }
+      { marker: parsed?.marker, missing }
     );
   }
 
@@ -343,6 +422,22 @@ async function validateRunner(config, runner) {
     throw new FizzySymphonyError("INVALID_RUNNER", "runner.cli_app_server.command is required.", {
       path: "runner.cli_app_server.command"
     });
+  }
+
+  if (config.runner.preferred === "sdk") {
+    if (!config.runner.sdk?.package || !config.runner.sdk?.contract) {
+      throw new FizzySymphonyError("INVALID_RUNNER", "SDK runner requires an exact package and contract.", {
+        package: config.runner.sdk?.package ?? "",
+        contract: config.runner.sdk?.contract ?? ""
+      });
+    }
+  }
+
+  if (runner?.validate) {
+    const validation = await runner.validate(config.runner);
+    if (validation?.ok === false) {
+      throw new FizzySymphonyError("INVALID_RUNNER", "Runner contract validation failed.", validation);
+    }
   }
 
   if (runner?.health) {
@@ -492,6 +587,28 @@ function rejectUnknownManagedTags(tags, board, card, options) {
   }
 }
 
+function managedTagFamilies() {
+  return {
+    "agent-instructions": "scope",
+    "backend-codex": "backend",
+    codex: "backend",
+    "close-on-complete": "completion",
+    "comment-once": "completion",
+    "no-repeat": "completion"
+  };
+}
+
+function isManagedRouteTag(tag) {
+  if (Object.hasOwn(managedTagFamilies(), tag)) return true;
+  if (tag.startsWith("move-to-")) return true;
+  if (tag.startsWith("model-")) return true;
+  if (tag.startsWith("workspace-")) return true;
+  if (tag.startsWith("persona-")) return true;
+  if (/^priority-[1-5]$/u.test(tag)) return true;
+  if (tag.startsWith("backend-")) return true;
+  return tag === "agent-board" || tag === "agent-rerun";
+}
+
 function routeOptionsFromConfig(config) {
   const firstBoard = enabledBoardEntries(config)[0];
   return {
@@ -545,6 +662,10 @@ function completionSlug(name) {
 
 function digest(value) {
   return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+}
+
+function shortRouteId(routeId) {
+  return createHash("sha256").update(String(routeId)).digest("hex").slice(0, 12);
 }
 
 function canonicalJson(value) {
