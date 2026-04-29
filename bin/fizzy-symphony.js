@@ -79,6 +79,7 @@ async function setupCommand(args, io) {
     runner,
     prompts: io.prompts,
     env,
+    apiUrl: dependencyConfig.fizzy.api_url,
     account: optionValue(args, "--account") ?? undefined,
     selectedBoardIds: boardValues(args),
     setupMode: optionValue(args, "--mode") ?? undefined,

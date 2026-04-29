@@ -49,7 +49,9 @@ test("public setup constructs production clients when injected clients are absen
     runner: "cli_app_server",
     warnings: []
   });
-  assert.match(await readFile(configPath, "utf8"), /id: board_1/);
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /id: board_1/);
+  assert.match(generatedConfig, /api_url: https:\/\/app\.fizzy\.test/);
 });
 
 test("public validate constructs real Fizzy and runner clients in normal mode", async () => {
@@ -308,7 +310,8 @@ function fakeSetupFizzy() {
     async listTags() {
       return managedTags();
     },
-    async getBoard() {
+    async getBoard(_boardId, options = {}) {
+      assert.equal(options.account, "acct_1");
       return board;
     },
     async getEntropy() {

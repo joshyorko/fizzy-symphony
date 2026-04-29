@@ -25,6 +25,7 @@ export async function runSetup(options = {}) {
     fizzy,
     runner,
     env = process.env,
+    apiUrl,
     workspaceRepo = ".",
     webhook = {},
     prompts
@@ -67,7 +68,7 @@ export async function runSetup(options = {}) {
     selectedBoardIds = await selectBoardIds(boards, options, prompts);
     for (const boardId of selectedBoardIds) {
       selectedBoards.push(await callFizzySetupStep(
-        () => fizzy.getBoard(boardId),
+        () => fizzy.getBoard(boardId, { account }),
         "FIZZY_BOARD_UNAVAILABLE",
         "Unable to read selected Fizzy board for setup.",
         { account, board_id: boardId }
@@ -121,6 +122,7 @@ export async function runSetup(options = {}) {
     runnerFallback: "cli_app_server",
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
+    apiUrl,
     botUserId: options.botUserId ?? "",
     workspaceRepo,
     webhook,
@@ -249,7 +251,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     if (!boardId) {
       throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Starter board creation did not return a board ID.");
     }
-    return await fizzy.getBoard(boardId);
+    return await fizzy.getBoard(boardId, { account });
   }
 
   if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard) {
@@ -272,7 +274,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     await fizzy.markGolden({ account, board_id: board.id, card_id: golden.id });
   }
 
-  return await fizzy.getBoard(board.id);
+  return await fizzy.getBoard(board.id, { account });
 }
 
 function validateBotUser(botUserId, users) {
