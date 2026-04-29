@@ -178,6 +178,98 @@ test("default daemon routing hydrates live comments and prevents comment_once lo
   }
 });
 
+test("default daemon workflow loader keeps last known good workflow after reload failure", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-workflow-cache-");
+  const configPath = await writeConfig(root);
+  const calls = [];
+  let cards = [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "First" }];
+
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    schedulerOptions: { immediate: false },
+    dependencies: {
+      fizzyFactory: () => ({
+        ...fakeFizzy(),
+        async discoverCandidates() {
+          calls.push("discover");
+          return cards;
+        },
+        async postResultComment() {
+          calls.push("postResult");
+          return { id: `comment_${calls.filter((call) => call === "postResult").length}` };
+        },
+        async recordCompletionMarker() {
+          calls.push("completionMarker");
+          return { id: `marker_${calls.filter((call) => call === "completionMarker").length}` };
+        }
+      }),
+      runnerFactory: () => ({
+        ...fakeRunner({ calls }),
+        async startSession(workspacePath, { workflow }) {
+          calls.push(`startSession:${workflow.body}`);
+          return { session_id: `session_${calls.filter((call) => call.startsWith("startSession")).length}`, workspace: workspacePath };
+        }
+      }),
+      claimsFactory: () => ({
+        async acquire({ card }) {
+          calls.push(`claim:${card.id}`);
+          return {
+            acquired: true,
+            claim: {
+              id: `claim_${card.id}`,
+              claim_id: `claim_${card.id}`,
+              run_id: `run_${card.id}`,
+              attempt_id: `attempt_${card.id}`
+            }
+          };
+        },
+        async release({ status }) {
+          calls.push(`releaseClaim:${status}`);
+          return { released: true };
+        }
+      }),
+      workspaceManagerFactory: () => ({
+        async resolveIdentity({ card }) {
+          return { workspace_key: `workspace_${card.id}`, workspace_identity_digest: `sha256:${card.id}` };
+        },
+        async prepare({ card }) {
+          calls.push(`prepareWorkspace:${card.id}`);
+          return {
+            key: `workspace_${card.id}`,
+            sourceRepo: root,
+            path: join(root, ".fizzy-symphony", "workspaces", card.id),
+            identity_digest: `sha256:${card.id}`
+          };
+        }
+      }),
+      recoveryFactory: () => async (options) => {
+        calls.push("startupRecovery");
+        options.status?.recordStartupRecovery?.({ warnings: [], errors: [] });
+        return { warnings: [], errors: [] };
+      }
+    }
+  });
+
+  try {
+    await daemon.scheduler.tickNow("first");
+    await writeFile(join(root, "WORKFLOW.md"), "---\nname\n---\nBroken\n", "utf8");
+    cards = [{ id: "card_2", number: 2, board_id: "board_1", column_id: "col_ready", title: "Second" }];
+    await daemon.scheduler.tickNow("second");
+
+    const snapshot = daemon.status.status();
+    assert.deepEqual(snapshot.runs.completed.map((run) => run.card_id), ["card_1", "card_2"]);
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith("startSession:")),
+      ["startSession:# Workflow", "startSession:# Workflow"]
+    );
+    assert.equal(snapshot.workflow_cache.recent_reload_errors[0].code, "WORKFLOW_FRONT_MATTER_INVALID");
+    assert.equal(snapshot.workflow_cache.recent_reload_errors[0].cache_hit, true);
+  } finally {
+    await daemon.stop("test");
+  }
+});
+
 test("daemon webhooks enqueue through the scheduler and trigger reconciliation", async () => {
   const root = await tempProject("fizzy-symphony-daemon-webhook-");
   const configPath = await writeConfig(root);
