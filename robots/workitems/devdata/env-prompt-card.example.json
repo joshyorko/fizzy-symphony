@@ -1,9 +1,0 @@
-{
-  "FIZZY_SYMPHONY_WORKSPACE": "/absolute/path/to/project-or-git-url",
-  "FIZZY_SYMPHONY_GIT_REF": "",
-  "FIZZY_SYMPHONY_PROMPT": "",
-
-  "FIZZY_SYMPHONY_BOARD_ID": "",
-  "FIZZY_SYMPHONY_CARD_NUMBER": "",
-  "FIZZY_SYMPHONY_HANDOFF_COLUMN_ID": ""
-}
