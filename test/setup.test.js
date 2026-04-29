@@ -81,8 +81,8 @@ function fakeFizzy(overrides = {}) {
         { id: "tag_done", name: "move-to-done" }
       ];
     },
-    async getBoard(boardId) {
-      calls.push(["getBoard", boardId]);
+    async getBoard(boardId, options = {}) {
+      calls.push(["getBoard", boardId, options.account]);
       const board = boards.find((candidate) => candidate.id === boardId);
       if (!board) throw new Error(`missing board ${boardId}`);
       return board;
@@ -165,8 +165,8 @@ function fakeStarterFizzy() {
       if (card) card.golden = true;
       return { ok: true };
     },
-    async getBoard(boardId) {
-      calls.push(["getBoard", boardId]);
+    async getBoard(boardId, options = {}) {
+      calls.push(["getBoard", boardId, options.account]);
       return board;
     },
     async getEntropy(account, boardIds) {
@@ -215,6 +215,7 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
     fizzy.calls.map((call) => call[0]),
     ["getIdentity", "listBoards", "listUsers", "listTags", "getBoard", "getEntropy"]
   );
+  assert.deepEqual(fizzy.calls.find((call) => call[0] === "getBoard"), ["getBoard", "board_1", "acct_1"]);
 
   const written = await readFile(configPath, "utf8");
   assert.match(written, /# fizzy-symphony config/);

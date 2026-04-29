@@ -31,6 +31,7 @@ cd /var/home/kdlocpanda/second_brain/Resources/virtualization/docker/37signals/a
 npm test
 node bin/fizzy-symphony.js setup --template-only --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js validate --parse-only --config .fizzy-symphony/config.yml
+FIZZY_API_TOKEN=... node bin/fizzy-symphony.js validate --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js daemon
 ```
 
