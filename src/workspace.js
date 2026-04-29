@@ -530,38 +530,59 @@ async function defaultExec(file, args = [], options = {}) {
 }
 
 async function runGit(args, { cwd, exec = defaultExec, allowFailure = false } = {}) {
+  let raw;
   try {
-    const result = normalizeCommandResult(await exec("git", args, { cwd }));
-    return { ok: true, ...result };
+    raw = await exec("git", args, { cwd });
   } catch (error) {
     const result = normalizeCommandError(error);
     if (allowFailure) return { ok: false, ...result };
-    throw new FizzySymphonyError("GIT_COMMAND_FAILED", "Git command failed.", {
-      cwd,
-      args,
-      exit_code: result.exit_code,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      cause: error.message
-    });
+    throw gitCommandFailed({ cwd, args, result, cause: error.message });
   }
+
+  const result = normalizeCommandResult(raw);
+  if (result.exit_code !== 0) {
+    if (allowFailure) return { ok: false, ...result };
+    throw gitCommandFailed({ cwd, args, result });
+  }
+
+  return { ok: true, ...result };
 }
 
 async function runCommand(argv, { cwd, exec = defaultExec } = {}) {
   const [file, ...args] = argv;
+  let raw;
   try {
-    return normalizeCommandResult(await exec(file, args, { cwd }));
+    raw = await exec(file, args, { cwd });
   } catch (error) {
     const result = normalizeCommandError(error);
-    throw new FizzySymphonyError("WORKSPACE_HOOK_FAILED", "Workspace lifecycle hook failed.", {
-      cwd,
-      argv,
-      exit_code: result.exit_code,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      cause: error.message
-    });
+    throw hookCommandFailed({ cwd, argv, result, cause: error.message });
   }
+
+  const result = normalizeCommandResult(raw);
+  if (result.exit_code !== 0) throw hookCommandFailed({ cwd, argv, result });
+  return result;
+}
+
+function gitCommandFailed({ cwd, args, result, cause }) {
+  return new FizzySymphonyError("GIT_COMMAND_FAILED", "Git command failed.", {
+    cwd,
+    args,
+    exit_code: result.exit_code,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    cause
+  });
+}
+
+function hookCommandFailed({ cwd, argv, result, cause }) {
+  return new FizzySymphonyError("WORKSPACE_HOOK_FAILED", "Workspace lifecycle hook failed.", {
+    cwd,
+    argv,
+    exit_code: result.exit_code,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    cause
+  });
 }
 
 function normalizeCommandResult(result = {}) {

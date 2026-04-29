@@ -313,6 +313,36 @@ test("preflightWorkspaceSource rejects dirty source repositories when policy req
   );
 });
 
+test("preflightWorkspaceSource treats nonzero injected git results as failed commands", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-injected-git-failure-"));
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const calls = [];
+  const exec = async (file, args, options) => {
+    calls.push({ file, args, cwd: options.cwd });
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") {
+      return { stdout: "true\n", stderr: "", exit_code: 0 };
+    }
+    if (args[0] === "cat-file") {
+      return { stdout: "", stderr: "missing ref\n", exit_code: 1 };
+    }
+    if (args[0] === "status") {
+      return { stdout: "", stderr: "", exit_code: 0 };
+    }
+    throw new Error(`unexpected command: ${file} ${args.join(" ")}`);
+  };
+
+  await assert.rejects(
+    () => preflightWorkspaceSource({ config, identity, exec }),
+    (error) => error.code === "WORKSPACE_SOURCE_REF_INVALID" &&
+      error.details.source_ref === "main"
+  );
+  assert.deepEqual(calls.map((call) => call.args.slice(0, 2)), [
+    ["rev-parse", "--is-inside-work-tree"],
+    ["cat-file", "-e"]
+  ]);
+});
+
 test("preflightWorkspaceSource allows dirty source repositories when snapshot policy supplies a commit", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-snapshot-"));
   const source = await initSourceRepo(dir);
@@ -345,6 +375,41 @@ test("preflightWorkspaceSource allows dirty source repositories when snapshot po
 
   assert.equal(writtenMetadata.source_snapshot_id, snapshot);
   assert.equal(writtenMetadata.source_ref_kind, "source_snapshot_id");
+});
+
+test("prepareWorkspace treats nonzero injected hook results as hook failures", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-injected-hook-failure-"));
+  await initSourceRepo(dir, {
+    workflow: [
+      "---",
+      "hooks:",
+      "  before_run:",
+      "    command: failing-hook",
+      "---",
+      "# Policy",
+      ""
+    ].join("\n")
+  });
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const exec = async (file, args, options) => {
+    if (file === "failing-hook") {
+      return { stdout: "", stderr: "hook failed\n", exit_code: 7 };
+    }
+    return execFileAsync(file, args, options);
+  };
+
+  await assert.rejects(
+    () => prepareWorkspace({
+      config,
+      identity,
+      metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" },
+      exec
+    }),
+    (error) => error.code === "WORKSPACE_HOOK_FAILED" &&
+      error.details.exit_code === 7 &&
+      error.details.stderr === "hook failed\n"
+  );
 });
 
 test("cleanupWorkspace removes clean proven worktrees with non-force git worktree removal", async () => {
