@@ -146,6 +146,23 @@ test("resolveWorkspaceIdentity rejects unknown workspace names without falling b
   );
 });
 
+test("resolveWorkspaceIdentity rejects unimplemented isolation strategies instead of empty directories", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-unimplemented-isolation-"));
+  const config = baseConfig(dir);
+  config.workspaces.registry.app.isolation = "copy";
+
+  assert.throws(
+    () => resolveWorkspaceIdentity({
+      config,
+      route: route(),
+      card: card()
+    }),
+    (error) => error.code === "UNSUPPORTED_WORKSPACE_ISOLATION" &&
+      error.details.isolation_strategy === "copy" &&
+      error.details.supported.includes("git_worktree")
+  );
+});
+
 test("workspacePath rejects key escapes and roots outside configured allowed_roots", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-path-safety-"));
   const config = baseConfig(dir);
