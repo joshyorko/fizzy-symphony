@@ -31,9 +31,10 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Fizzy API usage
 - Status: newly covered
 - Tests: `test/etag-cache.test.js`, `test/fizzy-client.test.js`, `test/setup.test.js`, `test/polling.test.js`
-- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
-- Remaining: live API smoke testing against a disposable board still needs credentials and an explicit operator-approved environment.
-- Follow-up: `fizzy-symphony: live Fizzy API smoke test with disposable board`.
+- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, live account slug normalization, live tag `title` normalization, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
+- Live proof: gated disposable-board smoke passed on 2026-04-29 against board `03g1c3lq3lrvkp72366u6c7mk`, proving identity, board/card/golden creation and reads, startup validation, one daemon poll, unsafe-route refusal, and no destructive cleanup.
+- Remaining: live webhook delivery against a disposable public callback is not smoked.
+- Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.
 
 ### Workspace isolation
 - Status: passing
@@ -70,5 +71,6 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 - Status: newly covered
 - Tests: `test/server.test.js`, `test/daemon.test.js`, `test/reconciler.test.js`, `test/polling.test.js`
 - Coverage: webhook signature verification, event ID dedupe, stale timestamp rejection, self-authored daemon comment ignore unless rerun is explicit, lifecycle action mapping to candidate/cancel/route-refresh hints, webhook hints routed through fresh router validation before claims, polling candidate discovery with API filters, missed-webhook reconciliation through polling, and active-card route mismatch preemption.
-- Remaining: live disposable-board webhook smoke still requires credentials and an explicit operator-approved environment.
-- Follow-up: `fizzy-symphony: live Fizzy API smoke test with disposable board`.
+- Live proof: polling reconciliation was smoked against the disposable board and recovered route/candidate state without webhooks.
+- Remaining: live disposable-board webhook delivery still requires a reachable callback URL and explicit operator approval.
+- Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.

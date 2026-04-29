@@ -21,7 +21,7 @@ export function shortDigest(value, length = 12) {
 }
 
 export function normalizeTag(tag) {
-  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.slug ?? tag?.label ?? tag?.value ?? "";
+  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.title ?? tag?.slug ?? tag?.label ?? tag?.value ?? "";
   return String(raw).trim().replace(/^#+/u, "").toLowerCase();
 }
 

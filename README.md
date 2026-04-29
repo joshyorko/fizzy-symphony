@@ -5,19 +5,22 @@ Fizzy-backed Symphony daemon scaffold.
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 224/224 passing via `npm test` on Node v25.9.0. `package.json`
+current local baseline is 226/226 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
 startup validation, route decisions, claim markers, workspace metadata, workflow loading/rendering,
 status snapshots, live Fizzy HTTP client wiring, live-comment and rich-text marker normalization,
-timed claim renewal failure cancellation, workspace preparation failure release, proof-verified cleanup guards,
-canonical workspace path containment, webhook freshness/self-event filtering, runner session stop,
-and a real Codex CLI app-server runner behind the SDK-shaped runner interface.
+live account-slug and tag-title normalization, timed claim renewal failure cancellation, workspace
+preparation failure release, proof-verified cleanup guards, canonical workspace path containment,
+webhook freshness/self-event filtering, runner session stop, and a real Codex CLI app-server runner
+behind the SDK-shaped runner interface.
 
-Disposable-board live smoke is still gated on explicit credentials/operator approval. Same-thread
-continuation above `agent.max_turns: 1` is intentionally rejected by config validation until it is
-implemented. The Codex CLI app-server runner keeps process/protocol seams injectable for tests.
+Disposable-board live smoke passed on 2026-04-29 against the self-hosted Fizzy instance using board
+`03g1c3lq3lrvkp72366u6c7mk`. It proved identity, board/card/golden-ticket creation, startup
+validation, one real daemon poll, unsafe-route refusal, and no destructive cleanup. Live webhook
+delivery is still not smoked. Same-thread continuation above `agent.max_turns: 1` is intentionally
+rejected by config validation until it is implemented.
 
 ## Commands
 

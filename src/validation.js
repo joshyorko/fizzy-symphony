@@ -18,7 +18,7 @@ const defaultAllowedCardOverrides = {
 };
 
 export function normalizeTag(tag) {
-  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.slug ?? tag?.label ?? "";
+  const raw = typeof tag === "string" ? tag : tag?.name ?? tag?.title ?? tag?.slug ?? tag?.label ?? "";
   return raw.trim().replace(/^#+/u, "").toLowerCase();
 }
 
