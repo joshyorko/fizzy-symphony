@@ -179,7 +179,10 @@ function minimalConfig() {
 test("generateAnnotatedConfig returns the full commented template with Task 1 fields", () => {
   const generated = generateAnnotatedConfig({
     account: "team",
-    board: { id: "board_ready", label: "Ready Board" },
+    boards: [
+      { id: "board_ready", label: "Ready Board" },
+      { id: "board_docs", label: "Docs Board" }
+    ],
     runnerPreferred: "cli_app_server"
   });
 
@@ -193,6 +196,25 @@ test("generateAnnotatedConfig returns the full commented template with Task 1 fi
   assert.match(generated, /preferred: cli_app_server/);
   assert.match(generated, /id: board_ready/);
   assert.match(generated, /label: Ready Board/);
+  assert.match(generated, /id: board_docs/);
+  assert.match(generated, /label: Docs Board/);
+  assert.match(generated, /secret: ""/);
+});
+
+test("generateAnnotatedConfig never writes raw webhook secrets and keeps webhook secret optional", () => {
+  const generated = generateAnnotatedConfig({
+    account: "team",
+    board: { id: "board_ready", label: "Ready Board" },
+    webhook: {
+      manage: true,
+      callback_url: "https://example.test/fizzy",
+      secret: "do-not-write-me"
+    }
+  });
+
+  assert.doesNotMatch(generated, /do-not-write-me/);
+  assert.match(generated, /secret: ""/);
+  assert.match(generated, /callback_url: https:\/\/example.test\/fizzy/);
 });
 
 test("writeAnnotatedConfig creates parent directories and writes the generated template", async () => {
@@ -322,14 +344,14 @@ test("loadConfig reads JSON and generated YAML config files for the CLI", async 
 
   const loaded = await loadConfig(jsonPath, { env: { FIZZY_API_TOKEN: "x" } });
   const loadedYaml = await loadConfig(yamlPath, {
-    env: { FIZZY_API_TOKEN: "x", FIZZY_WEBHOOK_SECRET: "webhook-secret" }
+    env: { FIZZY_API_TOKEN: "x" }
   });
 
   assert.equal(loaded.fizzy.token, "x");
   assert.equal(loadedYaml.fizzy.account, "acct");
   assert.equal(loadedYaml.boards.entries[0].id, "board_1");
   assert.equal(loadedYaml.runner.preferred, "cli_app_server");
-  assert.equal(loadedYaml.webhook.secret, "webhook-secret");
+  assert.equal(loadedYaml.webhook.secret, "");
 });
 
 test("CLI exposes setup template generation, parse-only validation, and daemon stub commands", async () => {
@@ -369,15 +391,100 @@ test("CLI exposes setup template generation, parse-only validation, and daemon s
   });
 });
 
+test("CLI setup runs the live injected-client setup path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-live-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, "config.yml");
+
+  const setup = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--account",
+    "acct_1",
+    "--board",
+    "board_1",
+    "--workspace-repo",
+    dir
+  ], {
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    fizzy: fakeLiveSetupFizzy(),
+    runner: fakeLiveSetupRunner()
+  });
+
+  assert.equal(setup.exitCode, 0);
+  const payload = JSON.parse(setup.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account, "acct_1");
+  assert.deepEqual(payload.boards, ["board_1"]);
+  assert.match(await readFile(configPath, "utf8"), /id: board_1/);
+});
+
 async function runCli(args, options = {}) {
   let stdout = "";
   let stderr = "";
   const exitCode = await cliMain(args, {
     env: options.env ?? process.env,
+    fizzy: options.fizzy,
+    runner: options.runner,
+    prompts: options.prompts,
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } }
   });
   return { exitCode, stdout, stderr };
+}
+
+function fakeLiveSetupFizzy() {
+  const board = {
+    id: "board_1",
+    name: "Agents",
+    columns: [
+      { id: "col_ready", name: "Ready for Agents" },
+      { id: "col_done", name: "Done" }
+    ],
+    cards: [
+      {
+        id: "golden_1",
+        title: "Repo Agent",
+        golden: true,
+        column_id: "col_ready",
+        tags: ["agent-instructions", "codex", "move-to-done"]
+      }
+    ]
+  };
+
+  return {
+    async getIdentity() {
+      return { accounts: [{ id: "acct_1", name: "Team Account" }], user: { id: "user_1" } };
+    },
+    async listBoards() {
+      return [board];
+    },
+    async listUsers() {
+      return [{ id: "user_1", name: "Human" }];
+    },
+    async listTags() {
+      return [
+        { id: "tag_agent", name: "agent-instructions" },
+        { id: "tag_codex", name: "codex" },
+        { id: "tag_done", name: "move-to-done" }
+      ];
+    },
+    async getBoard() {
+      return board;
+    },
+    async getEntropy() {
+      return { warnings: [] };
+    }
+  };
+}
+
+function fakeLiveSetupRunner() {
+  return {
+    async detect() {
+      return { kind: "cli_app_server", available: true, command: "codex" };
+    }
+  };
 }
 
 export { minimalConfig };

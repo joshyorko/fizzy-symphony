@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError, issue } from "./errors.js";
 
@@ -262,8 +262,9 @@ export async function validateStartup({ config, fizzy, runner }) {
     }
   }
 
-  validateManagedWebhook(config, errors);
+  validateManagedWebhook(config, errors, warnings);
 
+  await validateWorkspaceRoots(config, errors);
   await validateWorkflowFiles(config, errors);
 
   try {
@@ -390,7 +391,7 @@ function validateLocalConfig(config, errors) {
   }
 }
 
-function validateManagedWebhook(config, errors) {
+function validateManagedWebhook(config, errors, warnings) {
   if (!config.webhook?.manage) return;
   const callback = config.webhook.callback_url ?? "";
   const secret = config.webhook.secret ?? "";
@@ -406,11 +407,57 @@ function validateManagedWebhook(config, errors) {
     validUrl = false;
   }
 
-  if (!validUrl || !secret) {
-    errors.push(issue("MANAGED_WEBHOOK_MISCONFIGURED", "Managed webhooks require a public HTTPS callback_url and secret.", {
+  if (!validUrl) {
+    errors.push(issue("MANAGED_WEBHOOK_MISCONFIGURED", "Managed webhooks require a public HTTPS callback_url.", {
       callback_url: callback,
       has_secret: Boolean(secret)
     }));
+  }
+
+  if (validUrl && !secret) {
+    warnings.push(issue(
+      "WEBHOOK_SECRET_NOT_CONFIGURED",
+      "Managed webhook setup has no signing secret; webhook signature verification will be disabled.",
+      { callback_url: callback }
+    ));
+  }
+}
+
+async function validateWorkspaceRoots(config, errors) {
+  const allowedRoots = (config.safety?.allowed_roots ?? []).filter(Boolean).map((root) => resolve(root));
+  const registry = config.workspaces?.registry ?? {};
+
+  if (allowedRoots.length > 0) {
+    const paths = [
+      ["workspaces.root", config.workspaces?.root],
+      ["workspaces.metadata_root", config.workspaces?.metadata_root],
+      ...Object.entries(registry).flatMap(([name, workspace]) => [
+        [`workspaces.registry.${name}.repo`, workspace.repo],
+        [`workspaces.registry.${name}.worktree_root`, workspace.worktree_root]
+      ])
+    ];
+
+    for (const [path, value] of paths) {
+      if (value && !isInsideAnyRoot(value, allowedRoots)) {
+        errors.push(issue("UNSAFE_WORKSPACE_ROOT", "Configured workspace path is outside safety.allowed_roots.", {
+          path,
+          value,
+          allowed_roots: allowedRoots
+        }));
+      }
+    }
+  }
+
+  for (const [name, workspace] of Object.entries(registry)) {
+    if (!workspace.repo) continue;
+    try {
+      await access(workspace.repo);
+    } catch {
+      errors.push(issue("SOURCE_REPO_UNAVAILABLE", "Configured source repository is not accessible.", {
+        workspace: name,
+        repo: workspace.repo
+      }));
+    }
   }
 }
 
@@ -704,6 +751,14 @@ function enabledBoardEntries(config) {
 function validPort(port) {
   if (port === "auto") return true;
   return Number.isInteger(port) && port > 0 && port <= 65535;
+}
+
+function isInsideAnyRoot(path, allowedRoots) {
+  const resolvedPath = resolve(path);
+  return allowedRoots.some((root) => {
+    const relativePath = relative(root, resolvedPath);
+    return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+  });
 }
 
 function normalizedTags(card) {

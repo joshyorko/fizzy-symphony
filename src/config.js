@@ -203,32 +203,44 @@ export function generateAnnotatedConfig(options = {}) {
   const {
     account = "my-account",
     board = { id: "board_123", label: "Agent Playground" },
+    boards,
+    agentMaxConcurrent = 2,
+    boardMaxConcurrent = agentMaxConcurrent,
     runnerPreferred = "cli_app_server",
     runnerFallback = "cli_app_server",
     sdkPackage = "",
     sdkContract = "",
     botUserId = "",
-    webhook = {}
+    webhook = {},
+    managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {}
   } = options;
 
+  const boardEntries = boards?.length ? boards : [board];
   let template = readFileSync(TEMPLATE_PATH, "utf8");
   template = template.replace(/account: my-account/u, `account: ${yamlScalar(account)}`);
-  template = template.replace(/id: board_123/u, `id: ${yamlScalar(board.id)}`);
-  template = template.replace(/label: Agent Playground/u, `label: ${yamlScalar(board.label)}`);
+  template = template.replace(
+    /  entries:\n[\s\S]*?\nserver:/u,
+    `  entries:\n${renderBoardEntries(boardEntries, boardMaxConcurrent)}\nserver:`
+  );
+  template = template.replace(/\n  max_concurrent: 2\n/u, `\n  max_concurrent: ${agentMaxConcurrent}\n`);
   template = template.replace(/bot_user_id: ""/u, `bot_user_id: ${yamlScalar(botUserId)}`);
   template = template.replace(/preferred: sdk/u, `preferred: ${yamlScalar(runnerPreferred)}`);
   template = template.replace(/fallback: cli_app_server/u, `fallback: ${yamlScalar(runnerFallback)}`);
   template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
   template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
+  template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret_env ? `$${webhook.secret_env}` : "")}`);
 
   if (Object.hasOwn(webhook, "manage")) {
     template = template.replace(/manage: false/u, `manage: ${Boolean(webhook.manage)}`);
   }
+  if (Object.keys(managedWebhookIdsByBoard).length > 0) {
+    template = template.replace(
+      /managed_webhook_ids_by_board: \{\}/u,
+      `managed_webhook_ids_by_board:\n${renderStringMap(managedWebhookIdsByBoard, 4)}`
+    );
+  }
   if (webhook.callback_url) {
     template = template.replace(/callback_url: ""/u, `callback_url: ${yamlScalar(webhook.callback_url)}`);
-  }
-  if (webhook.secret) {
-    template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret)}`);
   }
 
   return template;
@@ -408,6 +420,9 @@ function resolveEnvironmentReferences(value, env, path = "") {
     if (match) {
       const variable = match[1];
       if (!Object.hasOwn(env, variable)) {
+        if (isOptionalEnvironmentReference(path)) {
+          return "";
+        }
         throw new FizzySymphonyError("CONFIG_MISSING_ENV", `Missing environment variable ${variable}`, {
           variable,
           path
@@ -418,6 +433,41 @@ function resolveEnvironmentReferences(value, env, path = "") {
   }
 
   return value;
+}
+
+function renderBoardEntries(boards, maxConcurrent) {
+  return boards.map((board) => [
+    `    - id: ${yamlScalar(board.id)}`,
+    `      label: ${yamlScalar(board.label ?? board.name ?? board.id)}`,
+    "      enabled: true",
+    "      routing_mode: column_scoped",
+    "      defaults:",
+    "        backend: codex",
+    "        model: \"\"",
+    "        workspace: app",
+    "        persona: repo-agent",
+    "        unknown_managed_tag_policy: fail",
+    "        allowed_card_overrides:",
+    "          backend: false",
+    "          model: false",
+    "          workspace: false",
+    "          persona: false",
+    "          priority: true",
+    "          completion: false",
+    "        concurrency:",
+    `          max_concurrent: ${maxConcurrent}`
+  ].join("\n")).join("\n");
+}
+
+function renderStringMap(map, indent) {
+  const padding = " ".repeat(indent);
+  return Object.entries(map)
+    .map(([key, value]) => `${padding}${yamlScalar(key)}: ${yamlScalar(value)}`)
+    .join("\n");
+}
+
+function isOptionalEnvironmentReference(path) {
+  return path === "webhook.secret";
 }
 
 function resolveRelativePaths(config, configDir) {
