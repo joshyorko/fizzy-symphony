@@ -1,4 +1,4 @@
-import { buildCandidateQuery, discoverPollingCandidates } from "./polling.js";
+import { buildCandidateQuery, discoverPollingCandidates, refreshGoldenTicketRegistry } from "./polling.js";
 import {
   applyCompletionPolicy,
   createCompletionFailureMarker,
@@ -55,12 +55,22 @@ export async function runReconciliationTick(options = {}) {
     result.cancelled = reconciled.cancelled;
     result.preempted = reconciled.preempted;
 
-    const hints = webhookEvents.map((event) => ({
-      event_id: event.id ?? event.event_id,
-      card_id: event.card_id,
-      board_id: event.board_id
-    }));
-    const knownRoutes = routes ?? status?.status?.().routes ?? [];
+    let knownRoutes = routes ?? status?.status?.().routes ?? [];
+    if (webhookEvents.some((event) => event?.intent === "refresh_routes")) {
+      const refreshed = await refreshGoldenTicketRegistry({ config, fizzy });
+      if (Array.isArray(refreshed?.routes)) {
+        knownRoutes = refreshed.routes;
+        status?.setRoutes?.(knownRoutes);
+      }
+    }
+
+    const hints = webhookEvents
+      .filter((event) => !event?.intent || event.intent === "spawn")
+      .map((event) => ({
+        event_id: event.id ?? event.event_id,
+        card_id: event.card_id,
+        board_id: event.board_id
+      }));
     const query = buildCandidateQuery({ config, routes: knownRoutes });
     const candidatesResult = typeof fizzy.discoverCandidates === "function"
       ? await fizzy.discoverCandidates({ config, hints, routes: knownRoutes, query })

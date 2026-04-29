@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
-import { createLocalHttpHandler, createWebhookHintQueue } from "../src/server.js";
+import {
+  createLocalHttpHandler,
+  createRecentWebhookEventCache,
+  createWebhookHintQueue
+} from "../src/server.js";
 import { bindServerListener } from "../src/listener.js";
 
 test("local HTTP handler serves health, readiness, status, and card status JSON", async () => {
@@ -54,7 +58,7 @@ test("local HTTP handler serves health, readiness, status, and card status JSON"
   }
 });
 
-test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hints only", async () => {
+test("webhook verifies signatures, timestamps, dedupes event IDs, and enqueues candidate hints only", async () => {
   const config = httpConfig({
     webhook: { enabled: true, path: "/webhook", secret: "webhook-secret" }
   });
@@ -71,23 +75,32 @@ test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hin
   try {
     const body = JSON.stringify({
       event_id: "event_1",
-      action: "card.updated",
+      action: "card_triaged",
       card: { id: "card_1", board_id: "board_1" }
     });
     const accepted = await fetchJson(`${server.endpoint.base_url}/webhook`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-webhook-signature": signature(body, config.webhook.secret)
+        "x-webhook-signature": signature(body, config.webhook.secret),
+        "x-webhook-timestamp": "2026-04-29T12:00:00.000Z"
       },
       body
     });
 
     assert.equal(accepted.response.status, 202);
     assert.equal(accepted.body.status, "accepted");
-    assert.deepEqual(accepted.body.hint, { event_id: "event_1", card_id: "card_1", board_id: "board_1" });
+    assert.deepEqual(accepted.body.hint, {
+      intent: "spawn",
+      reason: "card_triaged",
+      event_id: "event_1",
+      card_id: "card_1",
+      board_id: "board_1"
+    });
     assert.deepEqual(queue.snapshot(), [{
       source: "webhook",
+      intent: "spawn",
+      reason: "card_triaged",
       event_id: "event_1",
       card_id: "card_1",
       board_id: "board_1",
@@ -98,7 +111,8 @@ test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hin
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-webhook-signature": signature(body, config.webhook.secret)
+        "x-webhook-signature": signature(body, config.webhook.secret),
+        "x-webhook-timestamp": "2026-04-29T12:00:00.000Z"
       },
       body
     });
@@ -110,7 +124,7 @@ test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hin
   }
 });
 
-test("webhook rejects missing signatures and malformed payloads before enqueueing", async () => {
+test("webhook rejects missing signatures, stale timestamps, and malformed payloads before enqueueing", async () => {
   const hints = [];
   const config = httpConfig({
     webhook: { enabled: true, path: "/webhook", secret: "webhook-secret" }
@@ -119,7 +133,8 @@ test("webhook rejects missing signatures and malformed payloads before enqueuein
     requestListener: createLocalHttpHandler({
       config,
       status: readyStatus(),
-      enqueueWebhookHint: (hint) => hints.push(hint)
+      enqueueWebhookHint: (hint) => hints.push(hint),
+      now: () => new Date("2026-04-29T12:00:00.000Z")
     })
   });
 
@@ -127,16 +142,30 @@ test("webhook rejects missing signatures and malformed payloads before enqueuein
     const missingSignature = await fetchJson(`${server.endpoint.base_url}/webhook`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event_id: "event_1", card_id: "card_1" })
+      body: JSON.stringify({ event_id: "event_1", action: "card_triaged", card_id: "card_1" })
     });
     assert.equal(missingSignature.response.status, 401);
     assert.equal(missingSignature.body.error.code, "WEBHOOK_SIGNATURE_REQUIRED");
+
+    const staleBody = JSON.stringify({ event_id: "event_stale", action: "card_triaged", card_id: "card_1" });
+    const staleTimestamp = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-webhook-signature": signature(staleBody, config.webhook.secret),
+        "x-webhook-timestamp": "2026-04-29T11:00:00.000Z"
+      },
+      body: staleBody
+    });
+    assert.equal(staleTimestamp.response.status, 400);
+    assert.equal(staleTimestamp.body.error.code, "STALE_WEBHOOK_EVENT");
 
     const invalidJson = await fetchJson(`${server.endpoint.base_url}/webhook`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-webhook-signature": signature("{not json", config.webhook.secret)
+        "x-webhook-signature": signature("{not json", config.webhook.secret),
+        "x-webhook-timestamp": "2026-04-29T12:00:00.000Z"
       },
       body: "{not json"
     });
@@ -146,6 +175,169 @@ test("webhook rejects missing signatures and malformed payloads before enqueuein
   } finally {
     await server.close();
   }
+});
+
+test("webhook ignores unsupported events without enqueueing partial spawn semantics", async () => {
+  const queue = createWebhookHintQueue();
+  const server = await bindServerListener(httpConfig().server, {
+    requestListener: createLocalHttpHandler({
+      config: httpConfig(),
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:00:00.000Z")
+    })
+  });
+
+  try {
+    const ignored = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_unsupported",
+        action: "card_archived",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+
+    assert.equal(ignored.response.status, 200);
+    assert.equal(ignored.body.status, "ignored");
+    assert.equal(ignored.body.reason, "unsupported_event");
+    assert.deepEqual(queue.snapshot(), []);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook ignores self-authored comments unless a rerun signal is present", async () => {
+  const queue = createWebhookHintQueue();
+  const config = httpConfig({
+    fizzy: { bot_user_id: "bot_1" }
+  });
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:00:00.000Z")
+    })
+  });
+
+  try {
+    const selfComment = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_self",
+        action: "comment_created",
+        actor: { id: "bot_1" },
+        card: { id: "card_1", board_id: "board_1", tags: [] }
+      })
+    });
+    assert.equal(selfComment.response.status, 200);
+    assert.equal(selfComment.body.status, "ignored");
+    assert.equal(selfComment.body.reason, "self_authored_comment");
+
+    const rerunComment = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_rerun",
+        action: "comment_created",
+        actor: { id: "bot_1" },
+        card: { id: "card_1", board_id: "board_1", tags: ["agent-rerun"] }
+      })
+    });
+    assert.equal(rerunComment.response.status, 202);
+    assert.equal(rerunComment.body.status, "accepted");
+    assert.equal(rerunComment.body.hint.intent, "spawn");
+    assert.equal(rerunComment.body.hint.reason, "comment_created:rerun");
+    assert.deepEqual(queue.snapshot(), [{
+      source: "webhook",
+      intent: "spawn",
+      reason: "comment_created:rerun",
+      event_id: "event_rerun",
+      card_id: "card_1",
+      board_id: "board_1",
+      received_at: "2026-04-29T12:00:00.000Z"
+    }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook maps lifecycle cancellation and golden-ticket events to semantic hints", async () => {
+  const queue = createWebhookHintQueue();
+  const config = httpConfig();
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:00:00.000Z")
+    })
+  });
+
+  try {
+    const closed = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_closed",
+        action: "card_closed",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+    assert.equal(closed.response.status, 202);
+    assert.equal(closed.body.hint.intent, "cancel_tick");
+    assert.equal(closed.body.hint.reason, "card_closed");
+
+    const golden = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_golden",
+        action: "card_published",
+        card: { id: "golden_1", board_id: "board_1", tags: ["agent-instructions"] }
+      })
+    });
+    assert.equal(golden.response.status, 202);
+    assert.equal(golden.body.hint.intent, "refresh_routes");
+    assert.equal(golden.body.hint.reason, "golden_ticket_changed");
+
+    assert.deepEqual(queue.snapshot().map((hint) => ({
+      intent: hint.intent,
+      reason: hint.reason,
+      event_id: hint.event_id,
+      card_id: hint.card_id
+    })), [
+      { intent: "cancel_tick", reason: "card_closed", event_id: "event_closed", card_id: "card_1" },
+      { intent: "refresh_routes", reason: "golden_ticket_changed", event_id: "event_golden", card_id: "golden_1" }
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook event ID dedupe retention is bounded by count and TTL", () => {
+  let now = new Date("2026-04-29T12:00:00.000Z");
+  const cache = createRecentWebhookEventCache({
+    maxSize: 2,
+    ttlMs: 1000,
+    now: () => now
+  });
+
+  cache.add("event_1");
+  cache.add("event_2");
+  cache.add("event_3");
+  assert.equal(cache.has("event_1"), false);
+  assert.equal(cache.has("event_2"), true);
+  assert.equal(cache.has("event_3"), true);
+  assert.equal(cache.size, 2);
+
+  now = new Date("2026-04-29T12:00:02.000Z");
+  assert.equal(cache.has("event_2"), false);
+  assert.equal(cache.has("event_3"), false);
+  assert.equal(cache.size, 0);
 });
 
 function httpConfig(overrides = {}) {
@@ -162,6 +354,10 @@ function httpConfig(overrides = {}) {
       secret: "",
       manage: false,
       ...(overrides.webhook ?? {})
+    },
+    fizzy: {
+      bot_user_id: "",
+      ...(overrides.fizzy ?? {})
     }
   };
 }
