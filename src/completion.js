@@ -626,15 +626,39 @@ function sanitizePathSegment(value) {
 }
 
 function findWorkpadComment(comments = []) {
-  const comment = (comments ?? []).find((entry) => commentBody(entry).includes(WORKPAD_SENTINEL));
-  if (!comment) return null;
-  const payload = parseJsonBlock(commentBody(comment));
-  return {
-    card_id: comment.card_id,
-    comment_id: comment.id ?? comment.comment_id,
-    replacement_of_comment_id: payload?.replacement_of_comment_id,
-    replacement_attempted_comment_id: payload?.replacement_attempted_comment_id
-  };
+  const candidates = (comments ?? [])
+    .map((comment, index) => {
+      const body = commentBody(comment);
+      if (!body.includes(WORKPAD_SENTINEL)) return null;
+      const payload = parseJsonBlock(body);
+      return {
+        card_id: comment.card_id,
+        comment_id: comment.id ?? comment.comment_id,
+        replacement_of_comment_id: payload?.replacement_of_comment_id,
+        replacement_attempted_comment_id: payload?.replacement_attempted_comment_id,
+        updated_at: payload?.updated_at ?? comment.updated_at ?? comment.updatedAt ?? comment.created_at ?? comment.createdAt,
+        index
+      };
+    })
+    .filter(Boolean)
+    .sort(compareWorkpadCandidates);
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  const { index: _index, ...workpad } = candidate;
+  return workpad;
+}
+
+function compareWorkpadCandidates(left, right) {
+  const replacement = Number(Boolean(right.replacement_of_comment_id)) - Number(Boolean(left.replacement_of_comment_id));
+  if (replacement !== 0) return replacement;
+  const updated = timestampMs(right.updated_at) - timestampMs(left.updated_at);
+  if (updated !== 0) return updated;
+  return right.index - left.index;
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : -Infinity;
 }
 
 function workpadBody({ card, route, run, workspace, phase, proof, resultComment, now, replacementOfCommentId }) {
