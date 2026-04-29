@@ -273,6 +273,49 @@ test("status defaults token/rate metadata and webhook warnings to unavailable or
   assert.equal(snapshot.token_rate_limit.reason, "not_recorded");
 });
 
+test("status exposes webhook intake, management, and signature state without leaking secrets", () => {
+  const signed = createStatusStore({
+    instance: { id: "instance-signed" },
+    config: {
+      ...configFixture(),
+      webhook: {
+        enabled: true,
+        path: "/fizzy-hook",
+        secret: "super-secret-value",
+        manage: false
+      }
+    }
+  }).status();
+
+  assert.equal(signed.webhook.enabled, true);
+  assert.equal(signed.webhook.intake_enabled, true);
+  assert.equal(signed.webhook.path, "/fizzy-hook");
+  assert.equal(signed.webhook.management.enabled, false);
+  assert.equal(signed.webhook.management.status, "unmanaged");
+  assert.equal(signed.webhook.signature_verification.enabled, true);
+  assert.equal(signed.webhook.signature_verification.status, "enabled");
+  assert.equal(JSON.stringify(signed).includes("super-secret-value"), false);
+
+  const unsigned = createStatusStore({
+    instance: { id: "instance-unsigned" },
+    config: {
+      ...configFixture(),
+      webhook: {
+        enabled: true,
+        path: "/webhook",
+        secret: "",
+        manage: true
+      }
+    }
+  }).status();
+
+  assert.equal(unsigned.webhook.management.enabled, true);
+  assert.equal(unsigned.webhook.management.status, "managed");
+  assert.equal(unsigned.webhook.signature_verification.enabled, false);
+  assert.equal(unsigned.webhook.signature_verification.status, "disabled");
+  assert.equal(unsigned.webhook.signature_verification.reason, "webhook.secret is not configured");
+});
+
 test("run attempt records are written atomically under observability state_dir", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-run-registry-"));
   const store = createStatusStore({

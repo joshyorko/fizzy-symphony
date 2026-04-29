@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 
 const HISTORY_LIMIT = 50;
 const RUN_ATTEMPT_SCHEMA_VERSION = "fizzy-symphony-run-attempt-v1";
+const DEFAULT_WEBHOOK_PATH = "/webhook";
 
 export function createStatusStore(options = {}) {
   const {
@@ -129,11 +130,7 @@ export function createStatusStore(options = {}) {
       endpoint: clone(state.instance.endpoint),
       watched_boards: watchedBoards(state.config),
       poll_interval_ms: state.config.polling?.interval_ms ?? null,
-      webhook: {
-        enabled: Boolean(state.config.webhook?.enabled),
-        managed: Boolean(state.config.webhook?.manage),
-        recent_delivery_errors: clone(state.managed_webhooks.recent_delivery_errors)
-      },
+      webhook: webhookStatus(state.config, state.managed_webhooks),
       managed_webhooks: clone(state.managed_webhooks),
       etag_cache: clone(state.etag_cache),
       runner: {
@@ -589,6 +586,32 @@ function endpointFromConfig(config) {
     host: config.server.host ?? "127.0.0.1",
     port: config.server.port ?? null,
     base_url: config.server.port ? `http://${config.server.host ?? "127.0.0.1"}:${config.server.port}` : null
+  };
+}
+
+function webhookStatus(config = {}, managedWebhooks = {}) {
+  const webhook = config.webhook ?? {};
+  const intakeEnabled = webhook.enabled !== false;
+  const managementEnabled = Boolean(webhook.manage);
+  const signatureConfigured = Boolean(webhook.secret);
+
+  return {
+    enabled: intakeEnabled,
+    intake_enabled: intakeEnabled,
+    path: webhook.path ?? DEFAULT_WEBHOOK_PATH,
+    managed: managementEnabled,
+    management: {
+      enabled: managementEnabled,
+      status: managementEnabled ? "managed" : "unmanaged"
+    },
+    signature_verification: signatureConfigured
+      ? { enabled: true, status: "enabled" }
+      : {
+          enabled: false,
+          status: "disabled",
+          reason: "webhook.secret is not configured"
+        },
+    recent_delivery_errors: clone(managedWebhooks.recent_delivery_errors ?? [])
   };
 }
 
