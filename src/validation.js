@@ -6,6 +6,7 @@ import { FizzySymphonyError, issue } from "./errors.js";
 
 const AGENT_INSTRUCTIONS = "agent-instructions";
 const AGENT_BOARD = "agent-board";
+const SUPPORTED_SDK_RUNNERS = [];
 
 const defaultAllowedCardOverrides = {
   backend: false,
@@ -58,6 +59,12 @@ export function managedTagsUsedByBoards(boards) {
     }
   }
   return [...used].sort();
+}
+
+export function isSupportedSdkRunner(sdk = {}) {
+  return SUPPORTED_SDK_RUNNERS.some((supported) => {
+    return supported.package === sdk.package && supported.contract === sdk.contract;
+  });
 }
 
 export function discoverGoldenTicketRoutes(boards, options = {}) {
@@ -277,7 +284,7 @@ export async function validateStartup({ config, fizzy, runner }) {
 }
 
 export function createCompletionFailureMarker({ run, route, instance, workspace, card, failure_reason, reason, result_comment_id, proof }) {
-  const payload = {
+  const payload = omitUndefined({
     marker: "fizzy-symphony:completion-failed:v1",
     kind: "completion_failed",
     run_id: run?.id,
@@ -291,18 +298,35 @@ export function createCompletionFailureMarker({ run, route, instance, workspace,
     proof_digest: proof?.digest,
     card_digest: card?.digest,
     created_at: new Date().toISOString()
-  };
+  });
 
   return {
     tag: `agent-completion-failed-${shortRouteId(route.id)}`,
-    body: JSON.stringify(payload)
+    body: [
+      "<!-- fizzy-symphony-marker -->",
+      "fizzy-symphony:completion-failed:v1",
+      "",
+      "```json",
+      canonicalJson(payload),
+      "```"
+    ].join("\n")
   };
 }
 
 export function parseCompletionFailureMarker(body) {
+  const match = String(body).match(
+    /<!-- fizzy-symphony-marker -->\s*fizzy-symphony:completion-failed:v1\s*```json\s*([\s\S]*?)\s*```/u
+  );
+  if (!match) {
+    throw new FizzySymphonyError(
+      "MALFORMED_COMPLETION_FAILURE_MARKER",
+      "Completion failure marker Markdown block was not found."
+    );
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(body);
+    parsed = JSON.parse(match[1]);
   } catch (error) {
     throw new FizzySymphonyError("MALFORMED_COMPLETION_FAILURE_MARKER", "Completion failure marker is not valid JSON.", {
       cause: error.message
@@ -406,45 +430,79 @@ async function validateWorkflowFiles(config, errors) {
 }
 
 async function validateRunner(config, runner) {
-  if (!["sdk", "cli_app_server"].includes(config.runner?.preferred)) {
+  const runnerConfig = resolveRunnerConfig(config.runner ?? {});
+
+  if (!["sdk", "cli_app_server"].includes(runnerConfig.preferred)) {
     throw new FizzySymphonyError("INVALID_RUNNER", "runner.preferred must be sdk or cli_app_server.", {
-      preferred: config.runner?.preferred
+      preferred: runnerConfig.preferred
     });
   }
 
-  if (!["cli_app_server", "none"].includes(config.runner?.fallback)) {
+  if (!["cli_app_server", "none"].includes(runnerConfig.fallback)) {
     throw new FizzySymphonyError("INVALID_RUNNER", "runner.fallback must be cli_app_server or none.", {
-      fallback: config.runner?.fallback
+      fallback: runnerConfig.fallback
     });
   }
 
-  if (config.runner.preferred === "cli_app_server" && !config.runner.cli_app_server?.command) {
+  if (runnerConfig.preferred === "cli_app_server" && !runnerConfig.cli_app_server?.command) {
     throw new FizzySymphonyError("INVALID_RUNNER", "runner.cli_app_server.command is required.", {
       path: "runner.cli_app_server.command"
     });
   }
 
-  if (config.runner.preferred === "sdk") {
-    if (!config.runner.sdk?.package || !config.runner.sdk?.contract) {
-      throw new FizzySymphonyError("INVALID_RUNNER", "SDK runner requires an exact package and contract.", {
-        package: config.runner.sdk?.package ?? "",
-        contract: config.runner.sdk?.contract ?? ""
+  if (runner?.detect) {
+    let detected;
+    try {
+      detected = await runner.detect(runnerConfig);
+    } catch (error) {
+      throw new FizzySymphonyError("RUNNER_DETECT_FAILED", "Runner detection failed.", {
+        cause: error.message
       });
+    }
+    if (detected?.available === false) {
+      throw new FizzySymphonyError("RUNNER_DETECT_FAILED", "Runner detection failed.", detected);
     }
   }
 
   if (runner?.validate) {
-    const validation = await runner.validate(config.runner);
+    const validation = await runner.validate(runnerConfig, null);
     if (validation?.ok === false) {
       throw new FizzySymphonyError("INVALID_RUNNER", "Runner contract validation failed.", validation);
     }
   }
 
   if (runner?.health) {
-    return runner.health(config.runner);
+    return runner.health(runnerConfig);
   }
 
-  return { status: "unavailable", kind: config.runner.preferred, reason: "No runner dependency was injected." };
+  return { status: "unavailable", kind: runnerConfig.preferred, reason: "No runner dependency was injected." };
+}
+
+function resolveRunnerConfig(runnerConfig) {
+  if (runnerConfig.preferred !== "sdk") return runnerConfig;
+
+  if (!runnerConfig.sdk?.package || !runnerConfig.sdk?.contract) {
+    throw new FizzySymphonyError("INVALID_RUNNER", "SDK runner requires an exact package and contract.", {
+      package: runnerConfig.sdk?.package ?? "",
+      contract: runnerConfig.sdk?.contract ?? ""
+    });
+  }
+
+  if (isSupportedSdkRunner(runnerConfig.sdk)) return runnerConfig;
+
+  if (runnerConfig.allow_fallback && runnerConfig.fallback === "cli_app_server") {
+    return {
+      ...runnerConfig,
+      preferred: "cli_app_server",
+      effective_from: "sdk",
+      unsupported_sdk: runnerConfig.sdk
+    };
+  }
+
+  throw new FizzySymphonyError("INVALID_RUNNER", "SDK runner package and contract are not selected for Task 1.", {
+    package: runnerConfig.sdk.package,
+    contract: runnerConfig.sdk.contract
+  });
 }
 
 function parseCompletion(tags, board, sourceColumnId, card) {
@@ -666,6 +724,10 @@ function digest(value) {
 
 function shortRouteId(routeId) {
   return createHash("sha256").update(String(routeId)).digest("hex").slice(0, 12);
+}
+
+function omitUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }
 
 function canonicalJson(value) {

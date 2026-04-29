@@ -248,6 +248,66 @@ test("parseConfig rejects unknown top-level and nested fields", () => {
   );
 });
 
+test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross-field errors", () => {
+  const env = { FIZZY_API_TOKEN: "x" };
+  const cases = [
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.safety.cleanup.policy = "delete_everything"; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.claims.mode = "tag_only"; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.runner.preferred = "python_sdk"; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.runner.fallback = "sdk"; }
+    },
+    {
+      code: "CONFIG_INVALID_SERVER_PORT",
+      mutate: (config) => { config.server.port = 70000; }
+    },
+    {
+      code: "CONFIG_INVALID_SERVER_PORT",
+      mutate: (config) => {
+        config.server.port = "auto";
+        config.server.port_allocation = "fixed";
+      }
+    },
+    {
+      code: "CONFIG_INVALID_SERVER_PORT",
+      mutate: (config) => {
+        config.server.port = 4567;
+        config.server.port_allocation = "random";
+      }
+    },
+    {
+      code: "CONFIG_INVALID_DURATION",
+      mutate: (config) => { config.polling.interval_ms = 0; }
+    },
+    {
+      code: "CONFIG_INVALID_WEBHOOK",
+      mutate: (config) => {
+        config.webhook.manage = true;
+        config.webhook.callback_url = "";
+      }
+    }
+  ];
+
+  for (const { code, mutate } of cases) {
+    const config = minimalConfig();
+    mutate(config);
+    assert.throws(
+      () => parseConfig(config, { configPath: "/tmp/config.json", env }),
+      (error) => error.code === code
+    );
+  }
+});
+
 test("loadConfig reads JSON config files for the CLI and rejects YAML parsing for Task 1", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-load-"));
   const jsonPath = join(dir, "config.json");

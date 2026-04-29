@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
 import { FizzySymphonyError } from "./errors.js";
-import { discoverGoldenTicketRoutes, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
+import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
 export async function runSetup(options = {}) {
   const {
@@ -148,6 +148,14 @@ async function detectRunner(runner) {
       available: true,
       fallback_from: "sdk",
       reason: "SDK runner requires an exact package and contract."
+    };
+  }
+  if (report.kind === "sdk" && !isSupportedSdkRunner(report)) {
+    return {
+      kind: "cli_app_server",
+      available: true,
+      fallback_from: "sdk",
+      reason: "No SDK runner contract is selected for Task 1."
     };
   }
   return report;
