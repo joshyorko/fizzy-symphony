@@ -661,6 +661,7 @@ test("startup claim inspection reports self expired, self live, other live, term
     comment("expired", selfExpired.body, new Date("2026-04-29T11:45:00.000Z")),
     comment("self-live", selfLive.body, NOW),
     comment("other-live", otherLive.body, NOW),
+    comment("terminal-start", terminalClaim.body, NOW),
     comment("terminal", terminal.body, new Date("2026-04-29T12:02:00.000Z")),
     { id: "malformed", body: "<!-- fizzy-symphony-marker -->\nfizzy-symphony:claim:v1\n\n```json\n{nope\n```" },
     { id: "non-authoritative", body: "fizzy-symphony:claim:v1 {\"claim_id\":\"not-fenced\"}" }

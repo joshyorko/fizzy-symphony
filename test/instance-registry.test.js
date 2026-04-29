@@ -78,6 +78,7 @@ test("instance registry removes only confirmed stale files and blocks same-insta
 
   assert.deepEqual(report.removed_stale_instances.map((entry) => entry.instance_id), ["instance-stale"]);
   assert.deepEqual(report.live_instances.map((entry) => entry.instance_id).sort(), ["instance-a", "instance-b"]);
+  assert.deepEqual(report.stale_unconfirmed_instances.map((entry) => entry.instance_id), ["instance-uncertain"]);
   assert.equal(report.errors[0].code, "INSTANCE_REGISTRY_LIVE_SAME_INSTANCE");
   assert.equal(report.warnings[0].code, "INSTANCE_REGISTRY_STALE_UNCONFIRMED");
   assert.ok(report.warnings.some((warning) => warning.code === "INSTANCE_REGISTRY_LIVE_OTHER_INSTANCE"));
