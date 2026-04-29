@@ -32,6 +32,7 @@ export function createStatusStore(options = {}) {
   };
   const claims = new Map();
   const workpads = new Map();
+  const workflowCacheEntries = new Map();
   const state = {
     config,
     instance: instanceMetadata,
@@ -61,6 +62,10 @@ export function createStatusStore(options = {}) {
     cleanup_state: { status: "not_started" },
     recent_completions: [],
     recent_failures: [],
+    workflow_cache: {
+      recent_reload_errors: []
+    },
+    capacity_refusals: [],
     rerun_consumptions: [],
     token_rate_limit: { available: false, reason: "not_recorded" },
     last_updated_at: started_at
@@ -176,6 +181,11 @@ export function createStatusStore(options = {}) {
       workspace_cleanup_state: clone(state.cleanup_state),
       recent_completions: clone(state.recent_completions),
       recent_failures: clone(state.recent_failures),
+      workflow_cache: {
+        entries: [...workflowCacheEntries.values()].map(clone),
+        recent_reload_errors: clone(state.workflow_cache.recent_reload_errors)
+      },
+      capacity_refusals: clone(state.capacity_refusals),
       workspace_paths: runningRuns
         .map((run) => run.workspace_path ?? run.workspace?.path)
         .filter(Boolean),
@@ -328,6 +338,72 @@ export function createStatusStore(options = {}) {
     touch();
   }
 
+  function recordWorkflowReload(event = {}) {
+    const normalized = normalizeWorkflowReload(event);
+    const workflow = event.workflow ?? {};
+    const key = normalized.key ?? "default";
+    const existing = workflowCacheEntries.get(key) ?? { key };
+    const entry = {
+      ...existing,
+      key,
+      status: normalized.ok ? "loaded" : normalized.cache_hit ? "cached_after_error" : "failed",
+      workspace_key: normalized.workspace_key,
+      workspace_path: normalized.workspace_path,
+      workflow_path: normalized.workflow_path,
+      route_id: normalized.route_id,
+      route_fingerprint: normalized.route_fingerprint,
+      card_id: normalized.card_id,
+      board_id: normalized.board_id,
+      last_checked_at: normalized.recorded_at
+    };
+
+    if (normalized.ok) {
+      entry.last_loaded_at = normalized.recorded_at;
+      entry.last_workflow = workflowSummary(workflow);
+      delete entry.last_error;
+    } else {
+      entry.last_error = {
+        code: normalized.code,
+        message: normalized.message,
+        details: normalized.details,
+        cache_hit: normalized.cache_hit
+      };
+      state.workflow_cache.recent_reload_errors.push(normalized);
+      trimHistory(state.workflow_cache.recent_reload_errors);
+      state.recent_failures.push({
+        failure_kind: "workflow_reload",
+        key,
+        card_id: normalized.card_id,
+        board_id: normalized.board_id,
+        route_id: normalized.route_id,
+        route_fingerprint: normalized.route_fingerprint,
+        workspace_key: normalized.workspace_key,
+        workspace_path: normalized.workspace_path,
+        workflow_path: normalized.workflow_path,
+        cache_hit: normalized.cache_hit,
+        error: {
+          code: normalized.code,
+          message: normalized.message,
+          details: normalized.details
+        },
+        failed_at: normalized.recorded_at
+      });
+      trimHistory(state.recent_failures);
+    }
+
+    workflowCacheEntries.set(key, entry);
+    touch();
+    return clone(entry);
+  }
+
+  function recordCapacityRefusal(refusal = {}) {
+    const normalized = normalizeCapacityRefusal(refusal);
+    state.capacity_refusals.push(normalized);
+    trimHistory(state.capacity_refusals);
+    touch();
+    return clone(normalized);
+  }
+
   function recordShutdown(report = {}) {
     state.shutdown = {
       ...clone(report),
@@ -359,10 +435,10 @@ export function createStatusStore(options = {}) {
     return completed;
   }
 
-  function failRun(runOrId, error = {}) {
+  function failRun(runOrId, error = {}, details = {}) {
     const run = runFrom(runOrId);
     if (isCancelled(run)) return clone(run);
-    const failed = putRun("failed", { ...run, last_error: normalizeError(error) }, { status: "failed" });
+    const failed = putRun("failed", { ...run, ...details, last_error: normalizeError(error) }, { status: "failed" });
     state.recent_failures.push({
       run_id: failed.id,
       card_id: failed.card_id,
@@ -498,6 +574,8 @@ export function createStatusStore(options = {}) {
     recordTokenRateLimit,
     recordRetryQueue,
     recordCleanupState,
+    recordWorkflowReload,
+    recordCapacityRefusal,
     recordShutdown,
     queueRun,
     startRun,
@@ -558,6 +636,57 @@ function normalizeRun(run = {}, defaults = {}) {
     completed_at: run.completed_at,
     failed_at: run.failed_at,
     cancelled_at: run.cancelled_at
+  });
+}
+
+function normalizeWorkflowReload(event = {}) {
+  const error = normalizeError(event.error ?? {});
+  const workflow = event.workflow ?? {};
+  const card = event.card ?? {};
+  const route = event.route ?? {};
+  const workspace = event.workspace ?? {};
+  return omitUndefined({
+    key: event.key,
+    ok: event.ok === true,
+    cache_hit: event.cache_hit === true,
+    code: event.code ?? error.code,
+    message: event.message ?? error.message,
+    details: clone(event.details ?? error.details ?? {}),
+    card_id: event.card_id ?? card.id,
+    card_number: event.card_number ?? card.number,
+    board_id: event.board_id ?? card.board_id ?? route.board_id,
+    route_id: event.route_id ?? route.id,
+    route_fingerprint: event.route_fingerprint ?? route.fingerprint ?? route.route_fingerprint,
+    workspace_key: event.workspace_key ?? workspace.key ?? workspace.workspace_key,
+    workspace_path: event.workspace_path ?? workspace.path ?? workspace.workspace_path,
+    workflow_path: event.workflow_path ?? workflow.path,
+    recorded_at: toIso(event.recorded_at ?? event.at ?? new Date())
+  });
+}
+
+function normalizeCapacityRefusal(refusal = {}) {
+  const card = refusal.card ?? {};
+  const route = refusal.route ?? {};
+  return omitUndefined({
+    reason: refusal.reason,
+    scope: refusal.scope,
+    limit: refusal.limit,
+    active_count: refusal.active_count,
+    card_id: refusal.card_id ?? card.id,
+    card_number: refusal.card_number ?? card.number,
+    board_id: refusal.board_id ?? card.board_id ?? route.board_id,
+    route_id: refusal.route_id ?? route.id,
+    route_fingerprint: refusal.route_fingerprint ?? route.fingerprint ?? route.route_fingerprint,
+    refused_at: toIso(refusal.refused_at ?? refusal.at ?? new Date())
+  });
+}
+
+function workflowSummary(workflow = {}) {
+  return omitUndefined({
+    path: workflow.path,
+    source: workflow.source,
+    front_matter: clone(workflow.front_matter ?? workflow.frontMatter ?? {}),
+    body_length: String(workflow.body ?? "").length
   });
 }
 

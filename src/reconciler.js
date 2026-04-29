@@ -39,7 +39,8 @@ export async function runReconciliationTick(options = {}) {
     cancelled: 0,
     preempted: 0,
     ignored: 0,
-    claim_blocked: 0
+    claim_blocked: 0,
+    capacity_refused: 0
   };
 
   try {
@@ -84,11 +85,9 @@ export async function runReconciliationTick(options = {}) {
       return result;
     }
 
-    const capacity = Math.max(0, (config.agent?.max_concurrent ?? 1) - (status?.activeRunCount?.() ?? 0));
-    let dispatchesRemaining = capacity;
+    const capacity = createCapacityTracker({ config, status, orchestratorState });
 
     for (const candidateCard of candidates) {
-      if (dispatchesRemaining <= 0) break;
       const card = await hydrateCardForRouting({ fizzy, card: candidateCard });
       if (reconciled.card_ids.has(card.id)) {
         result.ignored += 1;
@@ -97,6 +96,14 @@ export async function runReconciliationTick(options = {}) {
 
       const decision = await router.validateCandidate({ config, card, status });
       if (decision?.action !== "spawn" && decision?.spawn !== true) {
+        result.ignored += 1;
+        continue;
+      }
+
+      const capacityRefusal = capacity.refusalFor({ card, route: decision.route, at: startedAt });
+      if (capacityRefusal) {
+        status?.recordCapacityRefusal?.(capacityRefusal);
+        result.capacity_refused += 1;
         result.ignored += 1;
         continue;
       }
@@ -127,7 +134,7 @@ export async function runReconciliationTick(options = {}) {
         await consumeRerunSignal({ config, status, fizzy, card, route: decision.route, decision, now: startedAt });
       }
 
-      dispatchesRemaining -= 1;
+      capacity.reserve({ card, route: decision.route });
       result.dispatched += 1;
 
       const runResult = await runCard({
@@ -514,6 +521,123 @@ function recordEtagStats(status, candidatesResult, fizzy) {
   }
 }
 
+function createCapacityTracker({ config = {}, status, orchestratorState } = {}) {
+  const runs = activeCapacityRuns(status, orchestratorState);
+  const counts = {
+    global: runs.length,
+    cards: countBy(runs, (run) => run.card_id),
+    boards: countBy(runs, (run) => run.board_id),
+    routes: countBy(runs, routeCapacityKey)
+  };
+
+  return {
+    refusalFor({ card = {}, route = {}, at } = {}) {
+      const globalLimit = numericLimit(config.agent?.max_concurrent ?? 1);
+      const globalActive = counts.global;
+      if (globalLimit !== null && globalActive >= globalLimit) {
+        return capacityRefusal("global_capacity", "global", globalLimit, globalActive, card, route, at);
+      }
+
+      const cardLimit = numericLimit(config.agent?.max_concurrent_per_card ?? 1);
+      const cardKey = card.id;
+      const cardActive = cardKey ? counts.cards.get(cardKey) ?? 0 : 0;
+      if (cardLimit !== null && cardActive >= cardLimit) {
+        return capacityRefusal("card_capacity", "card", cardLimit, cardActive, card, route, at);
+      }
+
+      const boardLimit = numericLimit(boardConcurrencyLimit(config, card.board_id ?? route.board_id));
+      const boardKey = card.board_id ?? route.board_id;
+      const boardActive = boardKey ? counts.boards.get(boardKey) ?? 0 : 0;
+      if (boardLimit !== null && boardActive >= boardLimit) {
+        return capacityRefusal("board_capacity", "board", boardLimit, boardActive, card, route, at);
+      }
+
+      const routeLimit = numericLimit(route?.concurrency?.max_concurrent);
+      const routeKey = routeCapacityKey({ route_id: route?.id, route_fingerprint: route?.fingerprint ?? route?.route_fingerprint });
+      const routeActive = routeKey ? counts.routes.get(routeKey) ?? 0 : 0;
+      if (routeLimit !== null && routeActive >= routeLimit) {
+        return capacityRefusal("route_capacity", "route", routeLimit, routeActive, card, route, at);
+      }
+
+      return null;
+    },
+    reserve({ card = {}, route = {} } = {}) {
+      counts.global += 1;
+      increment(counts.cards, card.id);
+      increment(counts.boards, card.board_id ?? route.board_id);
+      increment(counts.routes, routeCapacityKey({ route_id: route?.id, route_fingerprint: route?.fingerprint ?? route?.route_fingerprint }));
+    }
+  };
+}
+
+function activeCapacityRuns(status, orchestratorState) {
+  const snapshot = status?.status?.() ?? {};
+  const statusRuns = snapshot.runs?.running ?? snapshot.active_runs ?? [];
+  const lifecycleRuns = orchestratorState?.snapshot?.().active_runs ?? [];
+  const byId = new Map();
+
+  for (const run of [...statusRuns, ...lifecycleRuns]) {
+    const normalized = normalizeCapacityRun(run);
+    if (!normalized.key) continue;
+    byId.set(normalized.key, normalized);
+  }
+
+  return [...byId.values()];
+}
+
+function normalizeCapacityRun(run = {}) {
+  const card = run.card ?? {};
+  const route = run.route ?? {};
+  return {
+    key: run.id ?? run.run_id ?? run.attempt_id,
+    card_id: run.card_id ?? card.id,
+    board_id: run.board_id ?? card.board_id ?? route.board_id,
+    route_id: run.route_id ?? route.id,
+    route_fingerprint: run.route_fingerprint ?? route.fingerprint ?? route.route_fingerprint
+  };
+}
+
+function capacityRefusal(reason, scope, limit, activeCount, card, route, at) {
+  return {
+    reason,
+    scope,
+    limit,
+    active_count: activeCount,
+    card,
+    route,
+    refused_at: at
+  };
+}
+
+function boardConcurrencyLimit(config = {}, boardId) {
+  return (config.boards?.entries ?? []).find((entry) => entry.id === boardId)?.defaults?.concurrency?.max_concurrent ??
+    (config.boards?.entries ?? []).find((entry) => entry.id === boardId)?.concurrency?.max_concurrent;
+}
+
+function routeCapacityKey(run = {}) {
+  return run.route_fingerprint ?? run.route_id ?? "";
+}
+
+function countBy(entries, keyFn) {
+  const counts = new Map();
+  for (const entry of entries) {
+    increment(counts, keyFn(entry));
+  }
+  return counts;
+}
+
+function increment(counts, key) {
+  if (!key) return;
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function numericLimit(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.trunc(number));
+}
+
 function recordLifecycle(status, orchestratorState) {
   if (!status?.recordLifecycleSnapshot || !orchestratorState?.snapshot) return;
   const snapshot = orchestratorState.snapshot();
@@ -566,8 +690,10 @@ async function runCard({
 
   let workspace;
   let workflow;
+  let failureKind = "dispatch";
 
   try {
+    failureKind = "workspace";
     workspace = await workspaceManager.prepare({
       config,
       card,
@@ -578,6 +704,7 @@ async function runCard({
       workspace: workspaceIdentity,
       now
     });
+    failureKind = "workflow";
     workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
     run = status?.startRun?.({
       ...run,
@@ -586,8 +713,10 @@ async function runCard({
     }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
 
     await writeRunAttempt(status, run, "running");
+    failureKind = "workpad";
     const workpad = await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
 
+    failureKind = "runner";
     const session = await runner.startSession(workspace.path, { config, route, workflow }, { run_id: runId });
     run = status?.startRun?.({ ...run, session }) ?? { ...run, session };
     await writeRunAttempt(status, run, "running");
@@ -628,6 +757,7 @@ async function runCard({
       throw runnerFailure(streamResult);
     }
 
+    failureKind = "completion";
     await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "runner_completed", now });
 
     const refreshedCard = await refreshCardForCompletion({ fizzy, card, route });
@@ -821,15 +951,30 @@ async function runCard({
     await writeRunAttempt(status, { ...(completed ?? run), cleanup_state: cleanupStatus }, "completed");
     return { status: "completed", run: completed ?? run };
   } catch (error) {
+    const failureMarker = failureKind === "runner"
+      ? await recordRunnerFailureMarker({ config, fizzy, run, card, route, workspace, error, now })
+      : null;
     orchestratorState?.recordFailure?.(runId, error, {
-      retryable: isRetryableRunnerError(error),
-      failure_kind: "runner"
+      retryable: failureKind === "runner" && isRetryableRunnerError(error),
+      failure_kind: failureKind
     });
     recordLifecycle(status, orchestratorState);
-    const failed = status?.failRun?.(runId, error);
+    const failed = status?.failRun?.(runId, error, failureMarker ? { completion_marker: failureMarker } : {});
     const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: failed ?? run });
-    await writeRunAttempt(status, { ...(failed ?? run), runner_session_finalization: runnerSessionFinalization }, "failed");
-    await claims.release?.({ config, claim, run: failed ?? run, status: "failed", now, error });
+    await writeRunAttempt(status, {
+      ...(failed ?? run),
+      completion_marker: failureMarker ?? undefined,
+      runner_session_finalization: runnerSessionFinalization
+    }, "failed");
+    await claims.release?.({
+      config,
+      claim,
+      run: failed ?? run,
+      status: "failed",
+      now,
+      error,
+      completion_marker: failureMarker ?? undefined
+    });
     return { status: "failed", run: failed ?? run, error };
   }
 }
@@ -874,6 +1019,38 @@ function assertRouteStillCurrent(card, route) {
     current_route_fingerprint: currentFingerprint,
     preserve_workspace: true
   });
+}
+
+async function recordRunnerFailureMarker({ config, fizzy, run, card, route, workspace, error, now }) {
+  if (!workspace) return null;
+
+  const marker = createCompletionFailureMarker({
+    run,
+    card,
+    route,
+    instance: config.instance,
+    workspace,
+    reason: error?.message ?? "Runner failed.",
+    createdAt: now
+  });
+
+  try {
+    return await recordCompletionFailureMarker({
+      fizzy,
+      run,
+      card,
+      route,
+      workspace,
+      result: null,
+      marker
+    });
+  } catch (markerError) {
+    return {
+      ...marker,
+      status: "failed",
+      marker_error: normalizeError(markerError)
+    };
+  }
 }
 
 async function recordCompletionMarker({ fizzy, marker, ...context }) {
