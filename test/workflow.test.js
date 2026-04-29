@@ -118,7 +118,12 @@ test("loadWorkflow prefers explicit workflow_path, then source repo, then prepar
 
 test("renderPrompt includes route, card, workspace, attempt, and completion context", () => {
   const prompt = renderPrompt({
-    workflow: parseWorkflow(`# Repo Policy
+    workflow: parseWorkflow(`---
+name: Repo Agent
+completion:
+  required_steps_block_completion: true
+---
+# Repo Policy
 
 Ticket: {{card.title}}
 Route: {{route.id}}
@@ -157,6 +162,11 @@ Route: {{route.id}}
       branch: "fizzy/card_1",
       metadataPath: "/tmp/meta/card_1.json"
     },
+    workpad: {
+      comment_id: "workpad_1",
+      phase: "claimed",
+      updated_at: "2026-04-29T12:00:00.000Z"
+    },
     completion: {
       markers: {
         mode: "structured_comment_and_tag",
@@ -166,6 +176,10 @@ Route: {{route.id}}
     }
   });
 
+  assert.match(prompt, /Workflow front matter:\n```json\n\{/);
+  assert.match(prompt, /"name": "Repo Agent"/);
+  assert.match(prompt, /"required_steps_block_completion": true/);
+  assert.match(prompt, /Workflow prompt body/);
   assert.match(prompt, /# Repo Policy/);
   assert.match(prompt, /Ticket: Fix parser/);
   assert.match(prompt, /Board:\n- id: board_1\n- name: Agents/);
@@ -179,7 +193,30 @@ Route: {{route.id}}
   assert.match(prompt, /URL: https:\/\/fizzy\.example\/cards\/card_1/);
   assert.match(prompt, /Attempt: 2/);
   assert.match(prompt, /Workspace:\n- id: ws_card_1\n- path: \/tmp\/ws/);
+  assert.match(prompt, /Active workpad:\n```json\n\{/);
+  assert.match(prompt, /"comment_id": "workpad_1"/);
   assert.match(prompt, /Completion policy:\n```json\n\{/);
+});
+
+test("renderPrompt includes live Fizzy rich-text card and comment bodies as plain text", () => {
+  const prompt = renderPrompt({
+    workflow: parseWorkflow("# Policy\n\nUse card context."),
+    board: { id: "board_1" },
+    column: { id: "col_ready" },
+    route: { id: "route_1", fingerprint: "sha256:route", completion: { policy: "comment_once" } },
+    card: {
+      id: "card_1",
+      title: "Normalize live text",
+      body: { plain_text: "Use the visible body.", html: "<p>Use the visible body.</p>" },
+      comments: [{ author: { name: "Josh" }, body: { plain_text: "Loop markers live here.", html: "<p>Loop markers live here.</p>" } }]
+    },
+    workspace: {},
+    completion: {}
+  });
+
+  assert.match(prompt, /Description:\nUse the visible body\./u);
+  assert.match(prompt, /Josh: Loop markers live here\./u);
+  assert.doesNotMatch(prompt, /\[object Object\]/u);
 });
 
 test("renderPrompt rejects unknown template variables", () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
+import { createCompletionMarker } from "../src/completion.js";
 import { startDaemon } from "../src/daemon.js";
 
 test("CLI daemon reports config load errors as structured failures", async () => {
@@ -13,6 +14,15 @@ test("CLI daemon reports config load errors as structured failures", async () =>
 
   assert.equal(result.exitCode, 2);
   assert.equal(JSON.parse(result.stderr).code, "CONFIG_PARSE_ERROR");
+});
+
+test("CLI daemon defaults to the setup-generated YAML config path", async () => {
+  const result = await runCli(["daemon"]);
+
+  assert.equal(result.exitCode, 2);
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "CONFIG_PARSE_ERROR");
+  assert.equal(error.details.path, ".fizzy-symphony/config.yml");
 });
 
 test("CLI daemon reports startup validation blockers and cleans the owned registry file", async () => {
@@ -106,6 +116,63 @@ test("startDaemon wires startup, HTTP status, scheduler ticks, recovery, and sta
     assert.equal(snapshot.instance.id, "instance-a");
     assert.equal(snapshot.runs.completed[0].card_id, "card_1");
     assert.ok(calls.includes("startupRecovery"));
+  } finally {
+    await daemon.stop("test");
+  }
+});
+
+test("default daemon routing hydrates live comments and prevents comment_once loops", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-live-comments-");
+  const configPath = await writeConfig(root);
+  const calls = [];
+  const card = { id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Already done" };
+  let markerRoute;
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    schedulerOptions: { immediate: false },
+    dependencies: {
+      ...daemonDependencies({ calls, cards: [card] }),
+      fizzyFactory: () => ({
+        ...fakeFizzy(),
+        async discoverCandidates() {
+          calls.push("discover");
+          return [card];
+        },
+        async listComments() {
+          calls.push("listComments");
+          const marker = createCompletionMarker({
+            run: { id: "run_prior" },
+            route: markerRoute,
+            instance: { id: "instance-a" },
+            workspace: { key: "workspace_prior", identity_digest: "sha256:workspace" },
+            card,
+            proof: { file: "/state/proof/run_prior.json", digest: "sha256:proof" },
+            resultComment: { id: "comment_result" },
+            completedAt: "2026-04-29T12:00:00.000Z"
+          });
+          return [{
+            id: "comment_marker",
+            body: { plain_text: marker.body, html: "<p>marker</p>" },
+            created_at: "2026-04-29T12:00:00.000Z"
+          }];
+        }
+      }),
+      claimsFactory: () => ({
+        async acquire() {
+          calls.push("claim");
+          throw new Error("claim must not run for a completed comment_once card");
+        }
+      })
+    }
+  });
+
+  try {
+    markerRoute = daemon.status.status().routes[0];
+    await daemon.scheduler.tickNow("test");
+    assert.ok(calls.includes("listComments"));
+    assert.equal(calls.includes("claim"), false);
+    assert.deepEqual(daemon.status.status().runs.running, []);
   } finally {
     await daemon.stop("test");
   }
@@ -210,6 +277,51 @@ test("SIGTERM shutdown stops scheduling, cancels active work, preserves workspac
   }
 });
 
+test("shutdown escalates from failed runner cancel to session stop", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-shutdown-escalation-");
+  const configPath = await writeConfig(root);
+  const signalProcess = new EventEmitter();
+  signalProcess.pid = 12346;
+  const calls = [];
+  let releaseStream;
+  const streamGate = new Promise((resolve) => {
+    releaseStream = resolve;
+  });
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    signalProcess,
+    schedulerOptions: { immediate: false },
+    dependencies: daemonDependencies({
+      calls,
+      cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }],
+      runner: fakeRunner({
+        streamGate,
+        calls,
+        cancelResult: { status: "failed", success: false }
+      })
+    })
+  });
+
+  const tick = daemon.scheduler.tickNow("test");
+  try {
+    await waitFor(() => calls.includes("stream"));
+    signalProcess.emit("SIGTERM", "SIGTERM");
+    await daemon.stopped;
+    releaseStream();
+    await tick;
+
+    const cancellation = daemon.status.status().runs.cancelled[0].cancellation;
+    assert.equal(cancellation.states.runner_cancel_sent.status, "failed");
+    assert.equal(cancellation.states.session_stopped.status, "succeeded");
+    assert.ok(calls.includes("stopSession"));
+  } finally {
+    releaseStream();
+    await tick.catch(() => {});
+    await daemon.stop("test-cleanup").catch(() => {});
+  }
+});
+
 function daemonDependencies({ calls, cards = [], runner = fakeRunner() } = {}) {
   return {
     fizzyFactory: () => ({
@@ -306,7 +418,7 @@ function fakeRunner(options = {}) {
     },
     async cancel() {
       options.calls?.push("cancel");
-      return { status: "cancelled", success: true };
+      return options.cancelResult ?? { status: "cancelled", success: true };
     },
     async stopSession() {
       options.calls?.push("stopSession");
@@ -419,7 +531,7 @@ function baseConfig(root) {
       max_concurrent_per_card: 1,
       turn_timeout_ms: 3600000,
       stall_timeout_ms: 300000,
-      max_turns: 20,
+      max_turns: 1,
       max_retry_backoff_ms: 300000,
       default_backend: "codex",
       default_model: "",

@@ -21,24 +21,25 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Unsafe completion policy rejection
 - Status: passing
 - Tests: `test/validation.test.js`, `test/completion.test.js`
-- Coverage: missing completion, conflicting completion tags, missing move target, malformed completion-failure marker parsing, completion-failure marker creation, and cleanup eligibility gates tied to proof/result/marker/release evidence.
+- Coverage: missing completion, conflicting completion tags, missing move target, unavailable completion mutators failing loudly, malformed completion-failure marker parsing, completion-failure marker creation, and cleanup eligibility gates tied to proof/result/marker/release evidence.
 
 ### Card routing precedence
 - Status: passing
 - Tests: `test/router.test.js`
-- Coverage: allowed and disallowed card overrides, unknown workspace/model validation, rerun tag handling, no-repeat marker behavior, completion-failure marker behavior, postponed and closed card skips, and golden-ticket card skips.
+- Coverage: allowed and disallowed card overrides, unknown workspace/model validation, rerun tag handling, no-repeat marker behavior, completion-failure marker behavior, live rich-text marker comment parsing, nested board/column lifecycle fields, postponed and closed card skips, and golden-ticket card skips.
 
 ### Fizzy API usage
 - Status: newly covered
 - Tests: `test/etag-cache.test.js`, `test/fizzy-client.test.js`, `test/setup.test.js`, `test/polling.test.js`
-- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
-- Remaining: live API smoke testing against a disposable board still needs credentials and an explicit operator-approved environment.
-- Follow-up: `fizzy-symphony: live Fizzy API smoke test with disposable board`.
+- Coverage: API-filtered golden and candidate discovery, default board/column filters when configured lists are empty, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, live account slug normalization, live tag `title` normalization, nested live board/column card shape, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
+- Live proof: gated disposable-board smoke passed on 2026-04-29 against board `03g1c3lq3lrvkp72366u6c7mk`, proving identity, board/card/golden creation and reads, startup validation with one route, one daemon poll, unsafe-route refusal, and no destructive cleanup.
+- Remaining: live webhook delivery against a disposable public callback is not smoked.
+- Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.
 
 ### Workspace isolation
 - Status: passing
-- Tests: `test/workspace.test.js`, `test/recovery.test.js`
-- Coverage: deterministic workspace key, named workspace identity, metadata mismatch preservation, source snapshot requirements, path escape rejection, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
+- Tests: `test/config.test.js`, `test/workspace.test.js`, `test/recovery.test.js`
+- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, symlink/canonical allowed-root containment for source repos and workspace roots, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
 
 ### Port allocation
 - Status: newly covered
@@ -49,18 +50,17 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Multi-instance claim behavior
 - Status: newly covered
 - Tests: `test/claims.test.js`, `test/orchestrator-state.test.js`, `test/reconciler.test.js`
-- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, multiple renewal comments, renewal failure cancellation, release failure reporting, and stale instance registry surfaces.
+- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, live rich-text claim marker parsing, verify-before-renew and verify-after-renew lease ownership, renewal refusal after steal or terminal release, long-running active-run renewal before steal, multiple renewal comments, returned renewal-failure cancellation, thrown renewal-failure cancellation, release failure reporting, and stale instance registry surfaces.
 
 ### Safe cleanup
 - Status: newly covered
 - Tests: `test/completion.test.js`, `test/recovery.test.js`, `test/workspace.test.js`
-- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, force removal forbidden by policy validation, and interrupted cleanup recovery.
-- Follow-up: `fizzy-symphony: implement clean-only workspace removal executor`.
+- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, proof file existence and digest verification before removal, proof symlink rejection before write/cleanup/recovery, force removal forbidden by policy validation, and interrupted cleanup recovery.
 
 ### Runner health checks
 - Status: passing
 - Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, cancellation, metadata extraction, same-thread continuation, owned-process termination, and runner failure release/status behavior.
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, shutdown cancellation escalation to session stop/process termination, session stop after successful completion, incomplete close escalation, session stop after completion-policy failure, prompt front matter/workpad context, metadata extraction, explicit `agent.max_turns > 1` rejection until same-thread continuation is implemented, and runner failure release/status behavior.
 
 ### Status snapshot
 - Status: newly covered
@@ -68,8 +68,9 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 - Coverage: health, readiness, runner health, active runs, claims, retry queue, recent completions/failures, workspace cleanup state, validation errors, token/rate metadata, managed webhook warnings, startup recovery, lifecycle recovery, instance registry discovery, and operator-readable status output.
 
 ### Event ingestion
-- Status: deferred
-- Tests: `test/reconciler.test.js`, `test/polling.test.js`
-- Coverage: webhook hints are routed through fresh router validation before claims, polling candidate discovery applies API filters, and active-card route mismatches are preempted.
-- Reason: there is no dedicated webhook ingestion/dedupe server module yet, so webhook dedupe, self-authored event ignore, missed-webhook polling reconciliation, and preempted completion-policy application are only partially represented.
-- Follow-up: `fizzy-symphony: implement webhook ingestion dedupe and missed-event reconciliation`.
+- Status: newly covered
+- Tests: `test/server.test.js`, `test/daemon.test.js`, `test/reconciler.test.js`, `test/polling.test.js`
+- Coverage: webhook signature verification, event ID dedupe, stale timestamp rejection, self-authored daemon comment ignore unless rerun is explicit, lifecycle action mapping to candidate/cancel/route-refresh hints, webhook hints routed through fresh router validation before claims, polling candidate discovery with API filters, missed-webhook reconciliation through polling, and active-card route mismatch preemption.
+- Live proof: polling reconciliation was smoked against the disposable board and recovered route/candidate state without webhooks.
+- Remaining: live disposable-board webhook delivery still requires a reachable callback URL and explicit operator approval.
+- Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.

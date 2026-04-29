@@ -85,10 +85,18 @@ test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hin
 
     assert.equal(accepted.response.status, 202);
     assert.equal(accepted.body.status, "accepted");
-    assert.deepEqual(accepted.body.hint, { event_id: "event_1", card_id: "card_1", board_id: "board_1" });
+    assert.deepEqual(accepted.body.hint, {
+      event_id: "event_1",
+      action: "card_updated",
+      intent: "candidate_changed",
+      card_id: "card_1",
+      board_id: "board_1"
+    });
     assert.deepEqual(queue.snapshot(), [{
       source: "webhook",
       event_id: "event_1",
+      action: "card_updated",
+      intent: "candidate_changed",
       card_id: "card_1",
       board_id: "board_1",
       received_at: "2026-04-29T12:00:00.000Z"
@@ -105,6 +113,161 @@ test("webhook verifies signatures, dedupes event IDs, and enqueues candidate hin
     assert.equal(duplicate.response.status, 200);
     assert.equal(duplicate.body.status, "duplicate");
     assert.equal(queue.size, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook rejects stale timestamps before enqueueing", async () => {
+  const config = httpConfig({
+    webhook: { enabled: true, path: "/webhook", max_event_age_seconds: 300 }
+  });
+  const queue = createWebhookHintQueue();
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:10:00.000Z")
+    })
+  });
+
+  try {
+    const stale = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_old",
+        action: "card_triaged",
+        created_at: "2026-04-29T12:00:00.000Z",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+
+    assert.equal(stale.response.status, 400);
+    assert.equal(stale.body.error.code, "STALE_WEBHOOK_EVENT");
+    assert.equal(queue.size, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook ignores self-authored daemon comments unless rerun is explicit", async () => {
+  const config = httpConfig({
+    fizzy: { bot_user_id: "bot_1" },
+    webhook: { enabled: true, path: "/webhook" }
+  });
+  const queue = createWebhookHintQueue();
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:00:00.000Z")
+    })
+  });
+
+  try {
+    const ignored = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_self",
+        action: "comment_created",
+        comment: { body: "fizzy-symphony status update", author: { id: "bot_1" } },
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+
+    assert.equal(ignored.response.status, 200);
+    assert.equal(ignored.body.status, "ignored");
+    assert.equal(ignored.body.reason, "self_authored_daemon_comment");
+    assert.equal(queue.size, 0);
+
+    const rerun = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_self_rerun",
+        action: "comment_created",
+        comment: { body: "daemon status update", author: { id: "bot_1" } },
+        card: { id: "card_1", board: { id: "board_1" }, tags: [{ name: "agent-rerun" }] }
+      })
+    });
+
+    assert.equal(rerun.response.status, 202);
+    assert.equal(rerun.body.status, "accepted");
+    assert.deepEqual(queue.snapshot(), [{
+      source: "webhook",
+      event_id: "event_self_rerun",
+      action: "comment_created",
+      intent: "candidate_changed",
+      card_id: "card_1",
+      board_id: "board_1",
+      rerun_requested: true,
+      received_at: "2026-04-29T12:00:00.000Z"
+    }]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook maps lifecycle actions to cancellation and golden-ticket refresh hints", async () => {
+  const config = httpConfig();
+  const queue = createWebhookHintQueue();
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:00:00.000Z")
+    })
+  });
+
+  try {
+    const closed = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_closed",
+        action: "card_closed",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+    assert.equal(closed.response.status, 202);
+
+    const golden = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_golden",
+        action: "comment_created",
+        card: { id: "golden_1", board: { id: "board_1" }, tags: [{ name: "agent-instructions" }] }
+      })
+    });
+    assert.equal(golden.response.status, 202);
+
+    assert.deepEqual(queue.snapshot(), [
+      {
+        source: "webhook",
+        event_id: "event_closed",
+        action: "card_closed",
+        intent: "cancel_active",
+        cancel_reason: "card_closed",
+        card_id: "card_1",
+        board_id: "board_1",
+        received_at: "2026-04-29T12:00:00.000Z"
+      },
+      {
+        source: "webhook",
+        event_id: "event_golden",
+        action: "comment_created",
+        intent: "refresh_routes",
+        card_id: "golden_1",
+        board_id: "board_1",
+        received_at: "2026-04-29T12:00:00.000Z"
+      }
+    ]);
   } finally {
     await server.close();
   }
@@ -150,6 +313,10 @@ test("webhook rejects missing signatures and malformed payloads before enqueuein
 
 function httpConfig(overrides = {}) {
   return {
+    fizzy: {
+      bot_user_id: "",
+      ...(overrides.fizzy ?? {})
+    },
     server: {
       host: "127.0.0.1",
       port: "auto",

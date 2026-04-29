@@ -16,7 +16,7 @@ operate the local scaffold safely while `fizzy-symphony` is still under construc
 ## Current Implementation Status
 
 The current scaffold is a Node.js ESM project with no external runtime dependencies. The local
-baseline on 2026-04-29 is 157/157 passing via `npm test`.
+baseline on 2026-04-29 is 232/232 passing via `npm test` on Node v25.9.0.
 
 Implemented scaffold behavior:
 
@@ -28,11 +28,21 @@ Implemented scaffold behavior:
 - deterministic workspace metadata and identity helpers
 - workflow loading and prompt rendering
 - status snapshots
+- live Fizzy HTTP client wiring with ETag-aware reads and account-scoped resources
+- webhook freshness, signature, dedupe, self-event, and lifecycle hint handling
+- durable proof writing and completion policy failure markers
+- proof-file/digest verification before cleanup removal
+- canonical workspace/source/proof containment for symlinked roots
+- live rich-text comment normalization for claims, completion markers, digests, and prompt context
+- verify-before-renew claim leases with failure cancellation
+- live nested-board golden-ticket refresh and API filter defaults
 - injected fake-Fizzy and fake-runner reconciliation slice
 - real Codex CLI app-server runner behind the SDK-shaped runner interface
 
-The live Fizzy client, full supervisor/completion policy application, durable proof writing,
-webhook/poll hardening, and real smoke tests are not implemented yet.
+Disposable-board live Fizzy smoke passed on 2026-04-29 against board
+`03g1c3lq3lrvkp72366u6c7mk`, proving identity, startup validation, poll-once reconciliation,
+unsafe-route refusal, and no destructive cleanup. Same-thread continuation above `agent.max_turns: 1`
+and live webhook delivery remain pending.
 
 ## Workspace Boundaries
 
@@ -64,7 +74,7 @@ Useful local CLI checks:
 ```sh
 cd /var/home/kdlocpanda/second_brain/Resources/virtualization/docker/37signals/agent_stuff/fizzy-symphony
 node bin/fizzy-symphony.js setup --template-only --config .fizzy-symphony/config.yml
-node bin/fizzy-symphony.js validate --parse-only --config config.json
+node bin/fizzy-symphony.js validate --parse-only --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js daemon
 ```
 

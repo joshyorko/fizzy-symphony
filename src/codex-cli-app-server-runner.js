@@ -335,14 +335,31 @@ export function createCodexCliAppServerRunner(options = {}) {
         await context.transport.request("thread/unsubscribe", { threadId: session.thread_id }, {
           timeoutMs: timeoutValue(context.runnerConfig, "stopSessionTimeoutMs")
         });
-        await context.transport.close?.();
+        const closeResult = await context.transport.close?.({
+          timeoutMs: timeoutValue(context.runnerConfig, "stopSessionTimeoutMs")
+        });
+        if (closeResult && !["closed", "terminated"].includes(closeResult.status)) {
+          return {
+            type: "StopSessionResult",
+            status: "failed",
+            success: false,
+            session_id: session.session_id,
+            thread_id: session.thread_id,
+            close_result: closeResult,
+            error: normalizeRunnerError(
+              runnerError("APP_SERVER_CLOSE_INCOMPLETE", "Codex app-server session unsubscribe completed, but the process did not close."),
+              "APP_SERVER_CLOSE_INCOMPLETE"
+            )
+          };
+        }
         sessions.delete(session.session_id);
         return {
           type: "StopSessionResult",
           status: "stopped",
           success: true,
           session_id: session.session_id,
-          thread_id: session.thread_id
+          thread_id: session.thread_id,
+          close_result: closeResult
         };
       } catch (error) {
         return {
