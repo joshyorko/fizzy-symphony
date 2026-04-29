@@ -197,7 +197,7 @@ export async function validateStartup({ config, fizzy, runner }) {
     await fizzy?.getIdentity?.();
     identityValid = true;
   } catch (error) {
-    errors.push(issue("FIZZY_IDENTITY_INVALID", "Fizzy identity validation failed.", { cause: error.message }));
+    errors.push(issue("FIZZY_IDENTITY_INVALID", "Fizzy identity validation failed.", fizzyAccessFailureDetails(error)));
   }
 
   let users = [];
@@ -205,7 +205,10 @@ export async function validateStartup({ config, fizzy, runner }) {
   try {
     users = await fizzy?.listUsers?.(config.fizzy?.account) ?? [];
   } catch (error) {
-    errors.push(issue("FIZZY_USERS_UNAVAILABLE", "Unable to list Fizzy users.", { cause: error.message }));
+    errors.push(issue("FIZZY_USERS_UNAVAILABLE", "Unable to list Fizzy users.", {
+      ...fizzyAccessFailureDetails(error),
+      account: config.fizzy?.account
+    }));
   }
 
   if (identityValid) {
@@ -213,7 +216,11 @@ export async function validateStartup({ config, fizzy, runner }) {
     try {
       tags = await fizzy?.listTags?.(config.fizzy?.account) ?? [];
     } catch (error) {
-      errors.push(issue(error.code ?? "FIZZY_TAGS_UNAVAILABLE", error.message, error.details ?? {}));
+      errors.push(issue(error.code ?? "FIZZY_TAGS_UNAVAILABLE", error.message, {
+        ...fizzyAccessFailureDetails(error),
+        ...(error.details ?? {}),
+        account: config.fizzy?.account
+      }));
     }
 
     try {
@@ -235,7 +242,7 @@ export async function validateStartup({ config, fizzy, runner }) {
       } catch (error) {
         errors.push(issue("BOARD_UNAVAILABLE", "Configured board is not accessible.", {
           board_id: entry.id,
-          cause: error.message
+          ...fizzyAccessFailureDetails(error)
         }));
       }
     }
@@ -271,7 +278,10 @@ export async function validateStartup({ config, fizzy, runner }) {
   try {
     runnerHealth = await validateRunner(config, runner);
     if (runnerHealth.status !== "ready" && !config.diagnostics?.no_dispatch) {
-      errors.push(issue("RUNNER_UNAVAILABLE", "Configured Codex runner is not ready.", runnerHealth));
+      errors.push(issue("RUNNER_UNAVAILABLE", "Configured Codex runner is not ready.", {
+        remediation: "Install or expose the Codex CLI, confirm `codex app-server --listen stdio://` starts, and rerun validation.",
+        ...runnerHealth
+      }));
     }
   } catch (error) {
     runnerHealth = { status: "unavailable", kind: config.runner?.preferred ?? "unknown", error: error.message };
@@ -367,7 +377,10 @@ export function parseCompletionFailureMarker(body) {
 
 function validateLocalConfig(config, errors) {
   if (!config.fizzy?.token) {
-    errors.push(issue("CONFIG_MISSING_SECRET", "fizzy.token must resolve to a non-empty value.", { path: "fizzy.token" }));
+    errors.push(issue("CONFIG_MISSING_SECRET", "fizzy.token must resolve to a non-empty value.", {
+      path: "fizzy.token",
+      remediation: "Set FIZZY_API_TOKEN or configure fizzy.token before running full startup validation."
+    }));
   }
 
   if (!validPort(config.server?.port) || !validPort(config.server?.base_port)) {
@@ -819,6 +832,19 @@ function shortRouteId(routeId) {
 
 function omitUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+function fizzyAccessFailureDetails(error) {
+  const status = error.status ?? error.metadata?.status;
+  const authenticationFailure = status === 401 || status === 403;
+  return omitUndefined({
+    cause: error.message,
+    status,
+    request_id: error.metadata?.request_id,
+    remediation: authenticationFailure
+      ? "Check FIZZY_API_TOKEN and confirm the token can access the configured Fizzy account and boards, then rerun validation."
+      : "Check FIZZY_API_URL, network access, Fizzy API availability, and configured account or board access, then rerun validation."
+  });
 }
 
 function canonicalJson(value) {
