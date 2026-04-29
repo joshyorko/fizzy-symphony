@@ -479,7 +479,8 @@ function resolveEnvironmentReferences(value, env, path = "") {
         }
         throw new FizzySymphonyError("CONFIG_MISSING_ENV", `Missing environment variable ${variable}`, {
           variable,
-          path
+          path,
+          remediation: `Set ${variable} before running setup, validate, or daemon commands, or replace the config reference with an explicit non-secret value where appropriate.`
         });
       }
       return env[variable];
