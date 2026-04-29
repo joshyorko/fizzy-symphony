@@ -143,6 +143,7 @@ test("daemon webhooks enqueue through the scheduler and trigger reconciliation",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         event_id: "event_1",
+        action: "card_triaged",
         card: { id: "card_1", board_id: "board_1" }
       })
     });

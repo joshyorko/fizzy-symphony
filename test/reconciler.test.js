@@ -462,6 +462,68 @@ test("webhook events enqueue candidate hints but still require router validation
   assert.equal(result.ignored, 1);
 });
 
+test("webhook golden-ticket refresh hints update routes before candidate discovery", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    polling: { use_api_filters: true, api_filters: {} }
+  };
+  const status = statusStore(config);
+  status.setRoutes([{ ...routeFixture(), source_column_id: "col_old" }]);
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    webhookEvents: [{
+      event_id: "event_golden",
+      card_id: "golden_1",
+      board_id: "board_1",
+      intent: "refresh_routes",
+      reason: "golden_ticket_changed"
+    }],
+    fizzy: {
+      async listGoldenCards({ query }) {
+        calls.push(["listGoldenCards", query]);
+        return {
+          data: [{
+            id: "golden_1",
+            board_id: "board_1",
+            column_id: "col_ready",
+            golden: true,
+            tags: ["agent-instructions", "move-to-done"]
+          }]
+        };
+      },
+      async getBoard(boardId) {
+        calls.push(["getBoard", boardId]);
+        return {
+          id: boardId,
+          columns: [
+            { id: "col_ready", name: "Ready" },
+            { id: "col_done", name: "Done" }
+          ],
+          cards: []
+        };
+      },
+      async listCards({ query }) {
+        calls.push(["listCards", query]);
+        assert.deepEqual(query.column_ids, ["col_ready"]);
+        return { data: [] };
+      }
+    },
+    router: {},
+    claims: {},
+    workspaceManager: {},
+    workflowLoader: {},
+    runner: {}
+  });
+
+  assert.equal(result.dispatched, 0);
+  assert.deepEqual(calls.map((entry) => entry[0]), ["listGoldenCards", "getBoard", "listCards"]);
+  assert.deepEqual(status.status().routes.map((route) => route.golden_card_id), ["golden_1"]);
+});
+
 test("polling discovery is the correctness path when webhook hints are absent or missed", async () => {
   const calls = [];
   const config = {

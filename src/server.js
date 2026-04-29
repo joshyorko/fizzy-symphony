@@ -1,7 +1,23 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { verifyWebhookRequest } from "./fizzy-client.js";
 
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+const DEFAULT_WEBHOOK_EVENT_CACHE_SIZE = 1000;
+const DEFAULT_WEBHOOK_EVENT_CACHE_TTL_MS = 10 * 60 * 1000;
+const SPAWN_EVENTS = new Set([
+  "card_assigned",
+  "card_board_changed",
+  "card_published",
+  "card_reopened",
+  "card_triaged"
+]);
+const CANCEL_TICK_EVENTS = new Set([
+  "card_auto_postponed",
+  "card_closed",
+  "card_postponed",
+  "card_sent_back_to_triage",
+  "card_unassigned"
+]);
 
 export function createLocalHttpHandler(deps = {}) {
   const {
@@ -11,7 +27,7 @@ export function createLocalHttpHandler(deps = {}) {
     now = () => new Date(),
     logger,
     maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
-    seenWebhookEventIds = new Set()
+    seenWebhookEventIds = createRecentWebhookEventCache({ now })
   } = deps;
   const webhookPath = normalizePath(config.webhook?.path ?? DEFAULT_WEBHOOK_PATH);
 
@@ -87,6 +103,52 @@ export function createWebhookHintQueue(options = {}) {
   };
 }
 
+export function createRecentWebhookEventCache(options = {}) {
+  const configuredMaxSize = Number(options.maxSize ?? DEFAULT_WEBHOOK_EVENT_CACHE_SIZE);
+  const configuredTtlMs = Number(options.ttlMs ?? DEFAULT_WEBHOOK_EVENT_CACHE_TTL_MS);
+  const maxSize = Number.isFinite(configuredMaxSize) ? Math.max(1, configuredMaxSize) : DEFAULT_WEBHOOK_EVENT_CACHE_SIZE;
+  const ttlMs = Number.isFinite(configuredTtlMs) ? Math.max(0, configuredTtlMs) : DEFAULT_WEBHOOK_EVENT_CACHE_TTL_MS;
+  const now = options.now ?? (() => new Date());
+  const entries = new Map();
+
+  function prune() {
+    const current = nowMs(now);
+    if (ttlMs > 0) {
+      const cutoff = current - ttlMs;
+      for (const [eventId, seenAt] of entries.entries()) {
+        if (seenAt < cutoff) entries.delete(eventId);
+      }
+    }
+    while (entries.size > maxSize) {
+      entries.delete(entries.keys().next().value);
+    }
+  }
+
+  return {
+    has(eventId) {
+      if (!eventId) return false;
+      prune();
+      return entries.has(String(eventId));
+    },
+    add(eventId) {
+      if (!eventId) return;
+      prune();
+      const key = String(eventId);
+      entries.delete(key);
+      entries.set(key, nowMs(now));
+      prune();
+    },
+    snapshot() {
+      prune();
+      return [...entries.keys()];
+    },
+    get size() {
+      prune();
+      return entries.size;
+    }
+  };
+}
+
 async function handleWebhook(request, response, options = {}) {
   const {
     config = {},
@@ -112,8 +174,17 @@ async function handleWebhook(request, response, options = {}) {
     if (!supplied) {
       return writeError(response, 401, "WEBHOOK_SIGNATURE_REQUIRED", "Webhook signature is required.");
     }
-    if (!verifyWebhookSignature(rawBody, supplied, secret)) {
+    const verification = verifyWebhookRequest({
+      rawBody,
+      headers: request.headers,
+      secret,
+      now: currentDate(now)
+    });
+    if (!verification.ok && verification.code === "INVALID_WEBHOOK_SIGNATURE") {
       return writeError(response, 401, "WEBHOOK_SIGNATURE_INVALID", "Webhook signature is invalid.");
+    }
+    if (!verification.ok) {
+      return writeError(response, verification.status ?? 400, verification.code, webhookVerificationMessage(verification.code));
     }
   }
 
@@ -124,10 +195,8 @@ async function handleWebhook(request, response, options = {}) {
     return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must be valid JSON.");
   }
 
-  const hint = candidateHintFromWebhookEvent(event, { now });
-  if (!hint.card_id) {
-    return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must identify a candidate card.");
-  }
+  const classification = classifyWebhookEvent(event, { config });
+  const hint = candidateHintFromWebhookEvent(event, { now, classification });
 
   if (hint.event_id && seenWebhookEventIds.has(hint.event_id)) {
     return writeJson(response, 200, {
@@ -137,6 +206,22 @@ async function handleWebhook(request, response, options = {}) {
       signature_verification: secret ? "enabled" : "disabled",
       webhook_management: config.webhook?.manage ? "managed" : "unmanaged"
     });
+  }
+
+  if (classification.status === "ignored") {
+    if (hint.event_id) seenWebhookEventIds.add(hint.event_id);
+    return writeJson(response, 200, {
+      ok: true,
+      status: "ignored",
+      reason: classification.reason,
+      hint: publicHint(hint),
+      signature_verification: secret ? "enabled" : "disabled",
+      webhook_management: config.webhook?.manage ? "managed" : "unmanaged"
+    });
+  }
+
+  if (!hint.card_id) {
+    return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must identify a candidate card.");
   }
 
   if (hint.event_id) seenWebhookEventIds.add(hint.event_id);
@@ -194,32 +279,51 @@ function readRawBody(request, { maxBodyBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
   });
 }
 
-function verifyWebhookSignature(rawBody, signatureHeader, secret) {
-  const supplied = normalizeSignature(signatureHeader);
-  if (!/^[a-f0-9]{64}$/iu.test(supplied)) return false;
+function classifyWebhookEvent(event, { config = {} } = {}) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return { status: "ignored", reason: "unsupported_event" };
+  }
 
-  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-  const suppliedBytes = Buffer.from(supplied, "hex");
-  const expectedBytes = Buffer.from(expected, "hex");
-  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+  const action = eventAction(event);
+  const card = eventCard(event);
+
+  if (isAgentInstructionsCard(card)) {
+    return { status: "accepted", intent: "refresh_routes", reason: "golden_ticket_changed" };
+  }
+
+  if (action === "comment_created") {
+    if (hasRerunSignal(event, card)) {
+      return { status: "accepted", intent: "spawn", reason: "comment_created:rerun" };
+    }
+    if (isSelfAuthoredEvent(event, config)) {
+      return { status: "ignored", reason: "self_authored_comment" };
+    }
+    return { status: "ignored", reason: "comment_without_rerun_signal" };
+  }
+
+  if (SPAWN_EVENTS.has(action)) {
+    return { status: "accepted", intent: "spawn", reason: action };
+  }
+
+  if (CANCEL_TICK_EVENTS.has(action)) {
+    return { status: "accepted", intent: "cancel_tick", reason: action };
+  }
+
+  return { status: "ignored", reason: "unsupported_event" };
 }
 
-function normalizeSignature(signatureHeader) {
-  const raw = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-  const value = String(raw ?? "").trim();
-  return value.startsWith("sha256=") ? value.slice("sha256=".length) : value;
-}
-
-function candidateHintFromWebhookEvent(event, { now = () => new Date() } = {}) {
+function candidateHintFromWebhookEvent(event, { now = () => new Date(), classification = {} } = {}) {
   if (!event || typeof event !== "object" || Array.isArray(event)) return {};
 
-  const card = event.card ?? event.data?.card ?? event.payload?.card ?? {};
+  const card = eventCard(event);
   const board = event.board ?? event.data?.board ?? event.payload?.board ?? {};
   const cardId = event.card_id ?? event.cardId ?? card.id ?? card.card_id;
   const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? card.board_id ?? card.boardId;
 
   return omitUndefined({
     source: "webhook",
+    intent: classification.intent,
+    reason: classification.reason,
     event_id: event.event_id ?? event.eventId ?? event.id,
     card_id: cardId,
     board_id: boardId,
@@ -229,10 +333,74 @@ function candidateHintFromWebhookEvent(event, { now = () => new Date() } = {}) {
 
 function publicHint(hint = {}) {
   return omitUndefined({
+    intent: hint.intent,
+    reason: hint.reason,
     event_id: hint.event_id,
     card_id: hint.card_id,
     board_id: hint.board_id
   });
+}
+
+function eventAction(event = {}) {
+  const action = event.action ?? event.event ?? event.type ?? event.data?.action ?? event.payload?.action;
+  return String(action ?? "").trim().toLowerCase().replace(/[.-]/gu, "_");
+}
+
+function eventCard(event = {}) {
+  return event.card ?? event.data?.card ?? event.payload?.card ?? {};
+}
+
+function isAgentInstructionsCard(card = {}) {
+  return normalizedTags(card).includes("agent-instructions");
+}
+
+function hasRerunSignal(event = {}, card = eventCard(event)) {
+  if (normalizedTags(card).includes("agent-rerun")) return true;
+  if (normalizedTags(event).includes("agent-rerun")) return true;
+  const comment = event.comment ?? event.data?.comment ?? event.payload?.comment ?? {};
+  return /(^|\s)#?agent-rerun(\s|$)/iu.test(String(comment.body ?? comment.text ?? ""));
+}
+
+function normalizedTags(source = {}) {
+  const tags = source.tags ?? source.tag_names ?? [];
+  if (!Array.isArray(tags)) return [];
+  return tags.map((tag) => normalizeTagName(tag)).filter(Boolean);
+}
+
+function normalizeTagName(tag) {
+  const value = typeof tag === "object" && tag
+    ? tag.name ?? tag.title ?? tag.slug ?? tag.id
+    : tag;
+  return String(value ?? "").trim().replace(/^#+/u, "").toLowerCase();
+}
+
+function isSelfAuthoredEvent(event = {}, config = {}) {
+  const botUserId = config.fizzy?.bot_user_id;
+  if (!botUserId) return false;
+  return eventActors(event).includes(String(botUserId));
+}
+
+function eventActors(event = {}) {
+  const comment = event.comment ?? event.data?.comment ?? event.payload?.comment ?? {};
+  return [
+    event.actor?.id,
+    event.user?.id,
+    event.author?.id,
+    event.created_by?.id,
+    event.data?.actor?.id,
+    event.payload?.actor?.id,
+    comment.author_id,
+    comment.user_id,
+    comment.author?.id,
+    comment.user?.id
+  ].filter((value) => value !== undefined && value !== null).map(String);
+}
+
+function webhookVerificationMessage(code) {
+  if (code === "STALE_WEBHOOK_EVENT") {
+    return "Webhook timestamp is missing, invalid, or outside the freshness tolerance.";
+  }
+  return "Webhook request verification failed.";
 }
 
 function callStatus(status, method, fallback) {
@@ -270,6 +438,16 @@ function writeJson(response, statusCode, body, headers = {}) {
 function toIso(value) {
   if (value instanceof Date) return value.toISOString();
   return new Date(value).toISOString();
+}
+
+function currentDate(now) {
+  return typeof now === "function" ? now() : now;
+}
+
+function nowMs(now) {
+  const value = currentDate(now);
+  const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
 function omitUndefined(object) {
