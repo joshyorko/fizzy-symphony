@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
 
@@ -212,10 +212,15 @@ export function generateAnnotatedConfig(options = {}) {
     sdkContract = "",
     botUserId = "",
     webhook = {},
-    managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {}
+    managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
+    configDir = ".",
+    workspaceRepo = ".",
+    allowedRoots
   } = options;
 
   const boardEntries = boards?.length ? boards : [board];
+  const workspaceRepoPath = relativePathForConfig(configDir, workspaceRepo);
+  const safetyAllowedRoots = allowedRoots?.length ? allowedRoots : uniqueStrings([workspaceRepoPath, "."]);
   let template = readFileSync(TEMPLATE_PATH, "utf8");
   template = template.replace(/account: my-account/u, `account: ${yamlScalar(account)}`);
   template = template.replace(
@@ -229,6 +234,12 @@ export function generateAnnotatedConfig(options = {}) {
   template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
   template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
   template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret_env ? `$${webhook.secret_env}` : "")}`);
+  template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(workspaceRepoPath)}`);
+  template = template.replace(/\n      repo: \.\n/u, `\n      repo: ${yamlScalar(workspaceRepoPath)}\n`);
+  template = template.replace(
+    /  allowed_roots:\n(?:    - .+\n)+/u,
+    `  allowed_roots:\n${renderStringList(safetyAllowedRoots, 4)}\n`
+  );
 
   if (Object.hasOwn(webhook, "manage")) {
     template = template.replace(/manage: false/u, `manage: ${Boolean(webhook.manage)}`);
@@ -248,7 +259,10 @@ export function generateAnnotatedConfig(options = {}) {
 
 export async function writeAnnotatedConfig(configPath, options = {}) {
   await mkdir(dirname(configPath), { recursive: true });
-  const generated = generateAnnotatedConfig(options);
+  const generated = generateAnnotatedConfig({
+    ...options,
+    configDir: options.configDir ?? dirname(configPath)
+  });
   await writeFile(configPath, generated, "utf8");
   return { path: configPath, bytes: Buffer.byteLength(generated) };
 }
@@ -466,6 +480,11 @@ function renderStringMap(map, indent) {
     .join("\n");
 }
 
+function renderStringList(values, indent) {
+  const padding = " ".repeat(indent);
+  return values.map((value) => `${padding}- ${yamlScalar(value)}`).join("\n");
+}
+
 function isOptionalEnvironmentReference(path) {
   return path === "webhook.secret";
 }
@@ -500,6 +519,11 @@ function resolveFrom(base, value) {
   return isAbsolute(value) ? value : resolve(base, value);
 }
 
+function relativePathForConfig(configDir, path) {
+  const relativePath = relative(resolve(configDir), resolve(path));
+  return relativePath === "" ? "." : relativePath;
+}
+
 function isValidPortValue(value) {
   return value === "auto" || isTcpPort(value);
 }
@@ -516,6 +540,10 @@ function setPath(object, parts, value) {
     target = target[part];
   }
   target[parts.at(-1)] = value;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function yamlScalar(value) {

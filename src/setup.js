@@ -102,6 +102,7 @@ export async function runSetup(options = {}) {
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     botUserId: options.botUserId ?? "",
+    workspaceRepo,
     webhook,
     managedWebhookIdsByBoard: Object.fromEntries(
       Object.entries(managedWebhooks).map(([boardId, managedWebhook]) => [boardId, managedWebhook.id])
