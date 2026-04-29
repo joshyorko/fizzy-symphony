@@ -234,6 +234,14 @@ test("status exposes SPEC 22 metadata surfaces and bounds recent history", () =>
     comment_id: "comment_workpad",
     updated_at: "2026-04-29T12:04:00.000Z"
   });
+  store.recordWorkpadFailure({
+    card_id: "card_running",
+    run_id: "run_running",
+    failed_comment_id: "comment_workpad",
+    replacement_comment_id: "comment_workpad_replacement",
+    error: { code: "COMMENT_UPDATE_FAILED", message: "comment update failed" },
+    occurred_at: "2026-04-29T12:04:30.000Z"
+  });
 
   for (let index = 0; index < 55; index += 1) {
     store.startRun({ id: `run_done_${index}`, card: { id: `card_done_${index}` } });
@@ -256,6 +264,9 @@ test("status exposes SPEC 22 metadata surfaces and bounds recent history", () =>
   assert.equal(snapshot.cleanup_state.status, "preserved");
   assert.deepEqual(snapshot.etag_cache, { hits: 5, misses: 2, invalid: 1 });
   assert.equal(snapshot.workpads[0].comment_id, "comment_workpad");
+  assert.equal(snapshot.workpad_failures[0].failed_comment_id, "comment_workpad");
+  assert.equal(snapshot.workpad_failures[0].replacement_comment_id, "comment_workpad_replacement");
+  assert.equal(snapshot.recent_warnings[0].code, "WORKPAD_UPDATE_FAILED");
   assert.equal(snapshot.recent_completions.length, 50);
   assert.equal(snapshot.recent_completions[0].run_id, "run_done_5");
   assert.equal(snapshot.recent_completions.at(-1).run_id, "run_done_54");
