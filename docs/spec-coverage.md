@@ -31,9 +31,9 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Fizzy API usage
 - Status: newly covered
 - Tests: `test/etag-cache.test.js`, `test/fizzy-client.test.js`, `test/setup.test.js`, `test/polling.test.js`
-- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, webhook setup through the injected Fizzy client, user/tag listing, and cache-safe reads for board/card/comment/tag/user/webhook/golden resources.
-- Remaining: assignment/watch visibility, workpad comment update failure replacement, and daemon-managed step updates need a real client workflow layer.
-- Follow-up: `fizzy-symphony: implement real Fizzy API polling, ETag, webhook, and workpad client coverage`.
+- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
+- Remaining: live API smoke testing against a disposable board still needs credentials and an explicit operator-approved environment.
+- Follow-up: `fizzy-symphony: live Fizzy API smoke test with disposable board`.
 
 ### Workspace isolation
 - Status: passing
