@@ -643,5 +643,5 @@ function parseYamlScalar(value) {
 }
 
 function isFizzySymphonyError(error) {
-  return error instanceof FizzySymphonyError || Boolean(error?.code);
+  return error instanceof FizzySymphonyError;
 }
