@@ -16,7 +16,7 @@ operate the local scaffold safely while `fizzy-symphony` is still under construc
 ## Current Implementation Status
 
 The current scaffold is a Node.js ESM project with no external runtime dependencies. The local
-baseline on 2026-04-29 is 157/157 passing via `npm test`.
+baseline on 2026-04-29 is 222/222 passing via `npm test` on Node v25.9.0.
 
 Implemented scaffold behavior:
 
@@ -28,11 +28,17 @@ Implemented scaffold behavior:
 - deterministic workspace metadata and identity helpers
 - workflow loading and prompt rendering
 - status snapshots
+- live Fizzy HTTP client wiring with ETag-aware reads and account-scoped resources
+- webhook freshness, signature, dedupe, self-event, and lifecycle hint handling
+- durable proof writing and completion policy failure markers
+- live rich-text comment normalization for claims, completion markers, digests, and prompt context
+- timed claim renewal with failure cancellation
 - injected fake-Fizzy and fake-runner reconciliation slice
 - real Codex CLI app-server runner behind the SDK-shaped runner interface
 
-The live Fizzy client, full supervisor/completion policy application, durable proof writing,
-webhook/poll hardening, and real smoke tests are not implemented yet.
+Disposable-board live Fizzy smoke and same-thread continuation above `agent.max_turns: 1` remain
+pending. Do not claim live production readiness until a gated disposable-board smoke has actually
+run.
 
 ## Workspace Boundaries
 

@@ -184,6 +184,7 @@ test("runReconciliationTick cancels an active run when the refreshed card is clo
     "refresh:card_1",
     "renew:run_card_1",
     "cancel:turn_card_1:card_closed",
+    "stop:session_card_1",
     "release:run_card_1:cancelled",
     "preserve:run_card_1:cancelled:card_closed",
     "comment:cancelled:card_closed",
@@ -219,7 +220,9 @@ for (const [name, card, reason] of [
 
 for (const [name, card, reason] of [
   ["moved out of the routed column", cardFixture({ column_id: "col_triage" }), "card_left_routed_column"],
-  ["moved off the watched board", cardFixture({ board_id: "board_other" }), "card_board_changed"]
+  ["moved out of the routed column using nested column shape", cardFixture({ column_id: undefined, column: { id: "col_triage" } }), "card_left_routed_column"],
+  ["moved off the watched board", cardFixture({ board_id: "board_other" }), "card_board_changed"],
+  ["moved off the watched board using nested board shape", cardFixture({ board_id: undefined, board: { id: "board_other" } }), "card_board_changed"]
 ]) {
   test(`runReconciliationTick cancels an active run when the refreshed card is ${name}`, async () => {
     const config = configFixture();
@@ -284,7 +287,7 @@ test("runReconciliationTick escalates from Runner.cancel failure to stopSession 
   const deps = activeReconciliationDeps({
     refreshedCard: cardFixture({ closed: true }),
     cancelResult: { type: "CancelResult", status: "failed", success: false },
-    stopResult: { type: "StopSessionResult", status: "stopped" }
+    stopResult: { type: "StopSessionResult", status: "failed", success: false }
   });
 
   const result = await runReconciliationTick({ config, status, now: fixedNow, ...deps });
@@ -295,7 +298,7 @@ test("runReconciliationTick escalates from Runner.cancel failure to stopSession 
 
   const cancellation = status.status().runs.cancelled[0].cancellation;
   assert.equal(cancellation.states.runner_cancel_sent.status, "failed");
-  assert.equal(cancellation.states.session_stopped.status, "succeeded");
+  assert.equal(cancellation.states.session_stopped.status, "failed");
   assert.equal(cancellation.states.process_terminated.status, "succeeded");
   assert.equal(cancellation.manual_intervention_required, false);
 });

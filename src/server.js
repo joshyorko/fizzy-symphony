@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { commentBody } from "./fizzy-normalize.js";
+
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_WEBHOOK_MAX_EVENT_AGE_SECONDS = 300;
@@ -370,7 +372,7 @@ function commentAuthorId(event = {}) {
 function hasExplicitRerunSignal(event = {}, card = {}) {
   if (event.rerun_requested === true || event.rerunRequested === true) return true;
   if (normalizedTags(card).includes("agent-rerun")) return true;
-  const body = event.comment?.body ?? event.comment?.content ?? event.body ?? "";
+  const body = commentBody(event.comment ?? { body: event.body ?? event.content ?? event.text });
   return /\bagent-rerun\b/iu.test(String(body));
 }
 

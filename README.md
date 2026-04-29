@@ -5,13 +5,13 @@ Fizzy-backed Symphony daemon scaffold.
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 216/216 passing via `npm test` on Node v25.9.0. `package.json`
+current local baseline is 222/222 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
 startup validation, route decisions, claim markers, workspace metadata, workflow loading/rendering,
-status snapshots, live Fizzy HTTP client wiring, live-comment routing markers, timed claim renewal,
-workspace preparation failure release, webhook freshness/self-event filtering, runner session stop,
+status snapshots, live Fizzy HTTP client wiring, live-comment and rich-text marker normalization,
+timed claim renewal failure cancellation, workspace preparation failure release, webhook freshness/self-event filtering, runner session stop,
 and a real Codex CLI app-server runner behind the SDK-shaped runner interface.
 
 Disposable-board live smoke is still gated on explicit credentials/operator approval. Same-thread

@@ -173,3 +173,13 @@ test("cardDigest excludes only explicit daemon-owned tags and marker comments", 
     "non-marker comments remain part of the card digest"
   );
 });
+
+test("cardDigest treats live Fizzy rich-text comment bodies like plain text", () => {
+  const route = baseRoute();
+  const plainText = "Human context belongs to the card digest.";
+
+  assert.equal(
+    cardDigest(baseCard({ comments: [{ id: "comment_1", body: plainText }] }), route),
+    cardDigest(baseCard({ comments: [{ id: "comment_1", body: { plain_text: plainText, html: "<p>ignored</p>" } }] }), route)
+  );
+});

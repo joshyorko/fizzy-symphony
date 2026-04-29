@@ -151,7 +151,11 @@ test("default daemon routing hydrates live comments and prevents comment_once lo
             resultComment: { id: "comment_result" },
             completedAt: "2026-04-29T12:00:00.000Z"
           });
-          return [{ id: "comment_marker", body: marker.body, created_at: "2026-04-29T12:00:00.000Z" }];
+          return [{
+            id: "comment_marker",
+            body: { plain_text: marker.body, html: "<p>marker</p>" },
+            created_at: "2026-04-29T12:00:00.000Z"
+          }];
         }
       }),
       claimsFactory: () => ({

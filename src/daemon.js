@@ -16,6 +16,7 @@ import { loadWorkflow } from "./workflow.js";
 import { createWorkspaceManager } from "./workspace.js";
 import { createCodexCliAppServerRunner } from "./codex-cli-app-server-runner.js";
 import { createFakeCodexRunner } from "./runner-contract.js";
+import { commentBody } from "./fizzy-normalize.js";
 
 export async function startDaemon(options = {}) {
   const {
@@ -265,11 +266,6 @@ function parseMarkers(comments, parser) {
   return markers;
 }
 
-function commentBody(comment) {
-  if (typeof comment === "string") return comment;
-  return String(comment?.body ?? comment?.content ?? comment?.text ?? "");
-}
-
 async function cancelActiveRuns(options = {}) {
   const {
     config,
@@ -319,7 +315,7 @@ async function cancelActiveRuns(options = {}) {
       }
     }
 
-    if (cancellation.states.runner_cancel_sent.status !== "succeeded" && run.session) {
+    if (run.session) {
       if (typeof runner?.stopSession === "function") {
         try {
           const stopResult = await withOptionalTimeout(runner.stopSession(run.session), config.runner?.stop_session_timeout_ms);

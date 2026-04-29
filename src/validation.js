@@ -765,7 +765,7 @@ function isInsideAnyRoot(path, allowedRoots) {
 }
 
 function normalizedTags(card) {
-  return [...new Set((card.tags ?? []).map(normalizeTag).filter(Boolean))];
+  return [...new Set((card.tags ?? card.tag_names ?? card.tagNames ?? []).map(normalizeTag).filter(Boolean))];
 }
 
 function hasTag(card, tag) {

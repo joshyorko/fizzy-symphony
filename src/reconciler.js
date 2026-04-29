@@ -9,6 +9,7 @@ import {
   writeDurableProof
 } from "./completion.js";
 import { cardDigest } from "./domain.js";
+import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
 import { renderPrompt } from "./workflow.js";
 
 export async function runReconciliationTick(options = {}) {
@@ -344,18 +345,18 @@ async function cancelStatusRun({
   cancellation.states.runner_cancel_sent = cancelResult.state;
   if (cancelResult.result) cancellation.runner_cancel = cancelResult.result;
 
-  if (cancelResult.state.status !== "succeeded") {
+  if (run.session) {
     const stopResult = await stopRunnerSession({ config, runner, run });
     cancellation.states.session_stopped = stopResult.state;
     if (stopResult.result) cancellation.session_stop = stopResult.result;
 
     const ownedProcess = run.session?.process_owned === true ||
       (run.session?.process_owned === undefined && cancelResult.state.status === "failed");
-    if (ownedProcess) {
+    if (stopResult.state.status !== "succeeded" && ownedProcess) {
       const terminateResult = await terminateOwnedRunnerProcess({ runner, run });
       cancellation.states.process_terminated = terminateResult.state;
       if (terminateResult.result) cancellation.process_termination = terminateResult.result;
-    } else {
+    } else if (stopResult.state.status !== "succeeded") {
       cancellation.manual_intervention_required = true;
     }
   }
@@ -452,16 +453,47 @@ async function terminateOwnedRunnerProcess({ runner, run }) {
   }
 }
 
+async function finalizeRunnerSession({ config, runner, run }) {
+  const finalization = {
+    states: {
+      session_stopped: { status: "skipped" },
+      process_terminated: { status: "skipped" }
+    },
+    manual_intervention_required: false
+  };
+
+  if (!run?.session) return finalization;
+
+  const stopResult = await stopRunnerSession({ config, runner, run });
+  finalization.states.session_stopped = stopResult.state;
+  if (stopResult.result) finalization.session_stop = stopResult.result;
+
+  if (stopResult.state.status !== "succeeded") {
+    if (run.session.process_owned === true) {
+      const terminateResult = await terminateOwnedRunnerProcess({ runner, run });
+      finalization.states.process_terminated = terminateResult.state;
+      if (terminateResult.result) finalization.process_termination = terminateResult.result;
+      finalization.manual_intervention_required = terminateResult.state.status !== "succeeded";
+    } else {
+      finalization.manual_intervention_required = true;
+    }
+  }
+
+  return finalization;
+}
+
 function activeRunIneligibleReason(run, card) {
   if (!card) return "card_missing";
-  const status = String(card.status ?? "").toLowerCase();
+  const status = cardStatus(card);
   if (card.closed === true || status === "closed") return "card_closed";
   if (card.auto_postponed === true) return "card_auto_postponed";
   if (card.postponed === true || status === "postponed" || status === "not_now" || status === "not now") {
     return "card_postponed";
   }
-  if (card.board_id && run.board_id && card.board_id !== run.board_id) return "card_board_changed";
-  if (run.route?.source_column_id && card.column_id && card.column_id !== run.route.source_column_id) {
+  const boardId = cardBoardId(card);
+  const columnId = cardColumnId(card);
+  if (boardId && run.board_id && boardId !== run.board_id) return "card_board_changed";
+  if (run.route?.source_column_id && columnId && columnId !== run.route.source_column_id) {
     return "card_left_routed_column";
   }
   return null;
@@ -643,7 +675,14 @@ async function runCard({
       const failed = status?.failRun?.(runId, error);
       orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
       recordLifecycle(status, orchestratorState);
-      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...(failed ?? run), session } });
+      await writeRunAttempt(status, {
+        ...(failed ?? run),
+        completion_marker: recordedFailureMarker,
+        proof,
+        result_comment_id: resultComment?.id,
+        runner_session_finalization: runnerSessionFinalization
+      }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       return { status: "failed", run: failed ?? run, error };
@@ -677,7 +716,14 @@ async function runCard({
       const failed = status?.failRun?.(runId, error);
       orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
       recordLifecycle(status, orchestratorState);
-      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...(failed ?? run), session } });
+      await writeRunAttempt(status, {
+        ...(failed ?? run),
+        completion_marker: recordedFailureMarker,
+        proof,
+        result_comment_id: resultComment?.id,
+        runner_session_finalization: runnerSessionFinalization
+      }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       return { status: "failed", run: failed ?? run, error };
@@ -780,7 +826,8 @@ async function runCard({
     });
     recordLifecycle(status, orchestratorState);
     const failed = status?.failRun?.(runId, error);
-    await writeRunAttempt(status, failed ?? run, "failed");
+    const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: failed ?? run });
+    await writeRunAttempt(status, { ...(failed ?? run), runner_session_finalization: runnerSessionFinalization }, "failed");
     await claims.release?.({ config, claim, run: failed ?? run, status: "failed", now, error });
     return { status: "failed", run: failed ?? run, error };
   }

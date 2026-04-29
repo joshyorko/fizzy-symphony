@@ -2,6 +2,7 @@ import { readFile as readFileAsync } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
+import { asArray, cardDescription, commentBody, richText } from "./fizzy-normalize.js";
 
 const defaultFileSystem = { readFile: readFileAsync };
 
@@ -417,7 +418,7 @@ function renderCard(card) {
       title: card.title ?? card.name,
       assignees: formatInlineList(card.assignees, personName)
     }),
-    `Description:\n${displayBlock(card.description ?? card.body ?? card.content)}`,
+    `Description:\n${displayBlock(cardDescription(card))}`,
     renderSteps(card.steps),
     renderList("Tags", card.tags, tagName),
     renderList("Comments", card.comments, commentLine),
@@ -435,9 +436,9 @@ function renderRecord(title, values) {
 
 function renderSteps(steps = []) {
   if (!Array.isArray(steps) || steps.length === 0) return "Steps:\n- none";
-  return `Steps:\n${steps.map((step) => {
+  return `Steps:\n${asArray(steps).map((step) => {
     const completed = Boolean(step?.completed ?? step?.done ?? step?.checked);
-    const title = typeof step === "string" ? step : step?.title ?? step?.name ?? step?.body ?? step?.description ?? "";
+    const title = typeof step === "string" ? step : richText(step?.title ?? step?.name ?? step?.body ?? step?.description ?? "");
     return `- [${completed ? "x" : " "}] ${title}`;
   }).join("\n")}`;
 }
@@ -455,7 +456,7 @@ function formatInlineList(items = [], formatter = displayScalar) {
 function commentLine(comment) {
   if (typeof comment === "string") return comment;
   const author = personName(comment.author ?? comment.user ?? comment.created_by);
-  const body = comment.body ?? comment.text ?? comment.content ?? "";
+  const body = commentBody(comment);
   return author ? `${author}: ${body}` : body;
 }
 
