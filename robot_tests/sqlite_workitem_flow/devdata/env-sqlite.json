@@ -1,7 +1,0 @@
-{
-  "RC_WORKITEM_ADAPTER": "robocorp_adapters_custom._sqlite.SQLiteAdapter",
-  "RC_WORKITEM_QUEUE_NAME": "fizzy_symphony_smoke_input",
-  "RC_WORKITEM_OUTPUT_QUEUE_NAME": "fizzy_symphony_smoke_results",
-  "RC_WORKITEM_DB_PATH": "./output/fizzy-symphony-smoke.db",
-  "RC_WORKITEM_FILES_DIR": "./output/workitem-files"
-}
