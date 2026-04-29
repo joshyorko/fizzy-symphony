@@ -4,7 +4,9 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { loadConfig } from "../src/config.js";
 import { runSetup } from "../src/setup.js";
+import { validateStartup } from "../src/validation.js";
 
 function boardFixture(overrides = {}) {
   return {
@@ -301,6 +303,34 @@ test("runSetup writes every selected board to the generated config", async () =>
   assert.match(written, /label: Agent Board/);
   assert.match(written, /id: board_2/);
   assert.match(written, /label: Docs Board/);
+});
+
+test("runSetup writes default config paths that resolve to the selected workspace repo", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-default-config-paths-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await runSetup({
+    configPath,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  const config = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+  assert.equal(config.workspaces.default_repo, dir);
+  assert.equal(config.workspaces.registry.app.repo, dir);
+  assert.ok(config.safety.allowed_roots.includes(dir));
+
+  const startup = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+  assert.equal(startup.ok, true, JSON.stringify(startup.errors));
 });
 
 test("runSetup manages webhooks by listing, creating, updating, and reactivating without requiring an optional secret", async () => {
