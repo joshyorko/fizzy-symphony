@@ -111,6 +111,55 @@ test("startDaemon wires startup, HTTP status, scheduler ticks, recovery, and sta
   }
 });
 
+test("daemon webhooks enqueue through the scheduler and trigger reconciliation", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-webhook-");
+  const configPath = await writeConfig(root);
+  const calls = [];
+  const seenHints = [];
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    schedulerOptions: { immediate: false },
+    dependencies: {
+      ...daemonDependencies({ calls }),
+      fizzyFactory: () => ({
+        ...fakeFizzy(),
+        async discoverCandidates({ hints }) {
+          calls.push("discover");
+          seenHints.push(hints);
+          return [];
+        },
+        async refreshActiveCards() {
+          calls.push("refreshActiveCards");
+          return [];
+        }
+      })
+    }
+  });
+
+  try {
+    const response = await fetchJson(`${daemon.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_1",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+
+    assert.equal(response.response.status, 202);
+    await waitFor(() => calls.includes("discover"));
+    assert.deepEqual(seenHints[0], [{
+      event_id: "event_1",
+      card_id: "card_1",
+      board_id: "board_1"
+    }]);
+    assert.equal(calls.includes("startSession"), false);
+  } finally {
+    await daemon.stop("test");
+  }
+});
+
 test("SIGTERM shutdown stops scheduling, cancels active work, preserves workspace, closes server, and removes own registry", async () => {
   const root = await tempProject("fizzy-symphony-daemon-signal-");
   const configPath = await writeConfig(root);
