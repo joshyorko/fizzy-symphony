@@ -50,7 +50,7 @@ function fakeFizzy(overrides = {}) {
     },
     async listTags(account) {
       calls.push(["listTags", account]);
-      return [
+      return overrides.tags ?? [
         { id: "tag_agent", name: "agent-instructions" },
         { id: "tag_codex", name: "backend-codex" },
         { id: "tag_done", name: "move-to-done" }
@@ -106,6 +106,8 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.equal(result.account, "acct_1");
   assert.equal(result.boards[0].id, "board_1");
   assert.equal(result.runner.kind, "cli_app_server");
+  assert.deepEqual(result.resolvedTags["agent-instructions"], { id: "tag_agent", name: "agent-instructions" });
+  assert.deepEqual(result.resolvedTags["move-to-done"], { id: "tag_done", name: "move-to-done" });
   assert.deepEqual(result.routes.map((route) => route.id), ["board:board_1:column:col_ready:golden:golden_1"]);
   assert.equal(result.warnings[0].code, "ENTROPY_AUTO_POSTPONE");
   assert.deepEqual(
@@ -118,6 +120,72 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.match(written, /account: acct_1/);
   assert.match(written, /id: board_1/);
   assert.match(written, /preferred: cli_app_server/);
+});
+
+test("runSetup falls back to cli_app_server when SDK detection lacks an exact package and contract", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-sdk-fallback-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+
+  const result = await runSetup({
+    configPath: join(dir, "config.yml"),
+    fizzy: fakeFizzy(),
+    runner: fakeRunner({ detect: { kind: "sdk", available: true, package: "@openai/codex" } }),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.runner.kind, "cli_app_server");
+  assert.equal(result.runner.reason, "SDK runner requires an exact package and contract.");
+  assert.match(await readFile(join(dir, "config.yml"), "utf8"), /preferred: cli_app_server/);
+});
+
+test("runSetup accepts SDK detection only with exact package and contract", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-sdk-accepted-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+
+  const result = await runSetup({
+    configPath: join(dir, "config.yml"),
+    fizzy: fakeFizzy(),
+    runner: fakeRunner({
+      detect: {
+        kind: "sdk",
+        available: true,
+        package: "@openai/codex-sdk",
+        contract: "codex-sdk-js-v1"
+      }
+    }),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.runner.kind, "sdk");
+  assert.equal(result.runner.package, "@openai/codex-sdk");
+  const written = await readFile(join(dir, "config.yml"), "utf8");
+  assert.match(written, /preferred: sdk/);
+  assert.match(written, /package: @openai\/codex-sdk/);
+  assert.match(written, /contract: codex-sdk-js-v1/);
+});
+
+test("runSetup fails existing-board validation when required managed tags cannot be resolved", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-tags-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+
+  await assert.rejects(
+    () => runSetup({
+      configPath: join(dir, "config.yml"),
+      fizzy: fakeFizzy({ tags: [{ id: "tag_codex", name: "backend-codex" }] }),
+      runner: fakeRunner(),
+      account: "acct_1",
+      selectedBoardIds: ["board_1"],
+      workspaceRepo: dir,
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "MANAGED_TAG_NOT_FOUND" && error.details.missing.includes("agent-instructions")
+  );
 });
 
 test("runSetup resolves managed webhook setup through the injected Fizzy client", async () => {

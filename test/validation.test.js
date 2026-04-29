@@ -97,24 +97,44 @@ function board(overrides = {}) {
   };
 }
 
-function fakeFizzy({ identityError = false, boards = [board()], users = [{ id: "bot_1" }], tags = [] } = {}) {
+function fakeFizzy({
+  identityError = false,
+  boards = [board()],
+  users = [{ id: "bot_1" }],
+  tags = [
+    { id: "tag_agent", name: "agent-instructions" },
+    { id: "tag_codex", name: "backend-codex" },
+    { id: "tag_codex_alias", name: "codex" },
+    { id: "tag_done", name: "move-to-done" },
+    { id: "tag_workspace", name: "workspace-app" },
+    { id: "tag_model", name: "model-gpt-5" },
+    { id: "tag_persona", name: "persona-repo-agent" }
+  ]
+} = {}) {
+  const calls = [];
   return {
+    calls,
     async getIdentity() {
+      calls.push(["getIdentity"]);
       if (identityError) throw new Error("invalid");
       return { accounts: [{ id: "acct", name: "Account" }], user: { id: "user_1" } };
     },
     async listUsers() {
+      calls.push(["listUsers"]);
       return users;
     },
     async listTags() {
+      calls.push(["listTags"]);
       return tags;
     },
     async getBoard(boardId) {
+      calls.push(["getBoard", boardId]);
       const found = boards.find((candidate) => candidate.id === boardId);
       if (!found) throw new Error(`missing board ${boardId}`);
       return found;
     },
     async getEntropy() {
+      calls.push(["getEntropy"]);
       return { warnings: [{ code: "ENTROPY_UNKNOWN", message: "Entropy settings not visible" }] };
     }
   };
@@ -149,6 +169,78 @@ function errorCodes(report) {
 test("normalizeTag trims, removes leading hash, and compares case-insensitively", () => {
   assert.equal(normalizeTag(" #Agent-Instructions "), "agent-instructions");
   assert.equal(normalizeTag({ name: "#MOVE-To-Done" }), "move-to-done");
+});
+
+test("validateStartup resolves IDs for managed tags used by golden-ticket routes", async () => {
+  const { config } = await parsedConfig();
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.resolvedTags["agent-instructions"], { id: "tag_agent", name: "agent-instructions" });
+  assert.deepEqual(report.resolvedTags["move-to-done"], { id: "tag_done", name: "move-to-done" });
+});
+
+test("validateStartup lists tags and fails when agent-instructions cannot be resolved", async () => {
+  const { config } = await parsedConfig();
+  const fizzy = fakeFizzy({ tags: [{ id: "tag_codex", name: "backend-codex" }] });
+
+  const report = await validateStartup({
+    config,
+    fizzy,
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(errorCodes(report).includes("MANAGED_TAG_NOT_FOUND"));
+  assert.ok(fizzy.calls.some((call) => call[0] === "listTags"));
+});
+
+test("validateStartup rejects SDK runner without an exact package and contract", async () => {
+  const { config } = await parsedConfig();
+  config.runner.preferred = "sdk";
+  config.runner.sdk = { package: "@openai/codex" };
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(errorCodes(report).includes("INVALID_RUNNER"));
+});
+
+test("validateStartup accepts SDK runner only when exact package and contract validate", async () => {
+  const { config } = await parsedConfig();
+  config.runner.preferred = "sdk";
+  config.runner.sdk = { package: "@openai/codex-sdk", contract: "codex-sdk-js-v1" };
+  const calls = [];
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: {
+      async validate(runnerConfig) {
+        calls.push(["validate", runnerConfig.preferred, runnerConfig.sdk.package, runnerConfig.sdk.contract]);
+        return { ok: true, kind: "sdk", contract: "codex-sdk-js-v1" };
+      },
+      async health() {
+        calls.push(["health"]);
+        return { status: "ready", kind: "sdk" };
+      }
+    }
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(calls, [
+    ["validate", "sdk", "@openai/codex-sdk", "codex-sdk-js-v1"],
+    ["health"]
+  ]);
 });
 
 test("discoverGoldenTicketRoutes parses aliases and produces stable IDs and fingerprints", () => {
@@ -321,15 +413,29 @@ test("validateStartup reports missing WORKFLOW.md when fallback is disabled", as
 
 test("completion-failure markers are structured and malformed marker parsing is rejected", () => {
   const marker = createCompletionFailureMarker({
-    route: { id: "route_1", fingerprint: "sha256:abc" },
-    card: { id: "card_1" },
-    reason: "move target disappeared"
+    run: { id: "run_1" },
+    route: { id: "board:board_1:column:col_ready:golden:golden_1", fingerprint: "sha256:abc" },
+    instance: { id: "instance_1" },
+    workspace: { key: "workspace_1" },
+    card: { id: "card_1", digest: "sha256:def" },
+    failure_reason: "move target disappeared",
+    result_comment_id: "comment_1",
+    proof: { file: "proof.md", digest: "sha256:proof" }
   });
   const parsed = parseCompletionFailureMarker(marker.body);
 
+  assert.match(marker.tag, /^agent-completion-failed-[a-f0-9]{12}$/);
   assert.equal(parsed.marker, "fizzy-symphony:completion-failed:v1");
-  assert.equal(parsed.route_id, "route_1");
-  assert.equal(parsed.reason, "move target disappeared");
+  assert.equal(parsed.kind, "completion_failed");
+  assert.equal(parsed.run_id, "run_1");
+  assert.equal(parsed.route_id, "board:board_1:column:col_ready:golden:golden_1");
+  assert.equal(parsed.instance_id, "instance_1");
+  assert.equal(parsed.workspace_key, "workspace_1");
+  assert.equal(parsed.failure_reason, "move target disappeared");
+  assert.equal(parsed.result_comment_id, "comment_1");
+  assert.equal(parsed.proof_file, "proof.md");
+  assert.equal(parsed.proof_digest, "sha256:proof");
+  assert.equal(parsed.card_digest, "sha256:def");
 
   assert.throws(
     () => parseCompletionFailureMarker("not-json"),

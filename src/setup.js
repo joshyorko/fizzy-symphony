@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
 import { FizzySymphonyError } from "./errors.js";
-import { discoverGoldenTicketRoutes } from "./validation.js";
+import { discoverGoldenTicketRoutes, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
 export async function runSetup(options = {}) {
   const {
@@ -29,6 +29,9 @@ export async function runSetup(options = {}) {
   for (const boardId of selectedBoardIds) {
     selectedBoards.push(await fizzy.getBoard(boardId));
   }
+  const resolvedTags = resolveManagedTags(tags, {
+    required: ["agent-instructions", ...managedTagsUsedByBoards(selectedBoards)]
+  });
 
   validateBotUser(options.botUserId, users);
   await validateWorkflow(workspaceRepo);
@@ -58,6 +61,8 @@ export async function runSetup(options = {}) {
     },
     runnerPreferred: runnerReport.kind === "sdk" ? "sdk" : "cli_app_server",
     runnerFallback: "cli_app_server",
+    sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
+    sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     botUserId: options.botUserId ?? "",
     webhook
   });
@@ -69,6 +74,7 @@ export async function runSetup(options = {}) {
     boards: selectedBoards,
     users,
     tags,
+    resolvedTags,
     routes,
     runner: runnerReport,
     warnings: (entropy?.warnings ?? []).map((warning) => ({
@@ -135,6 +141,14 @@ async function detectRunner(runner) {
   const report = runner?.detect ? await runner.detect() : { kind: "cli_app_server", available: false };
   if (report.available === false) {
     throw new FizzySymphonyError("RUNNER_UNAVAILABLE", "No usable Codex runner was detected.", report);
+  }
+  if (report.kind === "sdk" && (!report.package || !report.contract)) {
+    return {
+      kind: "cli_app_server",
+      available: true,
+      fallback_from: "sdk",
+      reason: "SDK runner requires an exact package and contract."
+    };
   }
   return report;
 }
