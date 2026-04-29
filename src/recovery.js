@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
 import { inspectClaimMarkers } from "./claims.js";
@@ -154,17 +154,23 @@ export async function evaluateCleanupRecovery({ config = {}, attempt = {}, now =
   if (!proofFile || !(await fileExists(proofFile))) {
     reasons.push(reason("CLEANUP_PROOF_MISSING", "Durable proof file is missing.", { proof_file: proofFile }));
   } else {
-    const resolvedProof = resolve(proofFile);
-    if (!proofRoot || !isInsideOrSame(resolvedProof, proofRoot)) {
+    const resolvedProof = await canonicalPathIfExists(proofFile);
+    const resolvedProofRoot = proofRoot ? await canonicalPathIfExists(proofRoot) : null;
+    if (!resolvedProofRoot || !isInsideOrSame(resolvedProof, resolvedProofRoot)) {
       reasons.push(reason("CLEANUP_PROOF_NOT_DURABLE", "Durable proof is not under observability.state_dir/proof.", {
         proof_file: proofFile,
-        proof_root: proofRoot
+        proof_root: proofRoot,
+        canonical_proof_file: resolvedProof,
+        canonical_proof_root: resolvedProofRoot
       }));
     }
-    if (attempt.workspace_path && isInsideOrSame(resolvedProof, resolve(attempt.workspace_path))) {
+    const resolvedWorkspace = attempt.workspace_path ? await canonicalPathIfExists(attempt.workspace_path) : null;
+    if (resolvedWorkspace && isInsideOrSame(resolvedProof, resolvedWorkspace)) {
       reasons.push(reason("CLEANUP_PROOF_INSIDE_WORKSPACE", "Durable proof is inside the cleanup target.", {
         proof_file: proofFile,
-        workspace_path: attempt.workspace_path
+        workspace_path: attempt.workspace_path,
+        canonical_proof_file: resolvedProof,
+        canonical_workspace_path: resolvedWorkspace
       }));
     }
   }
@@ -291,6 +297,15 @@ function reason(code, message, details = {}) {
 function isInsideOrSame(path, root) {
   const remainder = relative(root, path);
   return remainder === "" || (!remainder.startsWith("..") && !remainder.startsWith("/") && remainder !== "..");
+}
+
+async function canonicalPathIfExists(path) {
+  const resolved = resolve(path);
+  try {
+    return await realpath(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function toIso(value) {

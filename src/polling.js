@@ -1,11 +1,12 @@
 import { discoverGoldenTicketRoutes } from "./validation.js";
+import { cardBoardId } from "./fizzy-normalize.js";
 
 export function buildCandidateQuery({ config = {}, routes = [] } = {}) {
   if (config.polling?.use_api_filters === false) return {};
   const configured = config.polling?.api_filters ?? {};
   return omitEmpty({
-    board_ids: configured.board_ids ?? watchedBoardIds(config),
-    column_ids: configured.column_ids ?? unique(routes.map((route) => route.source_column_id).filter(Boolean)),
+    board_ids: configuredList(configured.board_ids, watchedBoardIds(config)),
+    column_ids: configuredList(configured.column_ids, unique(routes.map((route) => route.source_column_id).filter(Boolean))),
     tag_ids: configured.tag_ids,
     assignee_ids: configured.assignee_ids,
     assignment_status: configured.assignment_status,
@@ -42,8 +43,9 @@ export async function refreshGoldenTicketRegistry({ config = {}, fizzy } = {}) {
   }
 
   for (const card of goldenCards) {
-    if (!boardsById.has(card.board_id)) continue;
-    boardsById.get(card.board_id).cards.push(card);
+    const boardId = cardBoardId(card);
+    if (!boardsById.has(boardId)) continue;
+    boardsById.get(boardId).cards.push(card);
   }
 
   return {
@@ -79,6 +81,10 @@ function watchedBoardIds(config) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function configuredList(value, fallback) {
+  return Array.isArray(value) && value.length > 0 ? value : fallback;
 }
 
 function omitEmpty(value) {
