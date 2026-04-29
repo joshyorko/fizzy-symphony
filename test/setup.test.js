@@ -4,9 +4,11 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { loadConfig } from "../src/config.js";
 import { runSetup } from "../src/setup.js";
+import { validateStartup } from "../src/validation.js";
 
-function boardFixture() {
+function boardFixture(overrides = {}) {
   return {
     id: "board_1",
     name: "Agent Board",
@@ -23,13 +25,35 @@ function boardFixture() {
         tags: ["agent-instructions", "backend-codex", "move-to-done"]
       }
     ],
-    entropy: { auto_postpone_enabled: true, auto_postpone_after_ms: 3600000 }
+    entropy: { auto_postpone_enabled: true, auto_postpone_after_ms: 3600000 },
+    ...overrides
+  };
+}
+
+function secondBoardFixture(overrides = {}) {
+  return {
+    id: "board_2",
+    name: "Docs Board",
+    columns: [
+      { id: "col_docs_ready", name: "Ready for Agents" },
+      { id: "col_docs_done", name: "Done" }
+    ],
+    cards: [
+      {
+        id: "golden_docs",
+        title: "Docs Agent",
+        golden: true,
+        column_id: "col_docs_ready",
+        tags: ["agent-instructions", "codex", "move-to-done"]
+      }
+    ],
+    ...overrides
   };
 }
 
 function fakeFizzy(overrides = {}) {
   const calls = [];
-  const board = overrides.board ?? boardFixture();
+  const boards = overrides.boards ?? [overrides.board ?? boardFixture()];
   return {
     calls,
     async getIdentity() {
@@ -42,7 +66,7 @@ function fakeFizzy(overrides = {}) {
     },
     async listBoards(account) {
       calls.push(["listBoards", account]);
-      return [board];
+      return boards;
     },
     async listUsers(account) {
       calls.push(["listUsers", account]);
@@ -52,9 +76,94 @@ function fakeFizzy(overrides = {}) {
       calls.push(["listTags", account]);
       return overrides.tags ?? [
         { id: "tag_agent", name: "agent-instructions" },
+        { id: "tag_codex_alias", name: "codex" },
         { id: "tag_codex", name: "backend-codex" },
         { id: "tag_done", name: "move-to-done" }
       ];
+    },
+    async getBoard(boardId) {
+      calls.push(["getBoard", boardId]);
+      const board = boards.find((candidate) => candidate.id === boardId);
+      if (!board) throw new Error(`missing board ${boardId}`);
+      return board;
+    },
+    async getEntropy(account, boardIds) {
+      calls.push(["getEntropy", account, boardIds]);
+      return {
+        warnings: [
+          { code: "ENTROPY_AUTO_POSTPONE", message: "Board auto-postpone is enabled", board_id: boards[0]?.id }
+        ]
+      };
+    },
+    async ensureWebhook(request) {
+      calls.push(["ensureWebhook", request]);
+      return { id: "webhook_1", status: "active" };
+    }
+  };
+}
+
+function fakeStarterFizzy() {
+  const calls = [];
+  const board = {
+    id: "starter_board",
+    name: "Agent Playground: repo",
+    columns: [],
+    cards: []
+  };
+
+  return {
+    calls,
+    async getIdentity() {
+      calls.push(["getIdentity"]);
+      return {
+        user: { id: "user_current" },
+        accounts: [{ id: "acct_1", name: "Team Account" }]
+      };
+    },
+    async listBoards(account) {
+      calls.push(["listBoards", account]);
+      return [];
+    },
+    async listUsers(account) {
+      calls.push(["listUsers", account]);
+      return [{ id: "bot_1", name: "Bot" }, { id: "user_current", name: "Human" }];
+    },
+    async listTags(account) {
+      calls.push(["listTags", account]);
+      return [
+        { id: "tag_agent", name: "agent-instructions" },
+        { id: "tag_codex", name: "codex" },
+        { id: "tag_done", name: "move-to-done" }
+      ];
+    },
+    async createBoard(request) {
+      calls.push(["createBoard", request]);
+      return { id: board.id, name: request.name };
+    },
+    async createColumn(request) {
+      calls.push(["createColumn", request]);
+      const id = request.name === "Ready for Agents" ? "starter_ready" : "starter_done";
+      const column = { id, name: request.name };
+      board.columns.push(column);
+      return column;
+    },
+    async createCard(request) {
+      calls.push(["createCard", request]);
+      const card = {
+        id: "starter_golden",
+        title: request.title,
+        golden: Boolean(request.golden),
+        column_id: request.column_id,
+        tags: request.tags
+      };
+      board.cards.push(card);
+      return card;
+    },
+    async markGolden(request) {
+      calls.push(["markGolden", request]);
+      const card = board.cards.find((candidate) => candidate.id === request.card_id);
+      if (card) card.golden = true;
+      return { ok: true };
     },
     async getBoard(boardId) {
       calls.push(["getBoard", boardId]);
@@ -62,15 +171,7 @@ function fakeFizzy(overrides = {}) {
     },
     async getEntropy(account, boardIds) {
       calls.push(["getEntropy", account, boardIds]);
-      return {
-        warnings: [
-          { code: "ENTROPY_AUTO_POSTPONE", message: "Board auto-postpone is enabled", board_id: board.id }
-        ]
-      };
-    },
-    async ensureWebhook(request) {
-      calls.push(["ensureWebhook", request]);
-      return { id: "webhook_1", status: "active" };
+      return { warnings: [] };
     }
   };
 }
@@ -112,7 +213,7 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.equal(result.warnings[0].code, "ENTROPY_AUTO_POSTPONE");
   assert.deepEqual(
     fizzy.calls.map((call) => call[0]),
-    ["getIdentity", "listBoards", "listUsers", "listTags", "getEntropy", "getBoard"]
+    ["getIdentity", "listBoards", "listUsers", "listTags", "getBoard", "getEntropy"]
   );
 
   const written = await readFile(configPath, "utf8");
@@ -120,6 +221,204 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.match(written, /account: acct_1/);
   assert.match(written, /id: board_1/);
   assert.match(written, /preferred: cli_app_server/);
+});
+
+test("runSetup creates a starter board with native golden route defaults and writes max concurrency one", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-create-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeStarterFizzy();
+
+  const result = await runSetup({
+    configPath,
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    starterBoardName: "Agent Playground: repo",
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.starter.created, true);
+  assert.equal(result.boards[0].id, "starter_board");
+  assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Ready for Agents", "Done"]);
+  assert.deepEqual(result.boards[0].cards[0], {
+    id: "starter_golden",
+    title: "Repo Agent",
+    golden: true,
+    column_id: "starter_ready",
+    tags: ["agent-instructions", "codex", "move-to-done"]
+  });
+  assert.deepEqual(
+    fizzy.calls.filter((call) => ["createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])).map((call) => call[0]),
+    ["createBoard", "createColumn", "createColumn", "createCard", "markGolden"]
+  );
+
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /id: starter_board/);
+  assert.match(written, /max_concurrent: 1/);
+});
+
+test("runSetup adopts an existing starter board and keeps starter concurrency defaults", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-adopt-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, "config.yml");
+
+  const result = await runSetup({
+    configPath,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "adopt_starter",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.starter.created, false);
+  assert.equal(result.routes[0].completion.policy, "move_to_column");
+  assert.match(await readFile(configPath, "utf8"), /max_concurrent: 1/);
+});
+
+test("runSetup writes every selected board to the generated config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-multiboard-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await runSetup({
+    configPath,
+    fizzy: fakeFizzy({ boards: [boardFixture(), secondBoardFixture()] }),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1", "board_2"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /id: board_1/);
+  assert.match(written, /label: Agent Board/);
+  assert.match(written, /id: board_2/);
+  assert.match(written, /label: Docs Board/);
+});
+
+test("runSetup writes default config paths that resolve to the selected workspace repo", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-default-config-paths-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await runSetup({
+    configPath,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  const config = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+  assert.equal(config.workspaces.default_repo, dir);
+  assert.equal(config.workspaces.registry.app.repo, dir);
+  assert.ok(config.safety.allowed_roots.includes(dir));
+
+  const startup = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+  assert.equal(startup.ok, true, JSON.stringify(startup.errors));
+});
+
+test("runSetup manages webhooks by listing, creating, updating, and reactivating without requiring an optional secret", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-managed-webhooks-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const boards = [
+    boardFixture(),
+    secondBoardFixture(),
+    secondBoardFixture({ id: "board_3", name: "Third Board", cards: [
+      {
+        id: "golden_3",
+        title: "Third Agent",
+        golden: true,
+        column_id: "col_docs_ready",
+        tags: ["agent-instructions", "codex", "move-to-done"]
+      }
+    ] })
+  ];
+  const fizzy = fakeFizzy({ boards });
+  fizzy.ensureWebhook = undefined;
+  fizzy.listWebhooks = async (request) => {
+    fizzy.calls.push(["listWebhooks", request]);
+    if (request.board_id === "board_1") return [];
+    if (request.board_id === "board_2") {
+      return [{ id: "webhook_inactive", callback_url: "https://example.test/fizzy", active: false, subscribed_actions: ["comment_created"] }];
+    }
+    return [{ id: "webhook_stale", callback_url: "https://example.test/fizzy", active: true, subscribed_actions: ["card_closed"] }];
+  };
+  fizzy.createWebhook = async (request) => {
+    fizzy.calls.push(["createWebhook", request]);
+    return { id: `created_${request.board_id}`, active: true };
+  };
+  fizzy.updateWebhook = async (request) => {
+    fizzy.calls.push(["updateWebhook", request]);
+    return { id: request.webhook_id, active: true };
+  };
+  fizzy.reactivateWebhook = async (request) => {
+    fizzy.calls.push(["reactivateWebhook", request]);
+    return { id: request.webhook_id, active: true };
+  };
+
+  const result = await runSetup({
+    configPath: join(dir, "config.yml"),
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1", "board_2", "board_3"],
+    workspaceRepo: dir,
+    webhook: {
+      manage: true,
+      callback_url: "https://example.test/fizzy",
+      subscribed_actions: ["comment_created"]
+    },
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.managedWebhooks), ["board_1", "board_2", "board_3"]);
+  assert.ok(result.warnings.some((warning) => warning.code === "WEBHOOK_SECRET_NOT_CONFIGURED"));
+  assert.deepEqual(
+    fizzy.calls.filter((call) => ["listWebhooks", "createWebhook", "updateWebhook", "reactivateWebhook"].includes(call[0])).map((call) => call[0]),
+    ["listWebhooks", "createWebhook", "listWebhooks", "reactivateWebhook", "listWebhooks", "updateWebhook"]
+  );
+});
+
+test("runSetup rejects unsafe existing golden-ticket structure before writing config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-unsafe-golden-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, "config.yml");
+
+  await assert.rejects(
+    () => runSetup({
+      configPath,
+      fizzy: fakeFizzy({
+        board: boardFixture({
+          cards: [{ id: "tag_only", golden: false, column_id: "col_ready", tags: ["agent-instructions", "move-to-done"] }]
+        })
+      }),
+      runner: fakeRunner(),
+      account: "acct_1",
+      selectedBoardIds: ["board_1"],
+      workspaceRepo: dir,
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "TAG_ONLY_INSTRUCTION_CARD"
+  );
+
+  await assert.rejects(() => readFile(configPath, "utf8"));
 });
 
 test("runSetup falls back to cli_app_server when SDK detection lacks an exact package and contract", async () => {

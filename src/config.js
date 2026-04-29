@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
 
@@ -211,32 +211,55 @@ export function generateAnnotatedConfig(options = {}) {
   const {
     account = "my-account",
     board = { id: "board_123", label: "Agent Playground" },
+    boards,
+    agentMaxConcurrent = 2,
+    boardMaxConcurrent = agentMaxConcurrent,
     runnerPreferred = "cli_app_server",
     runnerFallback = "cli_app_server",
     sdkPackage = "",
     sdkContract = "",
     botUserId = "",
-    webhook = {}
+    webhook = {},
+    managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
+    configDir = ".",
+    workspaceRepo = ".",
+    allowedRoots
   } = options;
 
+  const boardEntries = boards?.length ? boards : [board];
+  const workspaceRepoPath = relativePathForConfig(configDir, workspaceRepo);
+  const safetyAllowedRoots = allowedRoots?.length ? allowedRoots : uniqueStrings([workspaceRepoPath, "."]);
   let template = readFileSync(TEMPLATE_PATH, "utf8");
   template = template.replace(/account: my-account/u, `account: ${yamlScalar(account)}`);
-  template = template.replace(/id: board_123/u, `id: ${yamlScalar(board.id)}`);
-  template = template.replace(/label: Agent Playground/u, `label: ${yamlScalar(board.label)}`);
+  template = template.replace(
+    /  entries:\n[\s\S]*?\nserver:/u,
+    `  entries:\n${renderBoardEntries(boardEntries, boardMaxConcurrent)}\nserver:`
+  );
+  template = template.replace(/\n  max_concurrent: 2\n/u, `\n  max_concurrent: ${agentMaxConcurrent}\n`);
   template = template.replace(/bot_user_id: ""/u, `bot_user_id: ${yamlScalar(botUserId)}`);
   template = template.replace(/preferred: sdk/u, `preferred: ${yamlScalar(runnerPreferred)}`);
   template = template.replace(/fallback: cli_app_server/u, `fallback: ${yamlScalar(runnerFallback)}`);
   template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
   template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
+  template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret_env ? `$${webhook.secret_env}` : "")}`);
+  template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(workspaceRepoPath)}`);
+  template = template.replace(/\n      repo: \.\n/u, `\n      repo: ${yamlScalar(workspaceRepoPath)}\n`);
+  template = template.replace(
+    /  allowed_roots:\n(?:    - .+\n)+/u,
+    `  allowed_roots:\n${renderStringList(safetyAllowedRoots, 4)}\n`
+  );
 
   if (Object.hasOwn(webhook, "manage")) {
     template = template.replace(/manage: false/u, `manage: ${Boolean(webhook.manage)}`);
   }
+  if (Object.keys(managedWebhookIdsByBoard).length > 0) {
+    template = template.replace(
+      /managed_webhook_ids_by_board: \{\}/u,
+      `managed_webhook_ids_by_board:\n${renderStringMap(managedWebhookIdsByBoard, 4)}`
+    );
+  }
   if (webhook.callback_url) {
     template = template.replace(/callback_url: ""/u, `callback_url: ${yamlScalar(webhook.callback_url)}`);
-  }
-  if (webhook.secret) {
-    template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret)}`);
   }
 
   return template;
@@ -244,7 +267,10 @@ export function generateAnnotatedConfig(options = {}) {
 
 export async function writeAnnotatedConfig(configPath, options = {}) {
   await mkdir(dirname(configPath), { recursive: true });
-  const generated = generateAnnotatedConfig(options);
+  const generated = generateAnnotatedConfig({
+    ...options,
+    configDir: options.configDir ?? dirname(configPath)
+  });
   await writeFile(configPath, generated, "utf8");
   return { path: configPath, bytes: Buffer.byteLength(generated) };
 }
@@ -423,6 +449,9 @@ function resolveEnvironmentReferences(value, env, path = "") {
     if (match) {
       const variable = match[1];
       if (!Object.hasOwn(env, variable)) {
+        if (isOptionalEnvironmentReference(path)) {
+          return "";
+        }
         throw new FizzySymphonyError("CONFIG_MISSING_ENV", `Missing environment variable ${variable}`, {
           variable,
           path
@@ -433,6 +462,46 @@ function resolveEnvironmentReferences(value, env, path = "") {
   }
 
   return value;
+}
+
+function renderBoardEntries(boards, maxConcurrent) {
+  return boards.map((board) => [
+    `    - id: ${yamlScalar(board.id)}`,
+    `      label: ${yamlScalar(board.label ?? board.name ?? board.id)}`,
+    "      enabled: true",
+    "      routing_mode: column_scoped",
+    "      defaults:",
+    "        backend: codex",
+    "        model: \"\"",
+    "        workspace: app",
+    "        persona: repo-agent",
+    "        unknown_managed_tag_policy: fail",
+    "        allowed_card_overrides:",
+    "          backend: false",
+    "          model: false",
+    "          workspace: false",
+    "          persona: false",
+    "          priority: true",
+    "          completion: false",
+    "        concurrency:",
+    `          max_concurrent: ${maxConcurrent}`
+  ].join("\n")).join("\n");
+}
+
+function renderStringMap(map, indent) {
+  const padding = " ".repeat(indent);
+  return Object.entries(map)
+    .map(([key, value]) => `${padding}${yamlScalar(key)}: ${yamlScalar(value)}`)
+    .join("\n");
+}
+
+function renderStringList(values, indent) {
+  const padding = " ".repeat(indent);
+  return values.map((value) => `${padding}- ${yamlScalar(value)}`).join("\n");
+}
+
+function isOptionalEnvironmentReference(path) {
+  return path === "webhook.secret";
 }
 
 function resolveRelativePaths(config, configDir) {
@@ -465,6 +534,11 @@ function resolveFrom(base, value) {
   return isAbsolute(value) ? value : resolve(base, value);
 }
 
+function relativePathForConfig(configDir, path) {
+  const relativePath = relative(resolve(configDir), resolve(path));
+  return relativePath === "" ? "." : relativePath;
+}
+
 function isValidPortValue(value) {
   return value === "auto" || isTcpPort(value);
 }
@@ -481,6 +555,10 @@ function setPath(object, parts, value) {
     target = target[part];
   }
   target[parts.at(-1)] = value;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function yamlScalar(value) {
