@@ -209,6 +209,38 @@ runner:
     args:
       - app-server
 
+  # Required: no. Default: 10000 ms.
+  # Maximum time to wait for the initialize handshake.
+  initialize_timeout_ms: 10000
+
+  # Required: no. Default: 60000 ms.
+  # Maximum time to wait for ordinary app-server requests.
+  request_timeout_ms: 60000
+
+  # Required: no. Default: 10000 ms.
+  # Maximum time to wait for turn/interrupt before cancellation escalates.
+  cancel_timeout_ms: 10000
+
+  # Required: no. Default: 10000 ms.
+  # Maximum time to wait for thread unsubscribe/archive during session stop.
+  stop_session_timeout_ms: 10000
+
+  # Required: no. Default: 5000 ms.
+  # Grace period after SIGTERM before app-server process termination escalates.
+  terminate_timeout_ms: 5000
+
+  # Required: no. Default: 2000 ms.
+  # Grace period after SIGKILL before manual intervention is surfaced.
+  kill_timeout_ms: 2000
+
+  # Required: no. Default: inherited from agent.turn_timeout_ms.
+  # Set only to override the per-turn stream wait used by the app-server runner.
+  stream_timeout_ms: 3600000
+
+  # Required: no. Default: 65536 bytes.
+  # Bounded stderr retained for app-server failure diagnostics.
+  max_stderr_bytes: 65536
+
   health:
     # Required: no. Default: true.
     enabled: true

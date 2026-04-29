@@ -1,5 +1,7 @@
 const CONTRACT = "codex-runner-fake-v1";
 
+export { createCodexCliAppServerRunner } from "./codex-cli-app-server-runner.js";
+
 export function createFakeCodexRunner(options = {}) {
   let sessionCounter = 0;
   let turnCounter = 0;
