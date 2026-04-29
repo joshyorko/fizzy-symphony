@@ -5,7 +5,7 @@ Fizzy-backed Symphony daemon scaffold.
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 232/232 passing via `npm test` on Node v25.9.0. `package.json`
+current local baseline is 236/236 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket

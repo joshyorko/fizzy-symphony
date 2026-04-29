@@ -342,6 +342,61 @@ test("workpad update recovery avoids replacement loops after a replacement attem
   assert.equal(snapshot.workpad_failures[1].replacement_skipped_reason, "replacement_already_attempted");
 });
 
+test("workpad discovery prefers replacement comments after daemon restart", async () => {
+  const store = createWorkpadStatusStore();
+  const calls = [];
+  const activeCard = card({
+    comments: [
+      {
+        id: "comment_old",
+        body: workpadCommentBody({
+          comment_id: "comment_old",
+          updated_at: "2026-04-29T12:00:00.000Z"
+        })
+      },
+      {
+        id: "comment_replacement",
+        body: workpadCommentBody({
+          comment_id: "comment_replacement",
+          replacement_of_comment_id: "comment_old",
+          updated_at: "2026-04-29T12:06:00.000Z"
+        })
+      }
+    ]
+  });
+
+  const result = await upsertWorkpad({
+    config: { workpad: { enabled: true, mode: "single_comment" } },
+    status: store,
+    fizzy: {
+      async updateWorkpadComment({ comment_id }) {
+        calls.push(`update:${comment_id}`);
+        throw Object.assign(new Error("replacement is no longer mutable"), { code: "COMMENT_UPDATE_FAILED" });
+      },
+      async postWorkpadComment() {
+        calls.push("post");
+        return { id: "comment_second_replacement" };
+      }
+    },
+    card: activeCard,
+    route: route(),
+    run: run(),
+    workspace: workspace(),
+    phase: "runner_completed",
+    now: "2026-04-29T12:07:00.000Z"
+  });
+
+  assert.deepEqual(calls, ["update:comment_replacement"]);
+  assert.equal(result.action, "preserved_update_failed");
+  assert.equal(result.comment_id, "comment_replacement");
+  assert.equal(result.replacement_of_comment_id, "comment_old");
+  assert.equal(result.replacement_skipped_reason, "already_replacement");
+
+  const snapshot = store.status();
+  assert.equal(snapshot.workpad_failures[0].failed_comment_id, "comment_replacement");
+  assert.equal(snapshot.workpad_failures[0].replacement_skipped_reason, "already_replacement");
+});
+
 function createWorkpadStatusStore() {
   return createStatusStore({
     instance: { id: "instance-a" },
@@ -353,4 +408,23 @@ function createWorkpadStatusStore() {
       polling: { interval_ms: 30000 }
     }
   });
+}
+
+function workpadCommentBody({ comment_id, replacement_of_comment_id, updated_at }) {
+  return [
+    "<!-- fizzy-symphony-workpad -->",
+    "fizzy-symphony:workpad:v1",
+    "",
+    "```json",
+    canonicalJson({
+      marker: "fizzy-symphony:workpad:v1",
+      card_id: "card_1",
+      comment_id,
+      replacement_of_comment_id,
+      run_id: "run_1",
+      phase: "runner_completed",
+      updated_at
+    }),
+    "```"
+  ].join("\n");
 }
