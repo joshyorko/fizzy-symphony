@@ -7,6 +7,7 @@ import { validateStartup } from "./validation.js";
 import { performStartupRecovery } from "./recovery.js";
 import { createReconciliationScheduler } from "./scheduler.js";
 import { runReconciliationTick } from "./reconciler.js";
+import { createRunnerHealthMonitor } from "./runner-health.js";
 import { routeCard } from "./router.js";
 import { applyClaimEventLog, createBoardClaimStore } from "./claims.js";
 import { parseCompletionFailureMarker, parseCompletionMarker } from "./completion.js";
@@ -31,6 +32,7 @@ export async function startDaemon(options = {}) {
   const config = await loadConfig(configPath, { env });
   const webhookHints = dependencies.webhookHints ?? createWebhookHintQueue();
   let scheduler = null;
+  let runnerHealth = null;
   let status = null;
   const statusProxy = {
     health: () => status?.health?.() ?? { live: true, status: "live", ready: false },
@@ -143,10 +145,20 @@ export async function startDaemon(options = {}) {
       snapshot: () => writeSnapshot(status, config)
     });
 
+    runnerHealth = createRunnerHealthMonitor({
+      config,
+      runner,
+      status,
+      timers: schedulerOptions.healthTimers ?? schedulerOptions.timers,
+      now,
+      snapshot: () => writeSnapshot(status, config)
+    });
+
     async function stop(reason = "shutdown") {
       if (stopping) return stopped;
       stopping = true;
       uninstallSignals();
+      await runnerHealth.stop({ wait: false });
       await scheduler.stop({ wait: false });
       await instance.listener.close();
       await cancelActiveRuns({
@@ -172,6 +184,7 @@ export async function startDaemon(options = {}) {
       endpoint: instance.endpoint,
       instance,
       scheduler,
+      runnerHealth,
       fizzy,
       runner,
       orchestratorState,
@@ -185,6 +198,7 @@ export async function startDaemon(options = {}) {
       });
     });
 
+    runnerHealth.start();
     scheduler.start({ immediate: schedulerOptions.immediate });
     await writeSnapshot(status, config);
     return daemon;
@@ -192,6 +206,7 @@ export async function startDaemon(options = {}) {
     if (!stopping) {
       try {
         await scheduler?.stop?.({ wait: false });
+        await runnerHealth?.stop?.({ wait: false });
         await instance.cleanup();
       } catch {
         // Startup failure should preserve the original error.

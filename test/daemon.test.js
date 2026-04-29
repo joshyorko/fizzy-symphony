@@ -227,6 +227,55 @@ test("daemon webhooks enqueue through the scheduler and trigger reconciliation",
   }
 });
 
+test("daemon periodically refreshes runner health without dispatching or mutating Fizzy state", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-runner-health-");
+  const configPath = await writeConfig(root, {
+    polling: { interval_ms: 30000, use_etags: true, use_api_filters: true },
+    runner: { health: { enabled: true, interval_ms: 25 } }
+  });
+  const calls = [];
+  const timers = createManualTimers();
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    schedulerOptions: { immediate: false, timers },
+    dependencies: daemonDependencies({
+      calls,
+      cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }],
+      runner: fakeRunner({
+        calls,
+        healthReports: [
+          { status: "ready", kind: "cli_app_server", checked_at: "2026-04-29T12:00:00.000Z" },
+          { status: "unavailable", kind: "cli_app_server", reason: "app server exited" },
+          { status: "ready", kind: "cli_app_server", checked_at: "2026-04-29T12:01:00.000Z" }
+        ]
+      })
+    })
+  });
+
+  try {
+    assert.equal(daemon.status.ready().ready, true);
+    calls.length = 0;
+
+    await timers.runNext(25);
+    assert.deepEqual(calls, ["health"]);
+    assert.equal(daemon.status.ready().ready, false);
+    assert.equal(daemon.status.ready().blockers[0].code, "RUNNER_NOT_READY");
+    assert.equal(daemon.status.status().runner_health.reason, "app server exited");
+
+    calls.length = 0;
+    await timers.runNext(25);
+    assert.deepEqual(calls, ["health"]);
+    assert.equal(daemon.status.ready().ready, true);
+    assert.equal(daemon.status.status().runs.running.length, 0);
+    assert.equal(calls.includes("discover"), false);
+    assert.equal(calls.includes("claim"), false);
+    assert.equal(calls.includes("startSession"), false);
+  } finally {
+    await daemon.stop("test");
+  }
+});
+
 test("SIGTERM shutdown stops scheduling, cancels active work, preserves workspace, closes server, and removes own registry", async () => {
   const root = await tempProject("fizzy-symphony-daemon-signal-");
   const configPath = await writeConfig(root);
@@ -391,6 +440,7 @@ function daemonDependencies({ calls, cards = [], runner = fakeRunner() } = {}) {
 }
 
 function fakeRunner(options = {}) {
+  const healthReports = [...(options.healthReports ?? [])];
   return {
     async detect() {
       return { kind: "cli_app_server", available: true };
@@ -399,6 +449,8 @@ function fakeRunner(options = {}) {
       return { ok: true, kind: "cli_app_server" };
     },
     async health() {
+      options.calls?.push("health");
+      if (healthReports.length > 0) return healthReports.shift();
       return options.status
         ? { status: options.status, reason: options.reason, kind: "cli_app_server" }
         : { status: "ready", kind: "cli_app_server" };
@@ -423,6 +475,31 @@ function fakeRunner(options = {}) {
     async stopSession() {
       options.calls?.push("stopSession");
       return { status: "stopped", success: true };
+    }
+  };
+}
+
+function createManualTimers() {
+  const handles = [];
+  return {
+    setTimeout(callback, delay) {
+      const handle = {
+        delay,
+        callback,
+        cleared: false,
+        unref() {}
+      };
+      handles.push(handle);
+      return handle;
+    },
+    clearTimeout(handle) {
+      if (handle) handle.cleared = true;
+    },
+    async runNext(delay) {
+      const handle = handles.find((candidate) => !candidate.cleared && candidate.delay === delay);
+      assert.ok(handle, `expected scheduled timer with delay ${delay}`);
+      handle.cleared = true;
+      await handle.callback();
     }
   };
 }

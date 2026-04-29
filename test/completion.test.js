@@ -11,9 +11,11 @@ import {
   evaluateCleanupEligibility,
   parseCompletionFailureMarker,
   parseCompletionMarker,
+  upsertWorkpad,
   writeDurableProof
 } from "../src/completion.js";
 import { canonicalJson, cardDigest, digest } from "../src/domain.js";
+import { createStatusStore } from "../src/status.js";
 
 function route(overrides = {}) {
   return {
@@ -244,3 +246,111 @@ test("completion policy fails loudly when required Fizzy mutators are unavailabl
     }
   );
 });
+
+test("workpad update failure posts one replacement and records runtime status", async () => {
+  const store = createWorkpadStatusStore();
+  store.recordWorkpad({
+    card_id: "card_1",
+    comment_id: "comment_old",
+    phase: "claimed",
+    updated_at: "2026-04-29T12:00:00.000Z"
+  });
+  const calls = [];
+  let replacementBody = "";
+
+  const result = await upsertWorkpad({
+    config: { workpad: { enabled: true, mode: "single_comment" } },
+    status: store,
+    fizzy: {
+      async updateWorkpadComment({ comment_id }) {
+        calls.push(`update:${comment_id}`);
+        throw Object.assign(new Error("comment is no longer mutable"), { code: "COMMENT_UPDATE_FAILED" });
+      },
+      async postWorkpadComment({ body }) {
+        calls.push("post");
+        replacementBody = body;
+        return { id: "comment_replacement" };
+      }
+    },
+    card: card(),
+    route: route(),
+    run: run(),
+    workspace: workspace(),
+    phase: "runner_completed",
+    now: "2026-04-29T12:06:00.000Z"
+  });
+
+  assert.deepEqual(calls, ["update:comment_old", "post"]);
+  assert.equal(result.action, "replaced");
+  assert.equal(result.comment_id, "comment_replacement");
+  assert.equal(result.replacement_of_comment_id, "comment_old");
+  assert.match(replacementBody, /Replaces failed workpad: comment_old/u);
+  assert.match(replacementBody, /Run: run_1/u);
+  assert.match(replacementBody, /Phase: runner_completed/u);
+
+  const snapshot = store.status();
+  assert.equal(snapshot.workpads[0].comment_id, "comment_replacement");
+  assert.equal(snapshot.workpads[0].replacement_of_comment_id, "comment_old");
+  assert.equal(snapshot.workpad_failures[0].failed_comment_id, "comment_old");
+  assert.equal(snapshot.workpad_failures[0].replacement_comment_id, "comment_replacement");
+  assert.equal(snapshot.workpad_failures[0].error.code, "COMMENT_UPDATE_FAILED");
+  assert.equal(snapshot.recent_warnings[0].code, "WORKPAD_UPDATE_FAILED");
+});
+
+test("workpad update recovery avoids replacement loops after a replacement attempt", async () => {
+  const store = createWorkpadStatusStore();
+  store.recordWorkpad({
+    card_id: "card_1",
+    comment_id: "comment_old",
+    phase: "claimed",
+    updated_at: "2026-04-29T12:00:00.000Z"
+  });
+  const calls = [];
+  const fizzy = {
+    async updateWorkpadComment({ comment_id }) {
+      calls.push(`update:${comment_id}`);
+      throw Object.assign(new Error("still immutable"), { code: "COMMENT_UPDATE_FAILED" });
+    },
+    async postWorkpadComment() {
+      calls.push("post");
+      throw Object.assign(new Error("create failed after retry"), { code: "COMMENT_CREATE_FAILED" });
+    }
+  };
+  const context = {
+    config: { workpad: { enabled: true, mode: "single_comment" } },
+    status: store,
+    fizzy,
+    card: card(),
+    route: route(),
+    run: run(),
+    workspace: workspace(),
+    phase: "runner_completed"
+  };
+
+  const first = await upsertWorkpad({ ...context, now: "2026-04-29T12:06:00.000Z" });
+  const second = await upsertWorkpad({ ...context, now: "2026-04-29T12:07:00.000Z" });
+
+  assert.equal(first.action, "preserved_update_failed");
+  assert.equal(second.action, "preserved_update_failed");
+  assert.deepEqual(calls, ["update:comment_old", "post", "update:comment_old"]);
+
+  const snapshot = store.status();
+  assert.equal(snapshot.workpads[0].comment_id, "comment_old");
+  assert.equal(snapshot.workpads[0].replacement_attempted_comment_id, "comment_old");
+  assert.equal(snapshot.workpad_failures.length, 2);
+  assert.equal(snapshot.workpad_failures[0].replacement_error.code, "COMMENT_CREATE_FAILED");
+  assert.equal(snapshot.workpad_failures[1].replacement_skipped_reason, "replacement_already_attempted");
+});
+
+function createWorkpadStatusStore() {
+  return createStatusStore({
+    instance: { id: "instance-a" },
+    config: {
+      runner: { preferred: "cli_app_server" },
+      diagnostics: { no_dispatch: true },
+      boards: { entries: [] },
+      webhook: { enabled: false },
+      polling: { interval_ms: 30000 }
+    }
+  });
+}
