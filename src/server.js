@@ -1,22 +1,27 @@
 import { verifyWebhookRequest } from "./fizzy-client.js";
 
+import { normalizeTag } from "./domain.js";
+import { cardBoardId, commentBody } from "./fizzy-normalize.js";
+
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_WEBHOOK_EVENT_CACHE_SIZE = 1000;
 const DEFAULT_WEBHOOK_EVENT_CACHE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_WEBHOOK_MAX_EVENT_AGE_SECONDS = 300;
 const SPAWN_EVENTS = new Set([
   "card_assigned",
   "card_board_changed",
   "card_published",
   "card_reopened",
-  "card_triaged"
+  "card_triaged",
+  "card_updated"
 ]);
-const CANCEL_TICK_EVENTS = new Set([
-  "card_auto_postponed",
-  "card_closed",
-  "card_postponed",
-  "card_sent_back_to_triage",
-  "card_unassigned"
+const CANCEL_TICK_EVENTS = new Map([
+  ["card_closed", "card_closed"],
+  ["card_postponed", "card_postponed"],
+  ["card_auto_postponed", "card_auto_postponed"],
+  ["card_sent_back_to_triage", "card_left_routed_column"],
+  ["card_unassigned", "card_unassigned"]
 ]);
 
 export function createLocalHttpHandler(deps = {}) {
@@ -195,8 +200,13 @@ async function handleWebhook(request, response, options = {}) {
     return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must be valid JSON.");
   }
 
+  const freshness = eventFreshness(event, request.headers, config, now);
+  if (!freshness.ok) {
+    return writeError(response, 400, freshness.code, freshness.message, freshness.details);
+  }
+
   const classification = classifyWebhookEvent(event, { config });
-  const hint = candidateHintFromWebhookEvent(event, { now, classification });
+  const hint = candidateHintFromWebhookEvent(event, { config, now, classification });
 
   if (hint.event_id && seenWebhookEventIds.has(hint.event_id)) {
     return writeJson(response, 200, {
@@ -306,27 +316,32 @@ function classifyWebhookEvent(event, { config = {} } = {}) {
   }
 
   if (CANCEL_TICK_EVENTS.has(action)) {
-    return { status: "accepted", intent: "cancel_tick", reason: action };
+    return { status: "accepted", intent: "cancel_tick", reason: action, cancel_reason: CANCEL_TICK_EVENTS.get(action) };
   }
 
   return { status: "ignored", reason: "unsupported_event" };
 }
 
-function candidateHintFromWebhookEvent(event, { now = () => new Date(), classification = {} } = {}) {
+function candidateHintFromWebhookEvent(event, { config = {}, now = () => new Date(), classification = {} } = {}) {
   if (!event || typeof event !== "object" || Array.isArray(event)) return {};
 
   const card = eventCard(event);
   const board = event.board ?? event.data?.board ?? event.payload?.board ?? {};
   const cardId = event.card_id ?? event.cardId ?? card.id ?? card.card_id;
-  const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? card.board_id ?? card.boardId;
+  const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? board.boardId ?? cardBoardId(card);
+  const action = normalizeAction(event.action ?? event.type ?? event.event_type ?? event.eventType);
+  const rerunRequested = hasExplicitRerunSignal(event, card);
 
   return omitUndefined({
     source: "webhook",
     intent: classification.intent,
     reason: classification.reason,
     event_id: event.event_id ?? event.eventId ?? event.id,
+    action,
+    cancel_reason: classification.cancel_reason,
     card_id: cardId,
     board_id: boardId,
+    rerun_requested: rerunRequested || undefined,
     received_at: toIso(typeof now === "function" ? now() : now)
   });
 }
@@ -336,14 +351,17 @@ function publicHint(hint = {}) {
     intent: hint.intent,
     reason: hint.reason,
     event_id: hint.event_id,
+    action: hint.action,
+    cancel_reason: hint.cancel_reason,
     card_id: hint.card_id,
-    board_id: hint.board_id
+    board_id: hint.board_id,
+    rerun_requested: hint.rerun_requested
   });
 }
 
 function eventAction(event = {}) {
   const action = event.action ?? event.event ?? event.type ?? event.data?.action ?? event.payload?.action;
-  return String(action ?? "").trim().toLowerCase().replace(/[.-]/gu, "_");
+  return normalizeAction(action);
 }
 
 function eventCard(event = {}) {
@@ -355,29 +373,28 @@ function isAgentInstructionsCard(card = {}) {
 }
 
 function hasRerunSignal(event = {}, card = eventCard(event)) {
+  if (event.rerun_requested === true || event.rerunRequested === true) return true;
   if (normalizedTags(card).includes("agent-rerun")) return true;
   if (normalizedTags(event).includes("agent-rerun")) return true;
   const comment = event.comment ?? event.data?.comment ?? event.payload?.comment ?? {};
-  return /(^|\s)#?agent-rerun(\s|$)/iu.test(String(comment.body ?? comment.text ?? ""));
+  return /\bagent-rerun\b/iu.test(String(commentBody(comment) ?? comment.body ?? comment.text ?? ""));
 }
 
 function normalizedTags(source = {}) {
-  const tags = source.tags ?? source.tag_names ?? [];
+  const tags = source.tags ?? source.tag_names ?? source.tagNames ?? [];
   if (!Array.isArray(tags)) return [];
-  return tags.map((tag) => normalizeTagName(tag)).filter(Boolean);
-}
-
-function normalizeTagName(tag) {
-  const value = typeof tag === "object" && tag
-    ? tag.name ?? tag.title ?? tag.slug ?? tag.id
-    : tag;
-  return String(value ?? "").trim().replace(/^#+/u, "").toLowerCase();
+  return tags.map(normalizeTag).filter(Boolean);
 }
 
 function isSelfAuthoredEvent(event = {}, config = {}) {
-  const botUserId = config.fizzy?.bot_user_id;
-  if (!botUserId) return false;
-  return eventActors(event).includes(String(botUserId));
+  const actorIds = eventActors(event);
+  const daemonIds = [
+    config.fizzy?.bot_user_id,
+    config.fizzy?.botUserId,
+    config.instance?.id
+  ].filter(Boolean).map(String);
+  if (daemonIds.length === 0) return false;
+  return actorIds.some((actorId) => daemonIds.includes(actorId));
 }
 
 function eventActors(event = {}) {
@@ -390,6 +407,7 @@ function eventActors(event = {}) {
     event.data?.actor?.id,
     event.payload?.actor?.id,
     comment.author_id,
+    comment.authorId,
     comment.user_id,
     comment.author?.id,
     comment.user?.id
@@ -403,8 +421,69 @@ function webhookVerificationMessage(code) {
   return "Webhook request verification failed.";
 }
 
+function eventFreshness(event, headers = {}, config = {}, now = () => new Date()) {
+  const timestamp = eventTimestamp(event) ?? headerValue(headers, "x-webhook-timestamp");
+  if (!timestamp) return { ok: true };
+
+  const eventTime = Date.parse(timestamp);
+  const nowValue = typeof now === "function" ? now() : now;
+  const nowTime = nowValue instanceof Date ? nowValue.getTime() : Date.parse(nowValue);
+  const maxAgeSeconds = Number(config.webhook?.max_event_age_seconds ?? DEFAULT_WEBHOOK_MAX_EVENT_AGE_SECONDS);
+  if (!Number.isFinite(eventTime) || !Number.isFinite(nowTime)) {
+    return {
+      ok: false,
+      code: "STALE_WEBHOOK_EVENT",
+      message: "Webhook event timestamp is invalid or stale.",
+      details: { timestamp }
+    };
+  }
+
+  const ageMs = Math.abs(nowTime - eventTime);
+  if (ageMs <= maxAgeSeconds * 1000) return { ok: true };
+  return {
+    ok: false,
+    code: "STALE_WEBHOOK_EVENT",
+    message: "Webhook event timestamp is outside the allowed freshness window.",
+    details: {
+      timestamp,
+      max_event_age_seconds: maxAgeSeconds,
+      age_ms: ageMs
+    }
+  };
+}
+
+function eventTimestamp(event = {}) {
+  return event.created_at ??
+    event.createdAt ??
+    event.timestamp ??
+    event.event_timestamp ??
+    event.eventTimestamp ??
+    event.delivered_at ??
+    event.deliveredAt ??
+    event.data?.created_at ??
+    event.payload?.created_at;
+}
+
+function hasExplicitRerunSignal(event = {}, card = {}) {
+  return hasRerunSignal(event, card);
+}
+
+function normalizeAction(action) {
+  const value = String(action ?? "").trim();
+  if (!value) return undefined;
+  return value.replace(/[.\s-]+/gu, "_").toLowerCase();
+}
+
 function callStatus(status, method, fallback) {
   return typeof status?.[method] === "function" ? status[method]() : fallback;
+}
+
+function headerValue(headers = {}, name) {
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === lowerName) return Array.isArray(value) ? value[0] : value;
+  }
+  return undefined;
 }
 
 function requestPathname(request) {

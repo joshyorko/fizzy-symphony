@@ -143,10 +143,11 @@ export function createFizzyClient(options = {}) {
   }
 
   function accountPath(path, account = config.fizzy?.account) {
-    if (!account) {
+    const segment = accountPathSegment(account);
+    if (!segment) {
       throw new FizzySymphonyError("FIZZY_ACCOUNT_REQUIRED", "Fizzy account slug is required for this API route.");
     }
-    return `/${encodePathPart(account)}${path}`;
+    return `/${encodePathPart(segment)}${path}`;
   }
 
   async function readBoards(account) {
@@ -1203,6 +1204,13 @@ function escapeHtml(value) {
 
 function encodePathPart(value) {
   return encodeURIComponent(String(value ?? ""));
+}
+
+function accountPathSegment(account) {
+  const raw = typeof account === "object" && account !== null
+    ? account.slug ?? account.path ?? account.id ?? account.name
+    : account;
+  return String(raw ?? "").trim().replace(/^\/+|\/+$/gu, "");
 }
 
 function normalizeTagTitle(value) {

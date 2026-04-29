@@ -220,6 +220,7 @@ test("webhook accepts a valid signature and enqueues a candidate hint only", asy
       intent: "spawn",
       reason: "card_triaged",
       event_id: "event_1",
+      action: "card_triaged",
       card_id: "card_1",
       board_id: "board_1"
     });
@@ -228,12 +229,13 @@ test("webhook accepts a valid signature and enqueues a candidate hint only", asy
       intent: "spawn",
       reason: "card_triaged",
       event_id: "event_1",
+      action: "card_triaged",
       card_id: "card_1",
       board_id: "board_1",
       received_at: "2026-04-29T12:00:00.000Z"
     }]);
     assert.equal(Object.hasOwn(hints[0], "event"), false);
-    assert.equal(Object.hasOwn(hints[0], "action"), false);
+    assert.equal(hints[0].action, "card_triaged");
   } finally {
     await server.close();
   }
@@ -304,6 +306,7 @@ test("webhook accepts valid JSON without a signature when no secret is configure
       intent: "spawn",
       reason: "card_triaged",
       event_id: "event_2",
+      action: "card_triaged",
       card_id: "card_2",
       board_id: "board_1",
       received_at: "2026-04-29T12:05:00.000Z"

@@ -1,3 +1,5 @@
+import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
+
 export function createOrchestratorState(options = {}) {
   const {
     config = {},
@@ -80,27 +82,54 @@ export function createOrchestratorState(options = {}) {
     if (!run) return { ignored: true, reason: "missing_run" };
 
     try {
-      const renewal = await claims?.renew?.({ run });
-      run.claim = { ...(run.claim ?? {}), ...clone(renewal ?? {}) };
-      const entry = { run_id: run.run_id, status: "renewed", renewed_at: nowIso(clock), lease_expires_at: renewal?.lease_expires_at };
-      claimRenewals.push(entry);
-      trim(claimRenewals);
-      return clone(entry);
-    } catch (error) {
-      const expired = run.claim?.lease_expires_at && Date.parse(run.claim.lease_expires_at) <= Date.parse(nowIso(clock));
+      const renewal = await claims?.renew?.({
+        config,
+        run,
+        card: run.card,
+        route: run.route,
+        claim: run.claim,
+        workspace: run.workspace,
+        now: nowIso(clock)
+      });
+      if (renewal?.renewed === false) {
+        return handleRenewalFailure(run, renewal.error ?? renewal, renewal.claim ?? renewal);
+      }
+      run.claim = { ...(run.claim ?? {}), ...clone(renewal?.claim ?? renewal ?? {}) };
       const entry = {
         run_id: run.run_id,
-        status: expired ? "failed_expired" : "failed",
-        error: normalizeError(error),
-        renewed_at: nowIso(clock)
+        status: "renewed",
+        renewed_at: nowIso(clock),
+        lease_expires_at: renewal?.lease_expires_at ?? renewal?.claim?.expires_at ?? renewal?.claim?.lease_expires_at
       };
       claimRenewals.push(entry);
       trim(claimRenewals);
-      if (expired) {
-        await cancelRun(run, "claim_renewal_expired", { retry: false });
-      }
+      scheduleRenewal(run);
       return clone(entry);
+    } catch (error) {
+      return handleRenewalFailure(run, error);
     }
+  }
+
+  async function handleRenewalFailure(run, error = {}, claimUpdate = null) {
+    if (claimUpdate) {
+      run.claim = { ...(run.claim ?? {}), ...clone(claimUpdate) };
+    }
+    const expiresAt = run.claim?.lease_expires_at ?? run.claim?.expires_at;
+    const expired = expiresAt && Date.parse(expiresAt) <= Date.parse(nowIso(clock));
+    const entry = {
+      run_id: run.run_id,
+      status: expired ? "failed_expired" : "failed",
+      error: normalizeError(error),
+      renewed_at: nowIso(clock)
+    };
+    claimRenewals.push(entry);
+    trim(claimRenewals);
+    if (expired) {
+      await cancelRun(run, "claim_renewal_expired", { retry: false });
+    } else {
+      scheduleRenewal(run);
+    }
+    return clone(entry);
   }
 
   async function reconcileActiveCards({ cards = [] } = {}) {
@@ -190,6 +219,7 @@ export function createOrchestratorState(options = {}) {
   function scheduleRenewal(run) {
     const delay = config.claims?.renew_interval_ms;
     if (!delay || !scheduler?.setTimeout) return;
+    if (run.renewal_timer) scheduler?.clearTimeout?.(run.renewal_timer);
     run.renewal_timer = scheduler.setTimeout(() => {
       const current = activeRuns.get(run.run_id);
       if (current?.attempt_id !== run.attempt_id) return { ignored: true, reason: "stale_timer" };
@@ -258,8 +288,12 @@ function normalizeRun(input, config, clock) {
 }
 
 function cancellationReason(run, card) {
-  const status = String(card.status ?? "").toLowerCase();
-  if (status === "closed" || status === "postponed") return "card_left_eligible_state";
+  const status = cardStatus(card);
+  if (status === "closed" || status === "postponed" || card.closed === true || card.postponed === true) return "card_left_eligible_state";
+  const boardId = cardBoardId(card);
+  const columnId = cardColumnId(card);
+  if (boardId && run.board_id && boardId !== run.board_id) return "card_left_eligible_state";
+  if (run.route?.source_column_id && columnId && columnId !== run.route.source_column_id) return "card_left_eligible_state";
   if (card.route_fingerprint && card.route_fingerprint !== run.route_fingerprint) return "route_fingerprint_mismatch";
   return null;
 }

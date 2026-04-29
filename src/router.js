@@ -1,5 +1,6 @@
 import { normalizeTag } from "./validation.js";
 import { cardDigest } from "./domain.js";
+import { asArray, cardBoardId, cardColumnId } from "./fizzy-normalize.js";
 
 const DEFAULT_ALLOWED_CARD_OVERRIDES = {
   backend: false,
@@ -488,15 +489,15 @@ function isPostponed(card) {
 }
 
 function normalizedTags(card) {
-  return [...new Set((card?.tags ?? []).map(normalizeTag).filter(Boolean))];
+  return [...new Set(asArray(card?.tags ?? card?.tag_names ?? card?.tagNames).map(normalizeTag).filter(Boolean))];
 }
 
 function getBoardId(board, card) {
-  return card?.board_id ?? card?.board?.id ?? board?.id ?? null;
+  return cardBoardId(card) ?? board?.id ?? null;
 }
 
 function getColumnId(card) {
-  return card?.column_id ?? card?.column?.id ?? null;
+  return cardColumnId(card);
 }
 
 function tagValue(tag, prefix) {
