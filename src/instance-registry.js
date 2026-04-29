@@ -167,6 +167,7 @@ export async function inspectInstanceRegistry(options = {}) {
   const report = {
     removed_stale_instances: [],
     live_instances: [],
+    stale_unconfirmed_instances: [],
     warnings: [],
     errors: []
   };
@@ -185,6 +186,7 @@ export async function inspectInstanceRegistry(options = {}) {
     }
 
     if (stale && liveState !== false) {
+      report.stale_unconfirmed_instances.push({ ...record, path });
       report.warnings.push({
         code: "INSTANCE_REGISTRY_STALE_UNCONFIRMED",
         message: "Instance registry entry is stale but process ownership could not be disproved.",

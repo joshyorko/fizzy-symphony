@@ -234,7 +234,7 @@ export function inspectClaimMarkers(comments = [], { instanceId, instance_id, no
       claimExpiresAtMs(claim) <= nowMs
     )),
     live_self_claim_warnings: liveSelfClaimWarnings,
-    other_live_claims: orderedEvents.filter((claim) => (
+    other_live_claims: reduced.filter((claim) => (
       claim.instance_id !== currentInstanceId &&
       isLiveStatus(claim.status) &&
       claimExpiresAtMs(claim) > nowMs
