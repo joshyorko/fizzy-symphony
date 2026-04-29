@@ -9,6 +9,7 @@ import { runReconciliationTick } from "../src/reconciler.js";
 import { createOrchestratorState } from "../src/orchestrator-state.js";
 import { createStatusStore } from "../src/status.js";
 import { parseCompletionFailureMarker, parseCompletionMarker } from "../src/completion.js";
+import { createCachedWorkflowLoader } from "../src/workflow.js";
 
 const START = Date.parse("2026-04-29T12:00:00.000Z");
 
@@ -706,6 +707,151 @@ test("runReconciliationTick records a non-looping completion-failure marker when
   assert.ok(!calls.includes("completionMarker"));
 });
 
+test("runReconciliationTick records one non-looping failure marker when the runner fails", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-runner-failed-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  const failureMarkers = [];
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps,
+    fizzy: {
+      ...deps.fizzy,
+      async postResultComment() {
+        throw new Error("result comments are only written after runner success");
+      },
+      async recordCompletionFailureMarker({ body, payload }) {
+        calls.push("runnerFailureMarker");
+        failureMarkers.push(parseCompletionFailureMarker(body));
+        assert.equal(payload.route_fingerprint, route.fingerprint);
+        assert.equal(payload.card_digest, failureMarkers[0].card_digest);
+        assert.match(payload.failure_reason, /runner exploded/u);
+        return { id: "runner_failure_marker_1" };
+      }
+    },
+    runner: {
+      ...deps.runner,
+      async stream(turn, onEvent) {
+        calls.push("stream");
+        onEvent?.({ type: "turn.failed", turn_id: turn.turn_id });
+        return {
+          status: "failed",
+          turn_id: turn.turn_id,
+          error: { code: "RUNNER_EXPLODED", message: "runner exploded" }
+        };
+      }
+    },
+    claims: {
+      ...deps.claims,
+      async release({ status, completion_marker }) {
+        calls.push(`releaseClaim:${status}`);
+        assert.equal(status, "failed");
+        assert.equal(completion_marker.id, "runner_failure_marker_1");
+        return { released: true };
+      }
+    }
+  });
+
+  assert.equal(result.failed, 1);
+  assert.equal(failureMarkers.length, 1);
+  assert.equal(failureMarkers[0].marker, "fizzy-symphony:completion-failed:v1");
+  assert.equal(failureMarkers[0].route_fingerprint, route.fingerprint);
+  assert.equal(status.status().runs.failed[0].last_error.code, "RUNNER_EXPLODED");
+  assert.equal(status.status().runs.failed[0].completion_marker.id, "runner_failure_marker_1");
+  assert.deepEqual(calls.filter((call) => call === "runnerFailureMarker"), ["runnerFailureMarker"]);
+});
+
+test("runReconciliationTick releases the claim and does not start the runner when workflow cache has no valid workflow", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-workflow-failed-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const workflowError = new Error("Workflow front matter is missing a closing delimiter.");
+  workflowError.code = "WORKFLOW_FRONT_MATTER_INVALID";
+  workflowError.details = { path: "/repo/app/WORKFLOW.md" };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    fizzy: {
+      async discoverCandidates() {
+        calls.push("discover");
+        return [card];
+      }
+    },
+    router: {
+      async validateCandidate() {
+        calls.push("route");
+        return { action: "spawn", card, route };
+      }
+    },
+    claims: {
+      async acquire() {
+        calls.push("claim");
+        return {
+          acquired: true,
+          claim: {
+            id: "claim_card_1",
+            claim_id: "claim_card_1",
+            run_id: "run_card_1",
+            attempt_id: "attempt_card_1"
+          }
+        };
+      },
+      async release({ status, error }) {
+        calls.push(`releaseClaim:${status}:${error.code}`);
+        return { released: true };
+      }
+    },
+    workspaceManager: {
+      async prepare() {
+        calls.push("prepareWorkspace");
+        return { key: "workspace_app", sourceRepo: "/repo/app", path: "/tmp/workspace-app" };
+      }
+    },
+    workflowLoader: createCachedWorkflowLoader({
+      status,
+      loader: async () => {
+        calls.push("loadWorkflow");
+        throw workflowError;
+      }
+    }),
+    runner: {
+      async startSession() {
+        calls.push("startSession");
+        throw new Error("runner must not start without a workflow");
+      }
+    },
+    orchestratorState: createOrchestratorState({ config })
+  });
+
+  assert.equal(result.failed, 1);
+  assert.deepEqual(calls, [
+    "discover",
+    "route",
+    "claim",
+    "prepareWorkspace",
+    "loadWorkflow",
+    "releaseClaim:failed:WORKFLOW_FRONT_MATTER_INVALID"
+  ]);
+  assert.equal(status.status().runs.failed[0].last_error.code, "WORKFLOW_FRONT_MATTER_INVALID");
+  assert.equal(status.status().workflow_cache.recent_reload_errors[0].cache_hit, false);
+});
+
 test("runReconciliationTick respects max_concurrent minus already running work", async () => {
   const calls = [];
   const config = {
@@ -742,6 +888,129 @@ test("runReconciliationTick respects max_concurrent minus already running work",
   assert.deepEqual(status.status().runs.running.map((run) => run.id), ["run_already_active"]);
   assert.deepEqual(status.status().runs.completed.map((run) => run.id), ["run_card_1"]);
 });
+
+for (const [name, setup, expected] of [
+  [
+    "global",
+    () => ({
+      config: configFixture(1),
+      activeRoute: routeFixture(),
+      candidateRoute: routeFixture(),
+      activeCard: cardFixture("card_active", 99),
+      candidateCard: cardFixture("card_2", 2)
+    }),
+    "global_capacity"
+  ],
+  [
+    "board",
+    () => ({
+      config: {
+        ...configFixture(10),
+        boards: {
+          entries: [{
+            id: "board_1",
+            label: "Agents",
+            enabled: true,
+            defaults: { concurrency: { max_concurrent: 1 } }
+          }]
+        }
+      },
+      activeRoute: { ...routeFixture(), id: "route_active", fingerprint: "sha256:active" },
+      candidateRoute: { ...routeFixture(), id: "route_candidate", fingerprint: "sha256:candidate" },
+      activeCard: cardFixture("card_active", 99),
+      candidateCard: cardFixture("card_2", 2)
+    }),
+    "board_capacity"
+  ],
+  [
+    "route",
+    () => {
+      const route = { ...routeFixture(), concurrency: { max_concurrent: 1 } };
+      return {
+        config: {
+          ...configFixture(10),
+          boards: { entries: [{ id: "board_1", label: "Agents", enabled: true, defaults: { concurrency: { max_concurrent: 10 } } }] }
+        },
+        activeRoute: route,
+        candidateRoute: route,
+        activeCard: cardFixture("card_active", 99),
+        candidateCard: cardFixture("card_2", 2)
+      };
+    },
+    "route_capacity"
+  ],
+  [
+    "card",
+    () => ({
+      config: {
+        ...configFixture(10),
+        agent: { ...configFixture(10).agent, max_concurrent_per_card: 1 },
+        boards: { entries: [{ id: "board_1", label: "Agents", enabled: true, defaults: { concurrency: { max_concurrent: 10 } } }] }
+      },
+      activeRoute: { ...routeFixture(), concurrency: { max_concurrent: 10 } },
+      candidateRoute: { ...routeFixture(), concurrency: { max_concurrent: 10 } },
+      activeCard: cardFixture("card_2", 2),
+      candidateCard: cardFixture("card_2", 2)
+    }),
+    "card_capacity"
+  ]
+]) {
+  test(`runReconciliationTick refuses ${name} capacity before acquiring a claim and exposes the refusal`, async () => {
+    const calls = [];
+    const { config, activeRoute, candidateRoute, activeCard, candidateCard } = setup();
+    const status = statusStore(config);
+    status.startRun({
+      id: "run_active",
+      card: activeCard,
+      board_id: activeCard.board_id,
+      route: activeRoute,
+      claim: { id: "claim_active" }
+    });
+
+    const result = await runReconciliationTick({
+      config,
+      status,
+      now: fixedNow,
+      fizzy: {
+        async discoverCandidates() {
+          calls.push("discover");
+          return [candidateCard];
+        }
+      },
+      router: {
+        async validateCandidate() {
+          calls.push("route");
+          return { action: "spawn", card: candidateCard, route: candidateRoute };
+        }
+      },
+      claims: {
+        async acquire() {
+          calls.push("claim");
+          throw new Error("claim must not be acquired when capacity is full");
+        }
+      },
+      workspaceManager: {
+        async prepare() {
+          calls.push("prepareWorkspace");
+          throw new Error("workspace must not be prepared when capacity is full");
+        }
+      },
+      workflowLoader: {},
+      runner: {}
+    });
+
+    assert.equal(result.dispatched, 0);
+    assert.equal(result.capacity_refused, 1);
+    assert.deepEqual(calls, ["discover", "route"]);
+    const refusal = status.status().capacity_refusals[0];
+    assert.equal(refusal.reason, expected);
+    assert.equal(refusal.card_id, candidateCard.id);
+    assert.equal(refusal.board_id, "board_1");
+    assert.equal(refusal.route_id, candidateRoute.id);
+    assert.equal(refusal.active_count, 1);
+    assert.equal(refusal.limit, 1);
+  });
+}
 
 test("webhook events enqueue candidate hints but still require router validation before claims", async () => {
   const calls = [];
