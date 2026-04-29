@@ -333,6 +333,19 @@ export function createBoardClaimStore({
     async renew({ config = {}, card = {}, claim = {}, now = new Date() } = {}) {
       const options = claimOptions(config);
       const nowValue = toDate(now);
+      const liveBefore = await verifyRenewableClaim({
+        fizzy,
+        card: claimCard(card, claim),
+        claim,
+        now: nowValue,
+        maxClockSkewMs: options.maxClockSkewMs
+      });
+      if (!liveBefore.ok) {
+        const lost = renewalLost(claim, liveBefore.reason, liveBefore.live_claim);
+        recordClaim(status, lost);
+        return { renewed: false, reason: liveBefore.reason, claim: lost, live_claim: liveBefore.live_claim ?? null };
+      }
+
       const renewedClaim = {
         ...claim,
         status: "renewed",
@@ -353,6 +366,19 @@ export function createBoardClaimStore({
 
       try {
         await postCardComment(fizzy, { card: claimCard(card, marker.claim), body: marker.body });
+        const liveAfter = await verifyRenewableClaim({
+          fizzy,
+          card: claimCard(card, marker.claim),
+          claim: marker.claim,
+          now: nowValue,
+          maxClockSkewMs: options.maxClockSkewMs
+        });
+        if (!liveAfter.ok) {
+          await postLostClaim(fizzy, { card: claimCard(card, marker.claim), claim: marker.claim, now: nowValue });
+          const lost = renewalLost(marker.claim, liveAfter.reason, liveAfter.live_claim);
+          recordClaim(status, lost);
+          return { renewed: false, reason: liveAfter.reason, claim: lost, live_claim: liveAfter.live_claim ?? null };
+        }
         recordClaim(status, marker.claim);
         return { renewed: true, claim: marker.claim };
       } catch (error) {
@@ -419,6 +445,24 @@ async function postLostClaim(fizzy, { card, claim, now }) {
   } catch {
     return null;
   }
+}
+
+async function verifyRenewableClaim({ fizzy, card, claim, now, maxClockSkewMs }) {
+  const comments = await listCardComments(fizzy, { card });
+  const states = applyClaimEventLog(comments);
+  const winner = selectClaimWinner(states, { cardId: claim.card_id ?? card.id, now, maxClockSkewMs });
+  if (winner && winner.claim_id !== claim.claim_id) {
+    return { ok: false, reason: "lost_claim", live_claim: winner };
+  }
+
+  const own = states.find((candidate) => candidate.claim_id === claim.claim_id);
+  if (!own) return { ok: false, reason: "claim_missing", live_claim: winner ?? null };
+  if (TERMINAL_STATUSES.has(own.status)) return { ok: false, reason: "claim_terminal", live_claim: winner ?? null };
+  if (claimExpiresAtMs(own) <= toTimeMs(now, "now", "INVALID_CLAIM_TIME")) {
+    return { ok: false, reason: "claim_expired", live_claim: winner ?? null };
+  }
+  if (!winner) return { ok: false, reason: "no_live_claim", live_claim: null };
+  return { ok: true, claim: own, live_claim: winner };
 }
 
 async function assignAndWatch(fizzy, { config, card }) {
@@ -503,6 +547,16 @@ function renewalFailure(claim, error) {
     status: "renew_failed",
     preserve_workspace: true,
     error: normalizeError(error)
+  };
+}
+
+function renewalLost(claim, reason, liveClaim) {
+  return {
+    ...claim,
+    status: "renew_lost",
+    reason,
+    preserve_workspace: true,
+    live_claim_id: liveClaim?.claim_id
   };
 }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -165,6 +165,29 @@ test("writeDurableProof stores proof under observability.state_dir/proof outside
   assert.equal(onDisk.no_code_change, true);
   assert.equal(proof.digest, proofDigest);
   assert.equal(proofDigest, digest(digestInput));
+});
+
+test("writeDurableProof rejects proof storage that resolves inside the workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fizzy-symphony-proof-symlink-"));
+  const stateDir = join(root, "state");
+  const workspacePath = join(root, "workspace", "card_1");
+  await mkdir(join(workspacePath, "proof"), { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await symlink(join(workspacePath, "proof"), join(stateDir, "proof"), "dir");
+
+  await assert.rejects(
+    () => writeDurableProof({
+      config: { observability: { state_dir: stateDir } },
+      run: run(),
+      card: card(),
+      route: route(),
+      workspace: workspace({ path: workspacePath }),
+      result: { status: "completed", no_code_change: true },
+      resultComment: { id: "comment_1" },
+      completedAt: "2026-04-29T12:05:00.000Z"
+    }),
+    (error) => error.code === "DURABLE_PROOF_INSIDE_WORKSPACE"
+  );
 });
 
 test("cleanup eligibility preserves workspace when proof, result, marker, release, or outside proof guard is missing", () => {

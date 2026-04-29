@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { canonicalJson, cardDigest, digest } from "./domain.js";
@@ -146,7 +146,7 @@ export async function writeDurableProof({
   result = {},
   resultComment = {},
   completedAt = new Date(),
-  fs = { mkdir, rename, writeFile }
+  fs = { mkdir, realpath, rename, writeFile }
 } = {}) {
   const stateDir = resolve(config.observability?.state_dir ?? ".fizzy-symphony/run");
   const proofDir = join(stateDir, "proof");
@@ -186,6 +186,11 @@ export async function writeDurableProof({
   const tmpPath = join(dirname(proofFile), `.${basename(proofFile)}.${process.pid}.${Date.now()}.tmp`);
 
   await fs.mkdir(proofDir, { recursive: true });
+  await assertDurableProofRootOutsideWorkspace({
+    proofDir,
+    workspacePath: base.workspace_path,
+    fs
+  });
   await fs.writeFile(tmpPath, body, "utf8");
   await fs.rename(tmpPath, proofFile);
 
@@ -523,6 +528,36 @@ function isInsideOrSame(path, root) {
   const resolvedRoot = resolve(root);
   const remainder = relative(resolvedRoot, resolvedPath);
   return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
+}
+
+async function assertDurableProofRootOutsideWorkspace({ proofDir, workspacePath, fs }) {
+  if (!workspacePath) return;
+  const [canonicalProofDir, canonicalWorkspacePath] = await Promise.all([
+    canonicalPathIfExists(proofDir, fs),
+    canonicalPathIfExists(workspacePath, fs)
+  ]);
+  if (isInsideOrSame(canonicalProofDir, canonicalWorkspacePath)) {
+    throw new FizzySymphonyError(
+      "DURABLE_PROOF_INSIDE_WORKSPACE",
+      "Durable proof storage resolves inside the workspace cleanup target.",
+      {
+        proof_dir: proofDir,
+        canonical_proof_dir: canonicalProofDir,
+        workspace_path: workspacePath,
+        canonical_workspace_path: canonicalWorkspacePath
+      }
+    );
+  }
+}
+
+async function canonicalPathIfExists(path, fs) {
+  const resolved = resolve(path);
+  try {
+    if (typeof fs?.realpath === "function") return await fs.realpath(resolved);
+  } catch {
+    return resolved;
+  }
+  return resolved;
 }
 
 function toIso(value) {

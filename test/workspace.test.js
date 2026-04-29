@@ -19,6 +19,7 @@ import {
   workspacePath
 } from "../src/workspace.js";
 import { writeDurableProof } from "../src/completion.js";
+import { digest } from "../src/domain.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -587,6 +588,50 @@ test("cleanupWorkspace preserves when durable proof file is missing or tampered"
   const tampered = await cleanupWorkspace({ ...complete, proof: replacement });
   assert.equal(tampered.action, "preserve");
   assert.equal(tampered.reason, "proof_digest_mismatch");
+});
+
+test("cleanupWorkspace preserves when proof resolves inside the workspace through a symlink", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cleanup-proof-symlink-"));
+  await initSourceRepo(dir, { extraFiles: { ".gitignore": "proof/\n" } });
+  const config = baseConfig(dir, {
+    safety: {
+      allowed_roots: [dir],
+      dirty_source_repo_policy: "fail",
+      cleanup: { policy: "remove_clean_only" }
+    }
+  });
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const proofInsideWorkspace = join(prepared.workspace_path, "proof");
+  await mkdir(proofInsideWorkspace, { recursive: true });
+  await mkdir(join(dir, ".fizzy-symphony", "run"), { recursive: true });
+  await symlink(proofInsideWorkspace, join(dir, ".fizzy-symphony", "run", "proof"), "dir");
+  const proofFile = join(dir, ".fizzy-symphony", "run", "proof", "run_1.json");
+  const payload = {
+    schema_version: "fizzy-symphony-proof-v1",
+    run_id: "run_1",
+    no_code_change: true
+  };
+  const proofDigest = digest(payload);
+  await writeFile(proofFile, `${JSON.stringify({ ...payload, proof_digest: proofDigest })}\n`, "utf8");
+
+  const result = await cleanupWorkspace({
+    config,
+    workspace: prepared,
+    proof: { file: proofFile, digest: proofDigest, payload },
+    result: { no_code_change: true },
+    resultComment: { id: "comment_1" },
+    completionMarker: { id: "marker_1" },
+    claimRelease: { released: true }
+  });
+
+  assert.equal(result.action, "preserve");
+  assert.equal(result.reason, "durable_proof_inside_workspace");
+  await access(proofFile);
 });
 
 test("metadata mismatch preserves existing workspace metadata and fails dispatch", async () => {

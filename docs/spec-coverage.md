@@ -31,15 +31,15 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Fizzy API usage
 - Status: newly covered
 - Tests: `test/etag-cache.test.js`, `test/fizzy-client.test.js`, `test/setup.test.js`, `test/polling.test.js`
-- Coverage: API-filtered golden and candidate discovery, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, live account slug normalization, live tag `title` normalization, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
-- Live proof: gated disposable-board smoke passed on 2026-04-29 against board `<private-board-id>`, proving identity, board/card/golden creation and reads, startup validation, one daemon poll, unsafe-route refusal, and no destructive cleanup.
+- Coverage: API-filtered golden and candidate discovery, default board/column filters when configured lists are empty, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, live account slug normalization, live tag `title` normalization, nested live board/column card shape, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
+- Live proof: gated disposable-board smoke passed on 2026-04-29 against board `<private-board-id>`, proving identity, board/card/golden creation and reads, startup validation with one route, one daemon poll, unsafe-route refusal, and no destructive cleanup.
 - Remaining: live webhook delivery against a disposable public callback is not smoked.
 - Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.
 
 ### Workspace isolation
 - Status: passing
 - Tests: `test/config.test.js`, `test/workspace.test.js`, `test/recovery.test.js`
-- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, symlink/canonical allowed-root containment, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
+- Coverage: deterministic workspace key, named workspace identity, explicit rejection for unimplemented `git_clone`/`copy` isolation, metadata mismatch preservation, source snapshot requirements, path escape rejection, symlink/canonical allowed-root containment for source repos and workspace roots, retry reuse semantics, branch naming, guard file writes, workspace metadata scanning, and startup preservation for missing or mismatched guards.
 
 ### Port allocation
 - Status: newly covered
@@ -50,12 +50,12 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 ### Multi-instance claim behavior
 - Status: newly covered
 - Tests: `test/claims.test.js`, `test/orchestrator-state.test.js`, `test/reconciler.test.js`
-- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, live rich-text claim marker parsing, long-running active-run renewal before steal, multiple renewal comments, returned renewal-failure cancellation, thrown renewal-failure cancellation, release failure reporting, and stale instance registry surfaces.
+- Coverage: simultaneous race ordering, loser skip, non-expired claim skip, expired claim steal after grace, released claim unblocking, live rich-text claim marker parsing, verify-before-renew and verify-after-renew lease ownership, renewal refusal after steal or terminal release, long-running active-run renewal before steal, multiple renewal comments, returned renewal-failure cancellation, thrown renewal-failure cancellation, release failure reporting, and stale instance registry surfaces.
 
 ### Safe cleanup
 - Status: newly covered
 - Tests: `test/completion.test.js`, `test/recovery.test.js`, `test/workspace.test.js`
-- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, proof file existence and digest verification before removal, force removal forbidden by policy validation, and interrupted cleanup recovery.
+- Coverage: dirty/untracked/unpushed proof gates through cleanup eligibility, missing proof/result/marker/release preservation, durable proof outside cleanup target, proof file existence and digest verification before removal, proof symlink rejection before write/cleanup/recovery, force removal forbidden by policy validation, and interrupted cleanup recovery.
 
 ### Runner health checks
 - Status: passing

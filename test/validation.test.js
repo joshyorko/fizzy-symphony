@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -579,6 +579,28 @@ test("validateStartup rejects configured workspace repositories outside allowed 
   config.safety.allowed_roots = [dir];
   config.workspaces.registry.app.repo = outside;
   config.workspaces.registry.app.worktree_root = join(outside, "worktrees");
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(errorCodes(report).includes("UNSAFE_WORKSPACE_ROOT"));
+});
+
+test("validateStartup rejects workspace repositories that symlink outside allowed roots", async () => {
+  const { config, dir } = await parsedConfig();
+  const outside = await mkdtemp(join(tmpdir(), "fizzy-symphony-symlink-source-"));
+  await writeFile(join(outside, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const linkRoot = join(dir, "links");
+  await mkdir(linkRoot, { recursive: true });
+  const linkedRepo = join(linkRoot, "repo");
+  await symlink(outside, linkedRepo, "dir");
+  config.safety.allowed_roots = [dir];
+  config.workspaces.registry.app.repo = linkedRepo;
+  config.workspaces.registry.app.worktree_root = join(dir, "worktrees");
 
   const report = await validateStartup({
     config,
