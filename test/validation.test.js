@@ -525,6 +525,22 @@ test("validateStartup returns structured errors for unsafe startup state", async
   assert.deepEqual(report.warnings.map((warning) => warning.code), ["ENTROPY_UNKNOWN"]);
 });
 
+test("validateStartup allows managed webhooks without an optional signing secret and reports the risk as a warning", async () => {
+  const { config } = await parsedConfig();
+  config.webhook.manage = true;
+  config.webhook.callback_url = "https://example.test/fizzy";
+  config.webhook.secret = "";
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.ok(report.warnings.some((warning) => warning.code === "WEBHOOK_SECRET_NOT_CONFIGURED"));
+});
+
 test("validateStartup detects missing secrets, invalid Fizzy access, invalid bot user, managed webhook issues, bad server port, bad claim mode, and unsafe cleanup", async () => {
   const { config } = await parsedConfig();
   config.fizzy.token = "";
@@ -553,6 +569,24 @@ test("validateStartup detects missing secrets, invalid Fizzy access, invalid bot
     "INVALID_BOT_USER",
     "MANAGED_WEBHOOK_MISCONFIGURED"
   ]);
+});
+
+test("validateStartup rejects configured workspace repositories outside allowed roots", async () => {
+  const { config, dir } = await parsedConfig();
+  const outside = await mkdtemp(join(tmpdir(), "fizzy-symphony-outside-root-"));
+  await writeFile(join(outside, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  config.safety.allowed_roots = [dir];
+  config.workspaces.registry.app.repo = outside;
+  config.workspaces.registry.app.worktree_root = join(outside, "worktrees");
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(errorCodes(report).includes("UNSAFE_WORKSPACE_ROOT"));
 });
 
 test("validateStartup reports missing WORKFLOW.md when fallback is disabled", async () => {

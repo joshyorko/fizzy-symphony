@@ -1,9 +1,23 @@
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
 import { FizzySymphonyError } from "./errors.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
+
+const DEFAULT_WEBHOOK_ACTIONS = [
+  "card_assigned",
+  "card_closed",
+  "card_postponed",
+  "card_auto_postponed",
+  "card_board_changed",
+  "card_published",
+  "card_reopened",
+  "card_sent_back_to_triage",
+  "card_triaged",
+  "card_unassigned",
+  "comment_created"
+];
 
 export async function runSetup(options = {}) {
   const {
@@ -12,23 +26,39 @@ export async function runSetup(options = {}) {
     runner,
     env = process.env,
     workspaceRepo = ".",
-    webhook = {}
+    webhook = {},
+    prompts
   } = options;
 
   const identity = await validateIdentity(fizzy);
-  const account = selectAccount(identity, options.account);
+  const account = await selectAccount(identity, options.account, prompts);
 
   const boards = await fizzy.listBoards(account);
   const users = await fizzy.listUsers(account);
   const tags = await fizzy.listTags(account);
-  const selectedBoardIds = options.selectedBoardIds ?? boards.slice(0, 1).map((board) => board.id);
-  const entropy = await fizzy.getEntropy?.(account, selectedBoardIds);
   const runnerReport = await detectRunner(runner);
 
+  const setupMode = await selectSetupMode(options, prompts);
   const selectedBoards = [];
-  for (const boardId of selectedBoardIds) {
-    selectedBoards.push(await fizzy.getBoard(boardId));
+  let selectedBoardIds = [];
+  let starter = { created: false };
+
+  if (setupMode === "create_starter") {
+    const starterBoard = await createStarterBoard({ fizzy, account, workspaceRepo, options });
+    selectedBoards.push(starterBoard);
+    selectedBoardIds = [starterBoard.id];
+    starter = { created: true, board_id: starterBoard.id };
+  } else {
+    selectedBoardIds = await selectBoardIds(boards, options, prompts);
+    for (const boardId of selectedBoardIds) {
+      selectedBoards.push(await fizzy.getBoard(boardId));
+    }
+    if (setupMode === "adopt_starter") {
+      starter = { created: false, board_id: selectedBoardIds[0] };
+    }
   }
+
+  const entropy = await fizzy.getEntropy?.(account, selectedBoardIds);
   const resolvedTags = resolveManagedTags(tags, {
     required: ["agent-instructions", ...managedTagsUsedByBoards(selectedBoards)]
   });
@@ -40,31 +70,43 @@ export async function runSetup(options = {}) {
   });
 
   const managedWebhooks = {};
+  const warnings = (entropy?.warnings ?? []).map((warning) => ({
+    code: warning.code ?? "ENTROPY_WARNING",
+    message: warning.message ?? "Fizzy entropy warning.",
+    details: warning
+  }));
+
   if (webhook.manage) {
-    validateWebhookSetup(webhook);
+    warnings.push(...validateWebhookSetup(webhook));
     for (const boardId of selectedBoardIds) {
-      managedWebhooks[boardId] = await fizzy.ensureWebhook({
+      managedWebhooks[boardId] = await manageWebhookForBoard(fizzy, {
         account,
         board_id: boardId,
         callback_url: webhook.callback_url,
         secret: webhook.secret,
-        subscribed_actions: webhook.subscribed_actions
+        subscribed_actions: webhookActions(webhook)
       });
     }
   }
 
   await writeAnnotatedConfig(configPath, {
     account,
-    board: {
-      id: selectedBoards[0]?.id ?? "board_123",
-      label: selectedBoards[0]?.name ?? selectedBoards[0]?.label ?? "Agent Playground"
-    },
+    boards: selectedBoards.map((board) => ({
+      id: board.id,
+      label: board.name ?? board.label ?? board.id
+    })),
+    agentMaxConcurrent: starter.created || setupMode === "adopt_starter" ? 1 : 2,
+    boardMaxConcurrent: starter.created || setupMode === "adopt_starter" ? 1 : 2,
     runnerPreferred: runnerReport.kind === "sdk" ? "sdk" : "cli_app_server",
     runnerFallback: "cli_app_server",
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     botUserId: options.botUserId ?? "",
-    webhook
+    workspaceRepo,
+    webhook,
+    managedWebhookIdsByBoard: Object.fromEntries(
+      Object.entries(managedWebhooks).map(([boardId, managedWebhook]) => [boardId, managedWebhook.id])
+    )
   });
 
   return {
@@ -77,12 +119,9 @@ export async function runSetup(options = {}) {
     resolvedTags,
     routes,
     runner: runnerReport,
-    warnings: (entropy?.warnings ?? []).map((warning) => ({
-      code: warning.code ?? "ENTROPY_WARNING",
-      message: warning.message ?? "Fizzy entropy warning.",
-      details: warning
-    })),
+    warnings,
     managedWebhooks,
+    starter,
     env_used: {
       fizzy_token: Boolean(env.FIZZY_API_TOKEN)
     }
@@ -99,7 +138,7 @@ async function validateIdentity(fizzy) {
   }
 }
 
-function selectAccount(identity, requestedAccount) {
+async function selectAccount(identity, requestedAccount, prompts) {
   const accounts = identity.accounts ?? [];
   if (requestedAccount) {
     const match = accounts.find((account) => account.id === requestedAccount || account.name === requestedAccount);
@@ -115,7 +154,74 @@ function selectAccount(identity, requestedAccount) {
   if (!first) {
     throw new FizzySymphonyError("FIZZY_ACCOUNT_UNAVAILABLE", "Fizzy identity did not include any accounts.");
   }
-  return first.id ?? first.name;
+  const prompted = await prompts?.selectAccount?.(accounts);
+  if (prompted && typeof prompted === "object") return prompted.id ?? prompted.name;
+  return prompted ?? first.id ?? first.name;
+}
+
+async function selectSetupMode(options, prompts) {
+  if (options.setupMode) return options.setupMode;
+  return (await prompts?.selectSetupMode?.(["existing", "create_starter", "adopt_starter"])) ?? "existing";
+}
+
+async function selectBoardIds(boards, options, prompts) {
+  if (options.selectedBoardIds) return options.selectedBoardIds;
+  const prompted = await prompts?.selectBoards?.(boards);
+  if (prompted?.length) {
+    return prompted.map((board) => typeof board === "object" ? board.id : board);
+  }
+  const selected = boards.slice(0, 1).map((board) => board.id);
+  if (selected.length === 0) {
+    throw new FizzySymphonyError("FIZZY_BOARD_UNAVAILABLE", "Setup requires at least one selected Fizzy board.");
+  }
+  return selected;
+}
+
+async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
+  const name = options.starterBoardName ?? `Agent Playground: ${basename(resolve(workspaceRepo))}`;
+  const plan = {
+    account,
+    name,
+    columns: ["Ready for Agents", "Done"],
+    golden_ticket: {
+      title: "Repo Agent",
+      column: "Ready for Agents",
+      golden: true,
+      tags: ["agent-instructions", "codex", "move-to-done"]
+    },
+    smoke_test: Boolean(options.createSmokeTestCard)
+  };
+
+  if (fizzy.createStarterBoard) {
+    const created = await fizzy.createStarterBoard(plan);
+    const boardId = created.board?.id ?? created.id ?? created.board_id;
+    if (!boardId) {
+      throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Starter board creation did not return a board ID.");
+    }
+    return await fizzy.getBoard(boardId);
+  }
+
+  if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard) {
+    throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Fizzy client cannot create starter board resources.");
+  }
+
+  const board = await fizzy.createBoard({ account, name });
+  const ready = await fizzy.createColumn({ account, board_id: board.id, name: "Ready for Agents" });
+  await fizzy.createColumn({ account, board_id: board.id, name: "Done" });
+  const golden = await fizzy.createCard({
+    account,
+    board_id: board.id,
+    column_id: ready.id,
+    title: "Repo Agent",
+    tags: ["agent-instructions", "codex", "move-to-done"],
+    golden: true
+  });
+
+  if (fizzy.markGolden) {
+    await fizzy.markGolden({ account, board_id: board.id, card_id: golden.id });
+  }
+
+  return await fizzy.getBoard(board.id);
 }
 
 function validateBotUser(botUserId, users) {
@@ -162,6 +268,8 @@ async function detectRunner(runner) {
 }
 
 function validateWebhookSetup(webhook) {
+  const warnings = [];
+
   try {
     const url = new URL(webhook.callback_url);
     if (url.protocol !== "https:" || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
@@ -175,6 +283,66 @@ function validateWebhookSetup(webhook) {
   }
 
   if (!webhook.secret) {
-    throw new FizzySymphonyError("MANAGED_WEBHOOK_MISCONFIGURED", "Managed webhooks require a signing secret.");
+    warnings.push({
+      code: "WEBHOOK_SECRET_NOT_CONFIGURED",
+      message: "Managed webhook setup will continue without signature verification because no signing secret was configured.",
+      details: { manage: Boolean(webhook.manage), callback_url: webhook.callback_url }
+    });
   }
+
+  return warnings;
+}
+
+async function manageWebhookForBoard(fizzy, request) {
+  if (fizzy.ensureWebhook) {
+    return fizzy.ensureWebhook(request);
+  }
+
+  if (!fizzy.listWebhooks || !fizzy.createWebhook) {
+    throw new FizzySymphonyError("MANAGED_WEBHOOK_UNAVAILABLE", "Fizzy client cannot manage webhooks.");
+  }
+
+  const existing = await fizzy.listWebhooks({ account: request.account, board_id: request.board_id });
+  const match = (existing ?? []).find((webhook) => webhook.callback_url === request.callback_url);
+
+  if (!match) {
+    return fizzy.createWebhook(omitUndefined(request));
+  }
+
+  if (match.active === false || match.status === "inactive") {
+    if (!fizzy.reactivateWebhook) {
+      throw new FizzySymphonyError("MANAGED_WEBHOOK_UNAVAILABLE", "Fizzy client cannot reactivate inactive managed webhooks.");
+    }
+    return fizzy.reactivateWebhook({
+      ...omitUndefined(request),
+      webhook_id: match.id
+    });
+  }
+
+  if (!sameActions(match.subscribed_actions, request.subscribed_actions)) {
+    if (!fizzy.updateWebhook) {
+      throw new FizzySymphonyError("MANAGED_WEBHOOK_UNAVAILABLE", "Fizzy client cannot update managed webhook subscriptions.");
+    }
+    return fizzy.updateWebhook({
+      ...omitUndefined(request),
+      webhook_id: match.id
+    });
+  }
+
+  return match;
+}
+
+function webhookActions(webhook) {
+  return webhook.subscribed_actions?.length ? webhook.subscribed_actions : DEFAULT_WEBHOOK_ACTIONS;
+}
+
+function sameActions(left = [], right = []) {
+  const normalizedLeft = [...left].sort();
+  const normalizedRight = [...right].sort();
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((action, index) => action === normalizedRight[index]);
+}
+
+function omitUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined && value !== ""));
 }

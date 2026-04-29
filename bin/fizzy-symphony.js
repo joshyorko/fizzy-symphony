@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
 import { startDaemon } from "../src/daemon.js";
 import { isFizzySymphonyError } from "../src/errors.js";
+import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
 
@@ -56,12 +57,38 @@ async function statusDiscoveryCommand(args, io) {
 
 async function setupCommand(args, io) {
   const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
-  if (!args.includes("--template-only")) {
-    throw new Error("Task 1 CLI setup supports --template-only. Validating live Fizzy setup uses injected clients in src/setup.js.");
+  if (args.includes("--template-only")) {
+    await writeAnnotatedConfig(configPath, { runnerPreferred: "cli_app_server" });
+    io.stdout.write(`wrote annotated config: ${configPath}\n`);
+    return;
   }
 
-  await writeAnnotatedConfig(configPath, { runnerPreferred: "cli_app_server" });
-  io.stdout.write(`wrote annotated config: ${configPath}\n`);
+  if (!io.fizzy) {
+    throw new Error("Live setup requires an injected Fizzy client. Use --template-only to write a template config.");
+  }
+
+  const result = await runSetup({
+    configPath,
+    fizzy: io.fizzy,
+    runner: io.runner,
+    prompts: io.prompts,
+    env: io.env ?? process.env,
+    account: optionValue(args, "--account") ?? undefined,
+    selectedBoardIds: boardValues(args),
+    setupMode: optionValue(args, "--mode") ?? undefined,
+    workspaceRepo: optionValue(args, "--workspace-repo") ?? ".",
+    botUserId: optionValue(args, "--bot-user-id") ?? undefined,
+    webhook: webhookOptions(args)
+  });
+
+  io.stdout.write(`${JSON.stringify({
+    ok: true,
+    path: result.path,
+    account: result.account,
+    boards: result.boards.map((board) => board.id),
+    runner: result.runner.kind,
+    warnings: result.warnings.map((warning) => warning.code)
+  })}\n`);
 }
 
 async function validateCommand(args, io) {
@@ -101,10 +128,43 @@ function optionValue(args, name) {
   return args[index + 1] ?? null;
 }
 
+function optionValues(args, name) {
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === name && args[index + 1]) values.push(args[index + 1]);
+  }
+  return values;
+}
+
+function boardValues(args) {
+  const repeated = optionValues(args, "--board");
+  const commaSeparated = optionValue(args, "--boards");
+  const values = [
+    ...repeated,
+    ...(commaSeparated ? commaSeparated.split(",") : [])
+  ].map((value) => value.trim()).filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+function webhookOptions(args) {
+  const manage = args.includes("--manage-webhooks");
+  const callbackUrl = optionValue(args, "--webhook-callback-url");
+  const actions = optionValue(args, "--webhook-actions");
+
+  if (!manage && !callbackUrl && !actions) return {};
+
+  return {
+    manage,
+    callback_url: callbackUrl ?? "",
+    subscribed_actions: actions?.split(",").map((action) => action.trim()).filter(Boolean)
+  };
+}
+
 function usage(exitCode, io) {
   const text = [
     "Usage:",
     "  fizzy-symphony setup --template-only [--config path]",
+    "  fizzy-symphony setup [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path]",
     "  fizzy-symphony validate --parse-only [--config path]",
     "  fizzy-symphony daemon [--config path]",
     "  fizzy-symphony status [--config path] [--instance id]",
