@@ -332,7 +332,7 @@ test("loadConfig reads JSON and generated YAML config files for the CLI", async 
   assert.equal(loadedYaml.webhook.secret, "webhook-secret");
 });
 
-test("CLI exposes setup template generation, parse-only validation, and daemon stub commands", async () => {
+test("CLI exposes setup template generation and parse-only validation commands", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-"));
   const templatePath = join(dir, "config.yml");
   const jsonPath = join(dir, "config.json");
@@ -359,14 +359,6 @@ test("CLI exposes setup template generation, parse-only validation, and daemon s
   assert.equal(validate.exitCode, 0);
   assert.deepEqual(JSON.parse(validate.stdout), { ok: true, mode: "parse-only" });
 
-  const daemon = await runCli(["daemon"]);
-  assert.equal(daemon.exitCode, 0);
-  assert.deepEqual(JSON.parse(daemon.stdout), {
-    ok: true,
-    command: "daemon",
-    status: "stub",
-    message: "Later tasks implement the daemon loop."
-  });
 });
 
 async function runCli(args, options = {}) {
