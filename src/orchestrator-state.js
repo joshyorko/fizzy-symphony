@@ -54,6 +54,19 @@ export function createOrchestratorState(options = {}) {
     return clone(failure);
   }
 
+  function completeRun(runId, details = {}) {
+    const run = activeRuns.get(runId);
+    if (!run) return null;
+    activeRuns.delete(runId);
+    clearRunTimers(run);
+    return clone({
+      ...run,
+      ...details,
+      status: "completed",
+      completed_at: nowIso(clock)
+    });
+  }
+
   function recordRunnerActivity(runId, activity = {}) {
     const run = activeRuns.get(runId);
     if (!run) return null;
@@ -209,10 +222,12 @@ export function createOrchestratorState(options = {}) {
 
   return {
     startRun,
+    completeRun,
     recordFailure,
     recordRunnerActivity,
     renewClaimNow,
     reconcileActiveCards,
+    cancelRun,
     recoverStartup,
     snapshot
   };

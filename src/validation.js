@@ -188,6 +188,7 @@ export async function validateStartup({ config, fizzy, runner }) {
   const errors = [];
   const warnings = [];
   const routes = [];
+  let runnerHealth = { status: "unknown", kind: config.runner?.preferred ?? "unknown" };
 
   validateLocalConfig(config, errors);
 
@@ -267,11 +268,12 @@ export async function validateStartup({ config, fizzy, runner }) {
   await validateWorkflowFiles(config, errors);
 
   try {
-    const runnerHealth = await validateRunner(config, runner);
+    runnerHealth = await validateRunner(config, runner);
     if (runnerHealth.status !== "ready" && !config.diagnostics?.no_dispatch) {
       errors.push(issue("RUNNER_UNAVAILABLE", "Configured Codex runner is not ready.", runnerHealth));
     }
   } catch (error) {
+    runnerHealth = { status: "unavailable", kind: config.runner?.preferred ?? "unknown", error: error.message };
     errors.push(issue(error.code ?? "RUNNER_INVALID", error.message, error.details ?? {}));
   }
 
@@ -280,7 +282,8 @@ export async function validateStartup({ config, fizzy, runner }) {
     errors,
     warnings,
     routes,
-    resolvedTags
+    resolvedTags,
+    runnerHealth
   };
 }
 

@@ -69,6 +69,13 @@ export async function runReconciliationTick(options = {}) {
     result.discovered = candidates.length;
     recordEtagStats(status, candidatesResult, fizzy);
 
+    if (config.diagnostics?.no_dispatch) {
+      result.ignored += candidates.length;
+      recordLifecycle(status, orchestratorState);
+      status?.recordPoll?.({ completedAt: startedAt, error: null });
+      return result;
+    }
+
     const capacity = Math.max(0, (config.agent?.max_concurrent ?? 1) - (status?.activeRunCount?.() ?? 0));
     let dispatchesRemaining = capacity;
 
@@ -778,7 +785,8 @@ function runnerFailure(result) {
 
 function isRetryableRunnerError(error = {}) {
   return !String(error.code ?? "").startsWith("COMPLETION_") &&
-    error.code !== "STALE_ROUTE_FINGERPRINT";
+    error.code !== "STALE_ROUTE_FINGERPRINT" &&
+    error.code !== "RUN_CANCELLED";
 }
 
 async function withOptionalTimeout(promise, timeoutMs) {
