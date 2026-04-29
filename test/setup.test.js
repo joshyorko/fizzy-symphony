@@ -59,7 +59,7 @@ function fakeFizzy(overrides = {}) {
     async getIdentity() {
       calls.push(["getIdentity"]);
       if (overrides.identityError) throw new Error("unauthorized");
-      return {
+      return overrides.identity ?? {
         user: { id: "user_current" },
         accounts: [{ id: "acct_1", name: "Team Account" }]
       };
@@ -221,6 +221,41 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.match(written, /account: acct_1/);
   assert.match(written, /id: board_1/);
   assert.match(written, /preferred: cli_app_server/);
+});
+
+test("runSetup prefers live Fizzy account slugs for generated API config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-setup-account-slug-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeFizzy({
+    identity: {
+      user: { id: "user_current" },
+      accounts: [{ id: "acct_uuid", name: "Team Account", slug: "/1" }]
+    }
+  });
+
+  const result = await runSetup({
+    configPath,
+    fizzy,
+    runner: fakeRunner(),
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.account, "1");
+  assert.deepEqual(
+    fizzy.calls.filter((call) => ["listBoards", "listUsers", "listTags", "getEntropy"].includes(call[0])),
+    [
+      ["listBoards", "1"],
+      ["listUsers", "1"],
+      ["listTags", "1"],
+      ["getEntropy", "1", ["board_1"]]
+    ]
+  );
+
+  const loaded = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+  assert.equal(String(loaded.fizzy.account), "1");
 });
 
 test("runSetup creates a starter board with native golden route defaults and writes max concurrency one", async () => {

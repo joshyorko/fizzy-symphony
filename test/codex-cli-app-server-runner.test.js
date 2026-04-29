@@ -215,7 +215,8 @@ test("Codex CLI app-server runner cancels, stops sessions, and only terminates o
     status: "stopped",
     success: true,
     session_id: "thread_1",
-    thread_id: "thread_1"
+    thread_id: "thread_1",
+    close_result: { status: "closed" }
   });
   assert.deepEqual(transport.requests.slice(-2).map((request) => request.method), [
     "turn/interrupt",
@@ -238,6 +239,18 @@ test("Codex CLI app-server runner cancels, stops sessions, and only terminates o
 
   assert.equal((await terminatingRunner.terminateOwnedProcess(terminatingSession)).status, "terminated");
   assert.deepEqual(terminatingTransport.terminations[0], { termTimeoutMs: 5000, killTimeoutMs: 2000 });
+
+  const slowCloseTransport = cancellableTransport();
+  slowCloseTransport.closeResult = { status: "closing" };
+  const slowCloseRunner = createCodexCliAppServerRunner({ transportFactory: () => slowCloseTransport });
+  const slowCloseSession = await slowCloseRunner.startSession("/tmp/card-workspace", { config: runnerConfig() }, { run_id: "run_3" });
+  const stopResult = await slowCloseRunner.stopSession(slowCloseSession);
+
+  assert.equal(stopResult.status, "failed");
+  assert.equal(stopResult.success, false);
+  assert.equal(stopResult.error.code, "APP_SERVER_CLOSE_INCOMPLETE");
+  assert.deepEqual(stopResult.close_result, { status: "closing" });
+  assert.equal((await slowCloseRunner.terminateOwnedProcess(slowCloseSession)).status, "terminated");
 });
 
 function cancellableTransport() {
@@ -362,6 +375,7 @@ class FakeTransport {
 
   async close() {
     this.closed = true;
+    return this.closeResult ?? { status: "closed" };
   }
 
   async terminate(options) {

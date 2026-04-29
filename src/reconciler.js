@@ -9,6 +9,8 @@ import {
   writeDurableProof
 } from "./completion.js";
 import { cardDigest } from "./domain.js";
+import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
+import { renderPrompt } from "./workflow.js";
 
 export async function runReconciliationTick(options = {}) {
   const {
@@ -56,21 +58,17 @@ export async function runReconciliationTick(options = {}) {
     result.preempted = reconciled.preempted;
 
     let knownRoutes = routes ?? status?.status?.().routes ?? [];
-    if (webhookEvents.some((event) => event?.intent === "refresh_routes")) {
-      const refreshed = await refreshGoldenTicketRegistry({ config, fizzy });
-      if (Array.isArray(refreshed?.routes)) {
-        knownRoutes = refreshed.routes;
-        status?.setRoutes?.(knownRoutes);
-      }
-    }
+    knownRoutes = await refreshRoutesForPoll({ config, status, fizzy, currentRoutes: knownRoutes });
 
-    const hints = webhookEvents
-      .filter((event) => !event?.intent || event.intent === "spawn")
-      .map((event) => ({
-        event_id: event.id ?? event.event_id,
-        card_id: event.card_id,
-        board_id: event.board_id
-      }));
+    const hints = webhookEvents.map((event) => omitUndefined({
+      event_id: event.id ?? event.event_id,
+      card_id: event.card_id,
+      board_id: event.board_id,
+      action: event.action,
+      intent: event.intent,
+      cancel_reason: event.cancel_reason,
+      rerun_requested: event.rerun_requested
+    }));
     const query = buildCandidateQuery({ config, routes: knownRoutes });
     const candidatesResult = typeof fizzy.discoverCandidates === "function"
       ? await fizzy.discoverCandidates({ config, hints, routes: knownRoutes, query })
@@ -89,8 +87,9 @@ export async function runReconciliationTick(options = {}) {
     const capacity = Math.max(0, (config.agent?.max_concurrent ?? 1) - (status?.activeRunCount?.() ?? 0));
     let dispatchesRemaining = capacity;
 
-    for (const card of candidates) {
+    for (const candidateCard of candidates) {
       if (dispatchesRemaining <= 0) break;
+      const card = await hydrateCardForRouting({ fizzy, card: candidateCard });
       if (reconciled.card_ids.has(card.id)) {
         result.ignored += 1;
         continue;
@@ -169,6 +168,32 @@ async function resolveWorkspaceIdentity({ config, card, decision, workspaceManag
     route: decision.route,
     decision
   });
+}
+
+async function refreshRoutesForPoll({ config, status, fizzy, currentRoutes = [] } = {}) {
+  if (config.routing?.refresh_golden_tickets_on_poll === false) return currentRoutes;
+  if (typeof fizzy?.listGoldenCards !== "function" || typeof fizzy?.getBoard !== "function") {
+    return currentRoutes;
+  }
+
+  const refreshed = await refreshGoldenTicketRegistry({ config, fizzy });
+  const routes = refreshed.routes ?? currentRoutes;
+  status?.setRoutes?.(routes);
+  return routes;
+}
+
+async function hydrateCardForRouting({ fizzy, card = {} } = {}) {
+  if (Array.isArray(card.comments)) return card;
+  const comments = await listCommentsIfAvailable(fizzy, card);
+  if (!Array.isArray(comments)) return card;
+  return { ...card, comments };
+}
+
+async function listCommentsIfAvailable(fizzy, card) {
+  if (typeof fizzy?.listComments === "function") return fizzy.listComments({ card, cardId: card.id, card_id: card.id });
+  if (typeof fizzy?.listCardComments === "function") return fizzy.listCardComments({ card, cardId: card.id, card_id: card.id });
+  if (typeof fizzy?.getCardComments === "function") return fizzy.getCardComments({ card, cardId: card.id, card_id: card.id });
+  return null;
 }
 
 async function reconcileActiveRuns({
@@ -320,18 +345,18 @@ async function cancelStatusRun({
   cancellation.states.runner_cancel_sent = cancelResult.state;
   if (cancelResult.result) cancellation.runner_cancel = cancelResult.result;
 
-  if (cancelResult.state.status !== "succeeded") {
-    const stopResult = await stopRunnerSession({ runner, run });
+  if (run.session) {
+    const stopResult = await stopRunnerSession({ config, runner, run });
     cancellation.states.session_stopped = stopResult.state;
     if (stopResult.result) cancellation.session_stop = stopResult.result;
 
     const ownedProcess = run.session?.process_owned === true ||
       (run.session?.process_owned === undefined && cancelResult.state.status === "failed");
-    if (ownedProcess) {
+    if (stopResult.state.status !== "succeeded" && ownedProcess) {
       const terminateResult = await terminateOwnedRunnerProcess({ runner, run });
       cancellation.states.process_terminated = terminateResult.state;
       if (terminateResult.result) cancellation.process_termination = terminateResult.result;
-    } else {
+    } else if (stopResult.state.status !== "succeeded") {
       cancellation.manual_intervention_required = true;
     }
   }
@@ -401,12 +426,13 @@ async function cancelRunnerTurn({ config, runner, run, reason }) {
   }
 }
 
-async function stopRunnerSession({ runner, run }) {
+async function stopRunnerSession({ config, runner, run }) {
   if (!runner?.stopSession || !run.session) {
     return { state: { status: "skipped", reason: "no_session" } };
   }
   try {
-    const result = await runner.stopSession(run.session);
+    const result = await withOptionalTimeout(runner.stopSession(run.session), config?.runner?.stop_session_timeout_ms);
+    if (result?.timeout) return { state: { status: "timeout" }, result };
     const succeeded = result?.success !== false && result?.status !== "failed";
     return { state: { status: succeeded ? "succeeded" : "failed" }, result };
   } catch (error) {
@@ -427,16 +453,47 @@ async function terminateOwnedRunnerProcess({ runner, run }) {
   }
 }
 
+async function finalizeRunnerSession({ config, runner, run }) {
+  const finalization = {
+    states: {
+      session_stopped: { status: "skipped" },
+      process_terminated: { status: "skipped" }
+    },
+    manual_intervention_required: false
+  };
+
+  if (!run?.session) return finalization;
+
+  const stopResult = await stopRunnerSession({ config, runner, run });
+  finalization.states.session_stopped = stopResult.state;
+  if (stopResult.result) finalization.session_stop = stopResult.result;
+
+  if (stopResult.state.status !== "succeeded") {
+    if (run.session.process_owned === true) {
+      const terminateResult = await terminateOwnedRunnerProcess({ runner, run });
+      finalization.states.process_terminated = terminateResult.state;
+      if (terminateResult.result) finalization.process_termination = terminateResult.result;
+      finalization.manual_intervention_required = terminateResult.state.status !== "succeeded";
+    } else {
+      finalization.manual_intervention_required = true;
+    }
+  }
+
+  return finalization;
+}
+
 function activeRunIneligibleReason(run, card) {
   if (!card) return "card_missing";
-  const status = String(card.status ?? "").toLowerCase();
+  const status = cardStatus(card);
   if (card.closed === true || status === "closed") return "card_closed";
   if (card.auto_postponed === true) return "card_auto_postponed";
   if (card.postponed === true || status === "postponed" || status === "not_now" || status === "not now") {
     return "card_postponed";
   }
-  if (card.board_id && run.board_id && card.board_id !== run.board_id) return "card_board_changed";
-  if (run.route?.source_column_id && card.column_id && card.column_id !== run.route.source_column_id) {
+  const boardId = cardBoardId(card);
+  const columnId = cardColumnId(card);
+  if (boardId && run.board_id && boardId !== run.board_id) return "card_board_changed";
+  if (run.route?.source_column_id && columnId && columnId !== run.route.source_column_id) {
     return "card_left_routed_column";
   }
   return null;
@@ -507,33 +564,44 @@ async function runCard({
   await writeRunAttempt(status, run, "claimed");
   await writeRunAttempt(status, run, "preparing_workspace");
 
-  const workspace = await workspaceManager.prepare({
-    config,
-    card,
-    route,
-    claim,
-    decision,
-    identity: workspaceIdentity,
-    workspace: workspaceIdentity,
-    now
-  });
-  const workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
-  run = status?.startRun?.({
-    ...run,
-    workspace,
-    workflow: workflowSummary(workflow)
-  }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
-
-  await writeRunAttempt(status, run, "running");
+  let workspace;
+  let workflow;
 
   try {
-    await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
+    workspace = await workspaceManager.prepare({
+      config,
+      card,
+      route,
+      claim,
+      decision,
+      identity: workspaceIdentity,
+      workspace: workspaceIdentity,
+      now
+    });
+    workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
+    run = status?.startRun?.({
+      ...run,
+      workspace,
+      workflow: workflowSummary(workflow)
+    }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
+
+    await writeRunAttempt(status, run, "running");
+    const workpad = await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
 
     const session = await runner.startSession(workspace.path, { config, route, workflow }, { run_id: runId });
     run = status?.startRun?.({ ...run, session }) ?? { ...run, session };
     await writeRunAttempt(status, run, "running");
 
-    const prompt = decision.prompt ?? workflow?.prompt ?? workflow?.body ?? "";
+    const prompt = decision.prompt ?? workflow?.prompt ?? renderRunPrompt({
+      workflow,
+      card,
+      route,
+      workspace,
+      workpad,
+      claim,
+      config,
+      attempt: claim.attempt_number ?? claim.attemptNumber ?? 1
+    });
     const turn = await runner.startTurn(session, prompt, { run_id: runId, card_id: card.id, route_id: route?.id });
     run = status?.startRun?.({ ...run, turn }) ?? { ...run, turn };
     await writeRunAttempt(status, run, "running");
@@ -608,7 +676,14 @@ async function runCard({
       const failed = status?.failRun?.(runId, error);
       orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
       recordLifecycle(status, orchestratorState);
-      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...(failed ?? run), session } });
+      await writeRunAttempt(status, {
+        ...(failed ?? run),
+        completion_marker: recordedFailureMarker,
+        proof,
+        result_comment_id: resultComment?.id,
+        runner_session_finalization: runnerSessionFinalization
+      }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       return { status: "failed", run: failed ?? run, error };
@@ -642,7 +717,14 @@ async function runCard({
       const failed = status?.failRun?.(runId, error);
       orchestratorState?.recordFailure?.(runId, error, { retryable: false, failure_kind: "completion" });
       recordLifecycle(status, orchestratorState);
-      await writeRunAttempt(status, { ...(failed ?? run), completion_marker: recordedFailureMarker, proof, result_comment_id: resultComment?.id }, "failed");
+      const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...(failed ?? run), session } });
+      await writeRunAttempt(status, {
+        ...(failed ?? run),
+        completion_marker: recordedFailureMarker,
+        proof,
+        result_comment_id: resultComment?.id,
+        runner_session_finalization: runnerSessionFinalization
+      }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       return { status: "failed", run: failed ?? run, error };
@@ -670,11 +752,14 @@ async function runCard({
       marker: completionMarker
     });
 
+    const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...run, session } });
+
     const completed = status?.completeRun?.(runId, {
       proof,
       result_comment_id: resultComment?.id,
       completion_marker: recordedCompletionMarker,
       runner_result: streamResult,
+      runner_session_finalization: runnerSessionFinalization,
       completed_at: now
     });
 
@@ -742,7 +827,8 @@ async function runCard({
     });
     recordLifecycle(status, orchestratorState);
     const failed = status?.failRun?.(runId, error);
-    await writeRunAttempt(status, failed ?? run, "failed");
+    const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: failed ?? run });
+    await writeRunAttempt(status, { ...(failed ?? run), runner_session_finalization: runnerSessionFinalization }, "failed");
     await claims.release?.({ config, claim, run: failed ?? run, status: "failed", now, error });
     return { status: "failed", run: failed ?? run, error };
   }
@@ -832,6 +918,39 @@ function workflowSummary(workflow) {
   };
 }
 
+function renderRunPrompt({ workflow, card, route, workspace, workpad, claim, config, attempt }) {
+  return renderPrompt({
+    workflow,
+    board: {
+      id: card?.board_id ?? route?.board_id,
+      name: card?.board?.name ?? route?.board_name
+    },
+    column: {
+      id: card?.column_id ?? route?.source_column_id,
+      name: card?.column?.name ?? route?.source_column_name
+    },
+    route,
+    card,
+    attempt,
+    workspace: {
+      id: workspace?.key ?? workspace?.workspace_key,
+      path: workspace?.path ?? workspace?.workspace_path,
+      source_repo: workspace?.source_repo ?? workspace?.sourceRepo,
+      branch: workspace?.branch_name ?? workspace?.branch,
+      metadata_path: workspace?.metadata_path
+    },
+    workpad,
+    completion: {
+      daemon_policy: config?.completion ?? {},
+      claim: {
+        claim_id: claim?.claim_id ?? claim?.id,
+        attempt_id: claim?.attempt_id ?? claim?.attemptId,
+        run_id: claim?.run_id ?? claim?.runId
+      }
+    }
+  });
+}
+
 function runnerFailure(result) {
   const error = new Error(result?.error?.message ?? `Runner turn did not complete: ${result?.status ?? "unknown"}`);
   error.code = result?.error?.code ?? "RUNNER_TURN_FAILED";
@@ -883,4 +1002,8 @@ function normalizeError(error = {}) {
 function currentIso(now) {
   const value = typeof now === "function" ? now() : now;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function omitUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }

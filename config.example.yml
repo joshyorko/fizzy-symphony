@@ -85,6 +85,10 @@ webhook:
   # If absent, setup MUST warn and daemon MUST mark webhook signatures disabled.
   secret: $FIZZY_WEBHOOK_SECRET
 
+  # Required: no. Default: 300 seconds.
+  # Webhook events older than this are rejected when the payload/header carries a timestamp.
+  max_event_age_seconds: 300
+
   # Required: no. Default: false.
   # When true, setup manages Fizzy webhooks for watched boards using the API.
   manage: false
@@ -154,9 +158,9 @@ agent:
   # Required: no. Default: 300000 ms.
   stall_timeout_ms: 300000
 
-  # Required: no. Default: 20.
-  # Maximum continuation turns on one live Codex thread before the run returns to reconciliation.
-  max_turns: 20
+  # Required: no. Default: 1.
+  # Same-thread continuation is not implemented yet; startup rejects values above 1.
+  max_turns: 1
 
   # Required: no. Default: 300000 ms.
   max_retry_backoff_ms: 300000
@@ -278,10 +282,10 @@ workspaces:
   metadata_root: .fizzy-symphony/run/workspaces
 
   # Required: yes. Default: git_worktree.
-  # Valid: git_worktree, git_clone, copy.
+  # Valid: git_worktree. git_clone/copy are rejected until implemented.
   default_isolation: git_worktree
 
-  # Required for git_worktree and git_clone.
+  # Required for git_worktree.
   # Example source repo that contains WORKFLOW.md.
   default_repo: .
 

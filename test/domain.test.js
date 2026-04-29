@@ -71,13 +71,14 @@ test("digest and shortDigest use sha256 over canonical JSON", () => {
 test("normalizeTag and normalizedTags trim hashes, lowercase, and keep first-seen uniqueness", () => {
   assert.equal(normalizeTag(" ##Agent-Rerun "), "agent-rerun");
   assert.equal(normalizeTag({ name: " #Workspace-App " }), "workspace-app");
+  assert.equal(normalizeTag({ title: "Move-To-Done" }), "move-to-done");
   assert.equal(normalizeTag({ slug: "Model-GPT-5" }), "model-gpt-5");
 
   assert.deepEqual(
     normalizedTags({
-      tags: [" #Codex ", { name: "codex" }, { slug: "#Workspace-App" }, "", { label: "Priority-1" }]
+      tags: [" #Codex ", { name: "codex" }, { slug: "#Workspace-App" }, "", { title: "Move-To-Done" }, { label: "Priority-1" }]
     }),
-    ["codex", "workspace-app", "priority-1"]
+    ["codex", "workspace-app", "move-to-done", "priority-1"]
   );
 });
 
@@ -171,5 +172,15 @@ test("cardDigest excludes only explicit daemon-owned tags and marker comments", 
     cardDigest(baseCard({ tags: ["feature", "agent-rerun"], comments: [humanComment, { id: "comment_2", body: "Please add docs." }] }), route),
     cardDigest(withoutDaemonState, route),
     "non-marker comments remain part of the card digest"
+  );
+});
+
+test("cardDigest treats live Fizzy rich-text comment bodies like plain text", () => {
+  const route = baseRoute();
+  const plainText = "Human context belongs to the card digest.";
+
+  assert.equal(
+    cardDigest(baseCard({ comments: [{ id: "comment_1", body: plainText }] }), route),
+    cardDigest(baseCard({ comments: [{ id: "comment_1", body: { plain_text: plainText, html: "<p>ignored</p>" } }] }), route)
   );
 });

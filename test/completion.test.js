@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  applyCompletionPolicy,
   createCompletionFailureMarker,
   createCompletionMarker,
   evaluateCleanupEligibility,
@@ -166,6 +167,29 @@ test("writeDurableProof stores proof under observability.state_dir/proof outside
   assert.equal(proofDigest, digest(digestInput));
 });
 
+test("writeDurableProof rejects proof storage that resolves inside the workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fizzy-symphony-proof-symlink-"));
+  const stateDir = join(root, "state");
+  const workspacePath = join(root, "workspace", "card_1");
+  await mkdir(join(workspacePath, "proof"), { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await symlink(join(workspacePath, "proof"), join(stateDir, "proof"), "dir");
+
+  await assert.rejects(
+    () => writeDurableProof({
+      config: { observability: { state_dir: stateDir } },
+      run: run(),
+      card: card(),
+      route: route(),
+      workspace: workspace({ path: workspacePath }),
+      result: { status: "completed", no_code_change: true },
+      resultComment: { id: "comment_1" },
+      completedAt: "2026-04-29T12:05:00.000Z"
+    }),
+    (error) => error.code === "DURABLE_PROOF_INSIDE_WORKSPACE"
+  );
+});
+
 test("cleanup eligibility preserves workspace when proof, result, marker, release, or outside proof guard is missing", () => {
   const config = { safety: { cleanup: { policy: "remove_clean_only" } } };
   const workspacePath = "/tmp/workspaces/card_1";
@@ -190,4 +214,33 @@ test("cleanup eligibility preserves workspace when proof, result, marker, releas
     "durable_proof_outside_workspace_missing"
   );
   assert.equal(evaluateCleanupEligibility(complete).action, "eligible");
+});
+
+test("completion policy fails loudly when required Fizzy mutators are unavailable", async () => {
+  assert.deepEqual(
+    await applyCompletionPolicy({
+      fizzy: {},
+      card: card(),
+      route: route({ completion: { policy: "close" } })
+    }),
+    {
+      success: false,
+      code: "COMPLETION_MUTATOR_UNAVAILABLE",
+      message: "Fizzy client cannot close cards for completion."
+    }
+  );
+
+  assert.deepEqual(
+    await applyCompletionPolicy({
+      fizzy: {},
+      card: card(),
+      route: route({ completion: { policy: "move_to_column", target_column_id: "col_done" } })
+    }),
+    {
+      success: false,
+      code: "COMPLETION_MUTATOR_UNAVAILABLE",
+      message: "Fizzy client cannot move cards for completion.",
+      details: { target_column_id: "col_done" }
+    }
+  );
 });

@@ -93,6 +93,26 @@ test("configured board_ids and column_ids narrow candidate filters while local v
   });
 });
 
+test("empty configured board and column filters fall back to watched boards and routes", () => {
+  const query = buildCandidateQuery({
+    config: configFixture({
+      polling: {
+        use_api_filters: true,
+        api_filters: {
+          board_ids: [],
+          column_ids: []
+        }
+      }
+    }),
+    routes
+  });
+
+  assert.deepEqual(query, {
+    board_ids: ["board_1", "board_2"],
+    column_ids: ["col_ready", "col_review"]
+  });
+});
+
 test("native golden-card discovery uses indexed_by=golden and rejects unsafe golden state locally", async () => {
   const config = configFixture();
   assert.deepEqual(buildGoldenCardQuery({ config }), {
@@ -120,8 +140,8 @@ test("native golden-card discovery uses indexed_by=golden and rejects unsafe gol
           data: [
             {
               id: "golden_1",
-              board_id: "board_1",
-              column_id: "col_ready",
+              board: { id: "board_1" },
+              column: { id: "col_ready" },
               golden: true,
               tags: ["agent-instructions", "move-to-done"]
             }

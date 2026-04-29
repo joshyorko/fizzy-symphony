@@ -4,10 +4,13 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { createBoardClaimStore } from "../src/claims.js";
 import { runReconciliationTick } from "../src/reconciler.js";
 import { createOrchestratorState } from "../src/orchestrator-state.js";
 import { createStatusStore } from "../src/status.js";
 import { parseCompletionFailureMarker, parseCompletionMarker } from "../src/completion.js";
+
+const START = Date.parse("2026-04-29T12:00:00.000Z");
 
 function configFixture(maxConcurrent = 2) {
   return {
@@ -55,6 +58,45 @@ function cardFixture(id = "card_1", number = 1) {
 
 function fixedNow() {
   return new Date("2026-04-29T12:02:00.000Z");
+}
+
+function clockFixture() {
+  let time = START;
+  return {
+    now() {
+      return new Date(time);
+    },
+    advance(ms) {
+      time += ms;
+      return new Date(time);
+    }
+  };
+}
+
+function schedulerFixture() {
+  let nextId = 1;
+  const timers = new Map();
+
+  return {
+    setTimeout(callback, delayMs) {
+      const id = nextId;
+      nextId += 1;
+      timers.set(id, { id, callback, delayMs, cleared: false });
+      return id;
+    },
+    clearTimeout(id) {
+      const timer = timers.get(id);
+      if (timer) timer.cleared = true;
+    },
+    pending() {
+      return [...timers.values()].filter((timer) => !timer.cleared);
+    },
+    async fire(id) {
+      const timer = timers.get(id);
+      assert.ok(timer, `expected timer ${id} to exist`);
+      return timer.callback();
+    }
+  };
 }
 
 function successfulDependencies({ calls, cards, route }) {
@@ -139,6 +181,11 @@ function successfulDependencies({ calls, cards, route }) {
           output_summary: "ok",
           no_code_change: true
         };
+      },
+      async stopSession(session) {
+        calls.push("stopSession");
+        assert.equal(session.session_id, "session_1");
+        return { status: "stopped", success: true };
       }
     }
   };
@@ -173,6 +220,7 @@ test("runReconciliationTick proves the fake vertical slice order from discovery 
     "stream",
     "postResult",
     "completionMarker",
+    "stopSession",
     "releaseClaim"
   ]);
   assert.equal(result.dispatched, 1);
@@ -184,6 +232,277 @@ test("runReconciliationTick proves the fake vertical slice order from discovery 
   assert.equal(snapshot.runs.completed[0].result_comment_id, "comment_1");
   assert.equal(snapshot.runs.completed[0].completion_marker.id, "marker_1");
   assert.equal(snapshot.poll.last_completed_at, "2026-04-29T12:02:00.000Z");
+});
+
+test("runReconciliationTick renders full Fizzy card context for normal dispatch prompts", async () => {
+  const calls = [];
+  const prompts = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-prompt-")) }
+  };
+  const status = statusStore(config);
+  const route = {
+    ...routeFixture(),
+    source_column_name: "Ready for Agents",
+    model: "gpt-5.1",
+    persona: "repo-agent",
+    completion: { policy: "comment_once" }
+  };
+  const card = {
+    ...cardFixture("card_1", 1),
+    title: "Implement live daemon foundation",
+    body: "Wire real daemon dependencies and prompt context.",
+    steps: [{ title: "Run npm test", completed: false }],
+    comments: [{ author: { name: "Josh" }, body: "Use the golden ticket first." }],
+    tags: ["priority-1"],
+    url: "https://fizzy.example/cards/1"
+  };
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.fizzy.postWorkpadComment = async ({ body }) => {
+    calls.push("postWorkpad");
+    assert.match(body, /fizzy-symphony:workpad:v1/u);
+    return { id: "workpad_1" };
+  };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    fizzy: deps.fizzy,
+    router: {
+      async validateCandidate({ card: routedCard }) {
+        calls.push("route");
+        return { action: "spawn", card: routedCard, route };
+      }
+    },
+    claims: deps.claims,
+    workspaceManager: deps.workspaceManager,
+    workflowLoader: {
+      async load() {
+        calls.push("loadWorkflow");
+        return {
+          body: "Follow repo workflow for {{card.title}}.",
+          frontMatter: {
+            owner: "repo-policy",
+            completion: { required_steps_block_completion: true }
+          }
+        };
+      }
+    },
+    runner: {
+      ...deps.runner,
+      async startTurn(session, prompt, metadata) {
+        calls.push("startTurn");
+        prompts.push(prompt);
+        assert.equal(metadata.card_id, "card_1");
+        return { turn_id: "turn_1", session_id: session.session_id, prompt };
+      }
+    }
+  });
+
+  assert.equal(result.completed, 1);
+  assert.match(prompts[0], /Workflow front matter/u);
+  assert.match(prompts[0], /"owner": "repo-policy"/u);
+  assert.match(prompts[0], /Follow repo workflow for Implement live daemon foundation\./u);
+  assert.match(prompts[0], /Fizzy task context/u);
+  assert.match(prompts[0], /Golden-ticket route:/u);
+  assert.match(prompts[0], /Work card:/u);
+  assert.match(prompts[0], /Wire real daemon dependencies and prompt context\./u);
+  assert.match(prompts[0], /- \[ \] Run npm test/u);
+  assert.match(prompts[0], /Josh: Use the golden ticket first\./u);
+  assert.match(prompts[0], /Active workpad/u);
+  assert.match(prompts[0], /"comment_id": "workpad_1"/u);
+  assert.match(prompts[0], /Completion policy:/u);
+  assert.match(prompts[0], /"policy": "comment_once"/u);
+});
+
+test("runReconciliationTick terminates owned app-server process when successful stop does not close", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-stop-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.runner.startSession = async (workspacePath) => {
+    calls.push("startSession");
+    return { session_id: "session_1", workspace: workspacePath, process_owned: true };
+  };
+  deps.runner.stopSession = async () => {
+    calls.push("stopSession");
+    return { status: "failed", success: false, close_result: { status: "closing" } };
+  };
+  deps.runner.terminateOwnedProcess = async () => {
+    calls.push("terminateOwnedProcess");
+    return { status: "terminated", success: true, signal: "SIGTERM" };
+  };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps
+  });
+
+  assert.equal(result.completed, 1);
+  assert.ok(calls.includes("stopSession"));
+  assert.ok(calls.includes("terminateOwnedProcess"));
+  const completed = status.status().runs.completed[0];
+  assert.equal(completed.runner_session_finalization.states.session_stopped.status, "failed");
+  assert.equal(completed.runner_session_finalization.states.process_terminated.status, "succeeded");
+});
+
+test("long-running streams renew active claims before another daemon can steal them", async () => {
+  const calls = [];
+  const comments = [];
+  const clock = clockFixture();
+  const scheduler = schedulerFixture();
+  const stateDir = await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-renew-"));
+  const config = {
+    ...configFixture(1),
+    claims: {
+      mode: "structured_comment",
+      lease_ms: 1000,
+      renew_interval_ms: 500,
+      steal_grace_ms: 0,
+      max_clock_skew_ms: 0
+    },
+    observability: { state_dir: stateDir }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const workspaceIdentity = {
+    workspace_key: "workspace_card_1",
+    workspace_identity_digest: "sha256:workspace",
+    workspace_path: "/tmp/workspace-card-1"
+  };
+  const fizzy = {
+    async discoverCandidates() {
+      calls.push("discover");
+      return [card];
+    },
+    async listComments() {
+      return comments;
+    },
+    async createComment({ body }) {
+      comments.push({
+        id: `comment_${comments.length + 1}`,
+        body,
+        created_at: clock.now().toISOString()
+      });
+      return { id: `comment_${comments.length}` };
+    },
+    async postResultComment() {
+      calls.push("postResult");
+      return { id: "comment_result" };
+    },
+    async recordCompletionMarker() {
+      calls.push("completionMarker");
+      return { id: "marker_1" };
+    }
+  };
+  const claims = createBoardClaimStore({
+    fizzy,
+    status,
+    sleep: async () => {},
+    ids: {
+      claimId: () => "claim_card_1",
+      attemptId: () => "attempt_card_1",
+      runId: () => "run_card_1"
+    }
+  });
+  const orchestratorState = createOrchestratorState({
+    config,
+    clock,
+    scheduler,
+    claims,
+    runner: {
+      async cancel() {
+        calls.push("cancel");
+        return { status: "cancelled" };
+      }
+    }
+  });
+  let releaseStream;
+  let streamStarted;
+  const streamStartedPromise = new Promise((resolve) => {
+    streamStarted = resolve;
+  });
+  const streamGate = new Promise((resolve) => {
+    releaseStream = resolve;
+  });
+
+  const tick = runReconciliationTick({
+    config,
+    status,
+    now: () => clock.now(),
+    fizzy,
+    router: {
+      async validateCandidate({ card: routedCard }) {
+        calls.push("route");
+        return { action: "spawn", card: routedCard, route };
+      }
+    },
+    claims,
+    workspaceManager: {
+      async resolveIdentity() {
+        return workspaceIdentity;
+      },
+      async prepare() {
+        calls.push("prepareWorkspace");
+        return { key: "workspace_card_1", path: "/tmp/workspace-card-1", identity_digest: "sha256:workspace" };
+      }
+    },
+    workflowLoader: {
+      async load() {
+        return { body: "Renew while running.", front_matter: {} };
+      }
+    },
+    runner: {
+      async startSession() {
+        return { session_id: "session_1", process_owned: true };
+      },
+      async startTurn(session) {
+        return { turn_id: "turn_1", session_id: session.session_id };
+      },
+      async stream(turn) {
+        calls.push("stream");
+        streamStarted();
+        await streamGate;
+        return { status: "completed", turn_id: turn.turn_id, no_code_change: true };
+      }
+    },
+    orchestratorState
+  });
+
+  await streamStartedPromise;
+  const renewalTimer = scheduler.pending().find((timer) => timer.delayMs === 500);
+  clock.advance(500);
+  const renewal = await scheduler.fire(renewalTimer.id);
+
+  assert.equal(renewal.status, "renewed");
+  assert.match(comments.at(-1).body, /"status":"renewed"/u);
+
+  const competingClaims = createBoardClaimStore({ fizzy, status, sleep: async () => {} });
+  clock.advance(600);
+  const competing = await competingClaims.acquire({
+    config,
+    card,
+    route,
+    workspace: workspaceIdentity,
+    now: clock.now()
+  });
+
+  assert.equal(competing.acquired, false);
+  assert.equal(competing.reason, "active_claim");
+
+  releaseStream();
+  const result = await tick;
+  assert.equal(result.completed, 1);
 });
 
 test("runReconciliationTick runs workspace preflight before acquiring a claim", async () => {
@@ -383,6 +702,7 @@ test("runReconciliationTick records a non-looping completion-failure marker when
   assert.match(failurePayload.proof_digest, /^sha256:/u);
   assert.equal(status.status().runs.failed[0].last_error.code, "COMPLETION_BLOCKED_BY_REQUIRED_STEPS");
   assert.ok(calls.includes("completionFailureMarker"));
+  assert.ok(calls.includes("stopSession"));
   assert.ok(!calls.includes("completionMarker"));
 });
 
@@ -432,11 +752,25 @@ test("webhook events enqueue candidate hints but still require router validation
     config,
     status,
     now: fixedNow,
-    webhookEvents: [{ id: "event_1", card_id: "card_hint", board_id: "board_1" }],
+    webhookEvents: [{
+      id: "event_1",
+      card_id: "card_hint",
+      board_id: "board_1",
+      action: "card_closed",
+      intent: "cancel_active",
+      cancel_reason: "card_closed"
+    }],
     fizzy: {
       async discoverCandidates({ hints }) {
         calls.push("discover");
-        assert.deepEqual(hints, [{ event_id: "event_1", card_id: "card_hint", board_id: "board_1" }]);
+        assert.deepEqual(hints, [{
+          event_id: "event_1",
+          card_id: "card_hint",
+          board_id: "board_1",
+          action: "card_closed",
+          intent: "cancel_active",
+          cancel_reason: "card_closed"
+        }]);
         return hints.map((hint) => cardFixture(hint.card_id, 42));
       }
     },
@@ -587,6 +921,54 @@ test("polling discovery is the correctness path when webhook hints are absent or
   assert.deepEqual(status.status().runs.completed.map((run) => run.id), ["run_card_1"]);
 });
 
+test("poll ticks refresh golden-ticket routes before building candidate filters", async () => {
+  const calls = [];
+  const config = configFixture(1);
+  const status = statusStore(config);
+  status.setRoutes([]);
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    fizzy: {
+      async listGoldenCards({ query }) {
+        calls.push(["listGoldenCards", query]);
+        return {
+          data: [{
+            id: "golden_ready",
+            board_id: "board_1",
+            column_id: "col_ready",
+            golden: true,
+            tags: ["agent-instructions", "comment-once"]
+          }]
+        };
+      },
+      async getBoard(boardId) {
+        calls.push(["getBoard", boardId]);
+        return {
+          id: boardId,
+          columns: [{ id: "col_ready", name: "Ready" }],
+          cards: []
+        };
+      },
+      async listCards({ query }) {
+        calls.push(["listCards", query]);
+        return { data: [] };
+      }
+    },
+    router: {},
+    claims: {},
+    workspaceManager: {},
+    workflowLoader: {},
+    runner: {}
+  });
+
+  assert.equal(result.discovered, 0);
+  assert.deepEqual(calls.at(-1), ["listCards", { board_ids: ["board_1"], column_ids: ["col_ready"] }]);
+  assert.deepEqual(status.status().routes.map((route) => route.golden_card_id), ["golden_ready"]);
+});
+
 test("runReconciliationTick resolves workspace identity before claim and skips workspace preparation when claim is lost", async () => {
   const calls = [];
   const config = configFixture(1);
@@ -634,6 +1016,75 @@ test("runReconciliationTick resolves workspace identity before claim and skips w
   assert.deepEqual(calls, ["discover", "route", "resolveWorkspaceIdentity", "claim"]);
   assert.equal(result.dispatched, 0);
   assert.equal(result.claim_blocked, 1);
+});
+
+test("runReconciliationTick releases a claim when workspace preparation fails after acquisition", async () => {
+  const calls = [];
+  const config = configFixture(1);
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const workspaceError = Object.assign(new Error("worktree add failed"), { code: "WORKSPACE_WORKTREE_CREATE_FAILED" });
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    fizzy: {
+      async discoverCandidates() {
+        calls.push("discover");
+        return [card];
+      }
+    },
+    router: {
+      async validateCandidate() {
+        calls.push("route");
+        return { action: "spawn", card, route };
+      }
+    },
+    claims: {
+      async acquire() {
+        calls.push("claim");
+        return {
+          acquired: true,
+          claim: {
+            id: "claim_card_1",
+            claim_id: "claim_card_1",
+            run_id: "run_card_1",
+            attempt_id: "attempt_card_1"
+          }
+        };
+      },
+      async release({ status, error }) {
+        calls.push(`releaseClaim:${status}:${error.code}`);
+        return { released: true };
+      }
+    },
+    workspaceManager: {
+      async resolveIdentity() {
+        calls.push("resolveWorkspaceIdentity");
+        return { workspace_key: "workspace_app", workspace_identity_digest: "sha256:workspace" };
+      },
+      async prepare() {
+        calls.push("prepareWorkspace");
+        throw workspaceError;
+      }
+    },
+    workflowLoader: {},
+    runner: {},
+    orchestratorState: createOrchestratorState({ config })
+  });
+
+  assert.equal(result.failed, 1);
+  assert.deepEqual(calls, [
+    "discover",
+    "route",
+    "resolveWorkspaceIdentity",
+    "claim",
+    "prepareWorkspace",
+    "releaseClaim:failed:WORKSPACE_WORKTREE_CREATE_FAILED"
+  ]);
+  assert.equal(status.status().runs.failed[0].last_error.code, "WORKSPACE_WORKTREE_CREATE_FAILED");
 });
 
 test("runReconciliationTick preempts active lifecycle runs when the current route fingerprint changes", async () => {

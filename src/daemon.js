@@ -8,18 +8,19 @@ import { performStartupRecovery } from "./recovery.js";
 import { createReconciliationScheduler } from "./scheduler.js";
 import { runReconciliationTick } from "./reconciler.js";
 import { routeCard } from "./router.js";
-import { createBoardClaimStore } from "./claims.js";
+import { applyClaimEventLog, createBoardClaimStore } from "./claims.js";
+import { parseCompletionFailureMarker, parseCompletionMarker } from "./completion.js";
+import { createFizzyClient } from "./fizzy-client.js";
 import { createOrchestratorState } from "./orchestrator-state.js";
 import { loadWorkflow } from "./workflow.js";
-import {
-  prepareWorkspace,
-  resolveWorkspaceIdentity
-} from "./workspace.js";
+import { createWorkspaceManager } from "./workspace.js";
+import { createCodexCliAppServerRunner } from "./codex-cli-app-server-runner.js";
 import { createFakeCodexRunner } from "./runner-contract.js";
+import { commentBody } from "./fizzy-normalize.js";
 
 export async function startDaemon(options = {}) {
   const {
-    configPath = ".fizzy-symphony/config.json",
+    configPath = ".fizzy-symphony/config.yml",
     env = process.env,
     dependencies = {},
     schedulerOptions = {},
@@ -72,8 +73,8 @@ export async function startDaemon(options = {}) {
       startedAt: currentDate(now)
     });
 
-    const fizzy = await callFactory(dependencies.fizzyFactory, { config, status }) ?? createDefaultFizzy(config);
-    const rawRunner = await callFactory(dependencies.runnerFactory, { config, status }) ?? createFakeCodexRunner();
+    const fizzy = await callFactory(dependencies.fizzyFactory, { config, status }) ?? createDefaultFizzy(config, dependencies);
+    const rawRunner = await callFactory(dependencies.runnerFactory, { config, status }) ?? createDefaultRunner(config, dependencies);
     const runner = createCancellableRunner(rawRunner);
     const validation = await validateStartup({ config, fizzy, runner });
     status.recordStartupValidation(validation);
@@ -93,7 +94,7 @@ export async function startDaemon(options = {}) {
     const claims = await callFactory(dependencies.claimsFactory, { config, fizzy, status }) ??
       createDefaultClaims({ config, fizzy, status });
     const workspaceManager = await callFactory(dependencies.workspaceManagerFactory, { config, status }) ??
-      createDefaultWorkspaceManager();
+      createDefaultWorkspaceManager(dependencies);
     const workflowLoader = await callFactory(dependencies.workflowLoaderFactory, { config, status }) ??
       createDefaultWorkflowLoader();
     const router = await callFactory(dependencies.routerFactory, { config, status }) ??
@@ -214,30 +215,8 @@ function createDefaultClaims({ config, fizzy, status }) {
   return createBoardClaimStore({ fizzy, status });
 }
 
-function createDefaultWorkspaceManager() {
-  return {
-    async resolveIdentity({ config, card, route }) {
-      return resolveWorkspaceIdentity({ config, card, route });
-    },
-    async prepare({ config, identity, card, route, claim, decision }) {
-      return prepareWorkspace({
-        config,
-        identity,
-        metadata: {
-          card_id: card?.id,
-          route_id: route?.id,
-          claim_id: claim?.claim_id ?? claim?.id,
-          decision_reason: decision?.reason
-        }
-      });
-    },
-    async preserve({ run }) {
-      return {
-        status: "preserved",
-        workspace_path: run.workspace_path ?? run.workspace?.path
-      };
-    }
-  };
+function createDefaultWorkspaceManager(dependencies = {}) {
+  return createWorkspaceManager(dependencies.workspaceOptions ?? {});
 }
 
 function createDefaultWorkflowLoader() {
@@ -251,14 +230,40 @@ function createDefaultWorkflowLoader() {
 function createDefaultRouter({ config, routes }) {
   return {
     async validateCandidate({ card }) {
+      const routeState = routeStateFromCard(card);
       return routeCard({
         board: { id: card.board_id ?? card.board?.id },
         card,
         routes: routes(),
-        config
+        config,
+        activeClaims: routeState.activeClaims,
+        completedMarkers: routeState.completedMarkers,
+        completionFailureMarkers: routeState.completionFailureMarkers
       });
     }
   };
+}
+
+function routeStateFromCard(card = {}) {
+  const comments = card.comments ?? [];
+  return {
+    activeClaims: applyClaimEventLog(comments),
+    completedMarkers: parseMarkers(comments, parseCompletionMarker),
+    completionFailureMarkers: parseMarkers(comments, parseCompletionFailureMarker)
+  };
+}
+
+function parseMarkers(comments, parser) {
+  const markers = [];
+  for (const comment of comments ?? []) {
+    const body = commentBody(comment);
+    try {
+      markers.push(parser(body));
+    } catch {
+      // Non-marker comments and malformed marker noise must not crash routing.
+    }
+  }
+  return markers;
 }
 
 async function cancelActiveRuns(options = {}) {
@@ -283,19 +288,72 @@ async function cancelActiveRuns(options = {}) {
       states: {
         cancel_requested: { status: "done", at: currentIso(now) },
         runner_cancel_sent: { status: "skipped" },
+        session_stopped: { status: "skipped" },
+        process_terminated: { status: "skipped" },
         claim_cancelled: { status: "pending" },
         workspace_preserved: { status: "pending" }
       },
-      workspace_preserved: false
+      workspace_preserved: false,
+      manual_intervention_required: false
     };
 
     if (run.turn) {
       try {
-        const cancelResult = await runner.cancel?.(run.turn, reason);
+        const cancelResult = await withOptionalTimeout(runner.cancel?.(run.turn, reason), config.runner?.cancel_timeout_ms);
         cancellation.runner_cancel = cancelResult;
-        cancellation.states.runner_cancel_sent = { status: "succeeded", at: currentIso(now), result: cancelResult };
+        if (cancelResult?.timeout) {
+          cancellation.states.runner_cancel_sent = { status: "timeout", at: currentIso(now), result: cancelResult };
+        } else {
+          cancellation.states.runner_cancel_sent = {
+            status: runnerCallSucceeded(cancelResult) ? "succeeded" : "failed",
+            at: currentIso(now),
+            result: cancelResult
+          };
+        }
       } catch (error) {
         cancellation.states.runner_cancel_sent = { status: "failed", at: currentIso(now), error: normalizeError(error) };
+      }
+    }
+
+    if (run.session) {
+      if (typeof runner?.stopSession === "function") {
+        try {
+          const stopResult = await withOptionalTimeout(runner.stopSession(run.session), config.runner?.stop_session_timeout_ms);
+          cancellation.session_stop = stopResult;
+          if (stopResult?.timeout) {
+            cancellation.states.session_stopped = { status: "timeout", at: currentIso(now), result: stopResult };
+          } else {
+            cancellation.states.session_stopped = {
+              status: runnerCallSucceeded(stopResult) ? "succeeded" : "failed",
+              at: currentIso(now),
+              result: stopResult
+            };
+          }
+        } catch (error) {
+          cancellation.states.session_stopped = { status: "failed", at: currentIso(now), error: normalizeError(error) };
+        }
+      } else {
+        cancellation.states.session_stopped = { status: "skipped", reason: "no_session_stopper" };
+      }
+
+      const ownedProcess = run.session.process_owned === true ||
+        (run.session.process_owned === undefined && cancellation.states.runner_cancel_sent.status === "failed");
+      if (ownedProcess && cancellation.states.session_stopped.status !== "succeeded") {
+        if (typeof runner?.terminateOwnedProcess === "function") {
+          try {
+            const terminateResult = await runner.terminateOwnedProcess(run.session);
+            cancellation.process_termination = terminateResult;
+            cancellation.states.process_terminated = {
+              status: runnerCallSucceeded(terminateResult) ? "succeeded" : "failed",
+              at: currentIso(now),
+              result: terminateResult
+            };
+          } catch (error) {
+            cancellation.states.process_terminated = { status: "failed", at: currentIso(now), error: normalizeError(error) };
+          }
+        } else {
+          cancellation.states.process_terminated = { status: "skipped", reason: "no_owned_process_terminator" };
+        }
       }
     }
 
@@ -315,6 +373,14 @@ async function cancelActiveRuns(options = {}) {
     } catch (error) {
       cancellation.states.workspace_preserved = { status: "failed", at: currentIso(now), error: normalizeError(error) };
     }
+
+    cancellation.manual_intervention_required =
+      cancellation.states.runner_cancel_sent.status === "timeout" ||
+      cancellation.states.claim_cancelled.status === "failed" ||
+      (
+        cancellation.states.session_stopped.status === "failed" &&
+        cancellation.states.process_terminated.status !== "succeeded"
+      );
 
     const cancelled = status.cancelRun(run.id, cancellation, { final_status: "cancelled", cancellation });
     await status.writeRunAttemptRecord?.(cancelled ?? { ...run, cancellation, status: "cancelled" });
@@ -412,8 +478,17 @@ async function writeSnapshot(status, config) {
   return status.writeSnapshot(snapshotPath);
 }
 
-function createDefaultFizzy(config) {
-  return config.diagnostics?.no_dispatch ? createNoopFizzy() : createUnavailableFizzy();
+function createDefaultFizzy(config, dependencies = {}) {
+  if (config.diagnostics?.no_dispatch) return createNoopFizzy();
+  return createFizzyClient({
+    config,
+    ...(dependencies.fizzyOptions ?? {})
+  });
+}
+
+function createDefaultRunner(config, dependencies = {}) {
+  if (config.diagnostics?.no_dispatch) return createFakeCodexRunner();
+  return createCodexCliAppServerRunner(dependencies.runnerOptions ?? {});
 }
 
 function createNoopFizzy() {
@@ -442,25 +517,6 @@ function createNoopFizzy() {
   };
 }
 
-function createUnavailableFizzy() {
-  async function unavailable() {
-    throw new FizzySymphonyError(
-      "FIZZY_CLIENT_UNAVAILABLE",
-      "No Fizzy client factory was provided for daemon startup.",
-      { inject: "dependencies.fizzyFactory" }
-    );
-  }
-
-  return {
-    getIdentity: unavailable,
-    listUsers: unavailable,
-    listTags: unavailable,
-    getEntropy: unavailable,
-    getBoard: unavailable,
-    discoverCandidates: unavailable
-  };
-}
-
 function recordLifecycle(status, orchestratorState) {
   if (!status?.recordLifecycleSnapshot || !orchestratorState?.snapshot) return;
   const snapshot = orchestratorState.snapshot();
@@ -473,6 +529,33 @@ function recordLifecycle(status, orchestratorState) {
     cancellations: snapshot.cancellations ?? [],
     recent_failures: snapshot.recent_failures ?? []
   });
+}
+
+function runnerCallSucceeded(result) {
+  return Boolean(result) &&
+    result.timeout !== true &&
+    result.success !== false &&
+    result.status !== "failed" &&
+    result.status !== "timeout";
+}
+
+async function withOptionalTimeout(promise, timeoutMs) {
+  if (!promise || !Number.isFinite(Number(timeoutMs)) || Number(timeoutMs) <= 0) {
+    return promise;
+  }
+
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve({ timeout: true }), Number(timeoutMs));
+        timeout.unref?.();
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function currentDate(now) {

@@ -94,6 +94,7 @@ test("webhook verifies signatures, timestamps, dedupes event IDs, and enqueues c
       intent: "spawn",
       reason: "card_triaged",
       event_id: "event_1",
+      action: "card_triaged",
       card_id: "card_1",
       board_id: "board_1"
     });
@@ -102,6 +103,7 @@ test("webhook verifies signatures, timestamps, dedupes event IDs, and enqueues c
       intent: "spawn",
       reason: "card_triaged",
       event_id: "event_1",
+      action: "card_triaged",
       card_id: "card_1",
       board_id: "board_1",
       received_at: "2026-04-29T12:00:00.000Z"
@@ -124,7 +126,41 @@ test("webhook verifies signatures, timestamps, dedupes event IDs, and enqueues c
   }
 });
 
-test("webhook rejects missing signatures, stale timestamps, and malformed payloads before enqueueing", async () => {
+test("webhook rejects stale timestamps before enqueueing", async () => {
+  const config = httpConfig({
+    webhook: { enabled: true, path: "/webhook", max_event_age_seconds: 300 }
+  });
+  const queue = createWebhookHintQueue();
+  const server = await bindServerListener(config.server, {
+    requestListener: createLocalHttpHandler({
+      config,
+      status: readyStatus(),
+      enqueueWebhookHint: queue.enqueue,
+      now: () => new Date("2026-04-29T12:10:00.000Z")
+    })
+  });
+
+  try {
+    const stale = await fetchJson(`${server.endpoint.base_url}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_id: "event_old",
+        action: "card_triaged",
+        created_at: "2026-04-29T12:00:00.000Z",
+        card: { id: "card_1", board_id: "board_1" }
+      })
+    });
+
+    assert.equal(stale.response.status, 400);
+    assert.equal(stale.body.error.code, "STALE_WEBHOOK_EVENT");
+    assert.equal(queue.size, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("webhook rejects missing signatures and malformed payloads before enqueueing", async () => {
   const hints = [];
   const config = httpConfig({
     webhook: { enabled: true, path: "/webhook", secret: "webhook-secret" }
@@ -256,8 +292,10 @@ test("webhook ignores self-authored comments unless a rerun signal is present", 
       intent: "spawn",
       reason: "comment_created:rerun",
       event_id: "event_rerun",
+      action: "comment_created",
       card_id: "card_1",
       board_id: "board_1",
+      rerun_requested: true,
       received_at: "2026-04-29T12:00:00.000Z"
     }]);
   } finally {
@@ -342,6 +380,10 @@ test("webhook event ID dedupe retention is bounded by count and TTL", () => {
 
 function httpConfig(overrides = {}) {
   return {
+    fizzy: {
+      bot_user_id: "",
+      ...(overrides.fizzy ?? {})
+    },
     server: {
       host: "127.0.0.1",
       port: "auto",
@@ -354,10 +396,6 @@ function httpConfig(overrides = {}) {
       secret: "",
       manage: false,
       ...(overrides.webhook ?? {})
-    },
-    fizzy: {
-      bot_user_id: "",
-      ...(overrides.fizzy ?? {})
     }
   };
 }

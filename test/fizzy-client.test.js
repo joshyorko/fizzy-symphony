@@ -128,6 +128,22 @@ test("Fizzy fetch transport sends bearer JSON headers on account-scoped Rails ro
   assert.equal(calls[0].init.headers["Content-Type"], "application/json");
 });
 
+test("Fizzy client normalizes account slugs before building account-scoped routes", async () => {
+  const { client, calls, config } = await fetchClientFixture([
+    { status: 200, body: [{ id: "board_1", name: "Smoke" }] },
+    { status: 200, body: [{ id: "board_2", name: "Explicit" }] }
+  ]);
+  config.fizzy.account = "/1";
+
+  await client.listBoards();
+  await client.listBoards("/2/");
+
+  assert.deepEqual(
+    calls.map((call) => new URL(call.url).pathname),
+    ["/api/1/boards", "/api/2/boards"]
+  );
+});
+
 test("Fizzy fetch transport parses bare-array list responses and exposes 304 reads with cached snapshots", async () => {
   const { client, calls } = await fetchClientFixture([
     { status: 200, headers: { etag: "\"tags-v1\"" }, body: [{ id: "tag_1", title: "agent-instructions" }] },

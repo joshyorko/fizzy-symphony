@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { canonicalJson, cardDigest, digest } from "./domain.js";
 import { FizzySymphonyError } from "./errors.js";
+import { commentBody } from "./fizzy-normalize.js";
 
 export const COMPLETION_MARKER = "fizzy-symphony:completion:v1";
 export const COMPLETION_FAILED_MARKER = "fizzy-symphony:completion-failed:v1";
@@ -145,7 +146,7 @@ export async function writeDurableProof({
   result = {},
   resultComment = {},
   completedAt = new Date(),
-  fs = { mkdir, rename, writeFile }
+  fs = { mkdir, realpath, rename, writeFile }
 } = {}) {
   const stateDir = resolve(config.observability?.state_dir ?? ".fizzy-symphony/run");
   const proofDir = join(stateDir, "proof");
@@ -185,6 +186,11 @@ export async function writeDurableProof({
   const tmpPath = join(dirname(proofFile), `.${basename(proofFile)}.${process.pid}.${Date.now()}.tmp`);
 
   await fs.mkdir(proofDir, { recursive: true });
+  await assertDurableProofRootOutsideWorkspace({
+    proofDir,
+    workspacePath: base.workspace_path,
+    fs
+  });
   await fs.writeFile(tmpPath, body, "utf8");
   await fs.rename(tmpPath, proofFile);
 
@@ -278,6 +284,13 @@ export async function applyCompletionPolicy({ fizzy, card, route }) {
     if (completion.policy === "close") {
       if (fizzy?.closeCard) await fizzy.closeCard({ card, route });
       else if (fizzy?.close) await fizzy.close({ card, route });
+      else {
+        return {
+          success: false,
+          code: "COMPLETION_MUTATOR_UNAVAILABLE",
+          message: "Fizzy client cannot close cards for completion."
+        };
+      }
       return { success: true, policy: "close" };
     }
 
@@ -293,6 +306,13 @@ export async function applyCompletionPolicy({ fizzy, card, route }) {
         await fizzy.moveCardToColumn({ card, route, column_id: completion.target_column_id });
       } else if (fizzy?.moveCard) {
         await fizzy.moveCard({ card, route, column_id: completion.target_column_id });
+      } else {
+        return {
+          success: false,
+          code: "COMPLETION_MUTATOR_UNAVAILABLE",
+          message: "Fizzy client cannot move cards for completion.",
+          details: { target_column_id: completion.target_column_id }
+        };
       }
       return { success: true, policy: "move_to_column", target_column_id: completion.target_column_id };
     }
@@ -510,9 +530,34 @@ function isInsideOrSame(path, root) {
   return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
 }
 
-function commentBody(comment) {
-  if (typeof comment === "string") return comment;
-  return String(comment?.body ?? comment?.content ?? comment?.text ?? "");
+async function assertDurableProofRootOutsideWorkspace({ proofDir, workspacePath, fs }) {
+  if (!workspacePath) return;
+  const [canonicalProofDir, canonicalWorkspacePath] = await Promise.all([
+    canonicalPathIfExists(proofDir, fs),
+    canonicalPathIfExists(workspacePath, fs)
+  ]);
+  if (isInsideOrSame(canonicalProofDir, canonicalWorkspacePath)) {
+    throw new FizzySymphonyError(
+      "DURABLE_PROOF_INSIDE_WORKSPACE",
+      "Durable proof storage resolves inside the workspace cleanup target.",
+      {
+        proof_dir: proofDir,
+        canonical_proof_dir: canonicalProofDir,
+        workspace_path: workspacePath,
+        canonical_workspace_path: canonicalWorkspacePath
+      }
+    );
+  }
+}
+
+async function canonicalPathIfExists(path, fs) {
+  const resolved = resolve(path);
+  try {
+    if (typeof fs?.realpath === "function") return await fs.realpath(resolved);
+  } catch {
+    return resolved;
+  }
+  return resolved;
 }
 
 function toIso(value) {
