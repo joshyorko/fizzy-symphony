@@ -29,6 +29,7 @@ export async function startDaemon(options = {}) {
 
   const config = await loadConfig(configPath, { env });
   const webhookHints = dependencies.webhookHints ?? createWebhookHintQueue();
+  let scheduler = null;
   let status = null;
   const statusProxy = {
     health: () => status?.health?.() ?? { live: true, status: "live", ready: false },
@@ -39,7 +40,7 @@ export async function startDaemon(options = {}) {
   const requestListener = createLocalHttpHandler({
     config,
     status: statusProxy,
-    enqueueWebhookHint: webhookHints.enqueue,
+    enqueueWebhookHint: (hint) => scheduler?.enqueueWebhookHint?.(hint) ?? webhookHints.enqueue(hint),
     now,
     logger: dependencies.logger
   });
@@ -51,7 +52,6 @@ export async function startDaemon(options = {}) {
     isProcessLive: dependencies.isProcessLive
   });
 
-  let scheduler = null;
   let uninstallSignals = () => {};
   let stopping = false;
   let resolveStopped;
@@ -147,6 +147,7 @@ export async function startDaemon(options = {}) {
       stopping = true;
       uninstallSignals();
       await scheduler.stop({ wait: false });
+      await instance.listener.close();
       await cancelActiveRuns({
         config,
         status,
@@ -320,7 +321,15 @@ async function cancelActiveRuns(options = {}) {
   }
 
   for (const run of orchestratorState?.snapshot?.().active_runs ?? []) {
-    await orchestratorState.cancelRun?.(run, reason, { retry: false });
+    try {
+      await orchestratorState.cancelRun?.(run, reason, { retry: false });
+    } catch (error) {
+      status.recordError?.({
+        code: "ORCHESTRATOR_CANCEL_FAILED",
+        message: "Orchestrator active run cancellation failed during shutdown.",
+        details: { run_id: run.run_id ?? run.id, error: normalizeError(error) }
+      });
+    }
   }
   recordLifecycle(status, orchestratorState);
 }
