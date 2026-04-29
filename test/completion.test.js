@@ -172,7 +172,7 @@ test("cleanup eligibility preserves workspace when proof, result, marker, releas
   const complete = {
     config,
     workspace: { path: workspacePath },
-    proof: { file: "/tmp/state/proof/run_1.json", digest: "sha256:proof" },
+    proof: { file: "/tmp/state/proof/run_1.json", digest: "sha256:proof", payload: { no_code_change: true } },
     resultComment: { id: "comment_1" },
     completionMarker: { id: "marker_1" },
     claimRelease: { released: true }

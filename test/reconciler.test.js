@@ -186,6 +186,57 @@ test("runReconciliationTick proves the fake vertical slice order from discovery 
   assert.equal(snapshot.poll.last_completed_at, "2026-04-29T12:02:00.000Z");
 });
 
+test("runReconciliationTick runs workspace preflight before acquiring a claim", async () => {
+  const calls = [];
+  const config = configFixture(1);
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const preflightError = new Error("source repo is dirty");
+  preflightError.code = "WORKSPACE_SOURCE_DIRTY";
+
+  await assert.rejects(
+    () => runReconciliationTick({
+      config,
+      status,
+      now: fixedNow,
+      fizzy: {
+        async discoverCandidates() {
+          calls.push("discover");
+          return [card];
+        }
+      },
+      router: {
+        async validateCandidate() {
+          calls.push("route");
+          return { action: "spawn", card, route, prompt: "Do the safe fake turn." };
+        }
+      },
+      claims: {
+        async acquire() {
+          calls.push("claim");
+          throw new Error("claims must not run when workspace preflight fails");
+        }
+      },
+      workspaceManager: {
+        async resolveIdentity() {
+          calls.push("resolveIdentity");
+          return { workspace_identity_digest: "sha256:workspace", workspace_path: "/tmp/workspace" };
+        },
+        async preflight() {
+          calls.push("preflight");
+          throw preflightError;
+        }
+      },
+      workflowLoader: {},
+      runner: {}
+    }),
+    (error) => error.code === "WORKSPACE_SOURCE_DIRTY"
+  );
+
+  assert.deepEqual(calls, ["discover", "route", "resolveIdentity", "preflight"]);
+});
+
 test("runReconciliationTick writes local run attempt records through completion", async () => {
   const calls = [];
   const stateDir = await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-runs-"));
