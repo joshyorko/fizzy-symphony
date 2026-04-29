@@ -1,4 +1,5 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 const HISTORY_LIMIT = 50;
@@ -54,6 +55,7 @@ export function createStatusStore(options = {}) {
       by_board: clone(config.webhook?.managed_webhook_ids_by_board ?? {}),
       recent_delivery_errors: []
     },
+    shutdown: null,
     etag_cache: { hits: 0, misses: 0, invalid: 0 },
     retry_queue: [],
     cleanup_state: { status: "not_started" },
@@ -79,7 +81,8 @@ export function createStatusStore(options = {}) {
   function ready() {
     const startupReady = state.validation.errors.length === 0;
     const startupRecoveryReady = (state.startup_recovery.errors ?? []).length === 0;
-    const runnerReady = state.runner_health?.status === "ready";
+    const dispatchEnabled = state.config.diagnostics?.no_dispatch !== true;
+    const runnerReady = dispatchEnabled ? state.runner_health?.status === "ready" : true;
     const blockers = [];
 
     if (!startupRecoveryReady) {
@@ -98,6 +101,13 @@ export function createStatusStore(options = {}) {
       });
     }
 
+    if (!dispatchEnabled) {
+      blockers.push({
+        code: "DISPATCH_DISABLED",
+        message: "diagnostics.no_dispatch is enabled; runner dispatch is disabled."
+      });
+    }
+
     if (!runnerReady) {
       blockers.push({
         code: "RUNNER_NOT_READY",
@@ -112,7 +122,8 @@ export function createStatusStore(options = {}) {
       checks: {
         startup_recovery: startupRecoveryReady,
         startup: startupReady,
-        runner: runnerReady
+        runner: runnerReady,
+        dispatch_enabled: dispatchEnabled
       },
       blockers,
       runner_health: clone(state.runner_health),
@@ -132,6 +143,7 @@ export function createStatusStore(options = {}) {
       poll_interval_ms: state.config.polling?.interval_ms ?? null,
       webhook: webhookStatus(state.config, state.managed_webhooks),
       managed_webhooks: clone(state.managed_webhooks),
+      shutdown: clone(state.shutdown),
       etag_cache: clone(state.etag_cache),
       runner: {
         kind: state.runner_health?.kind ?? state.config.runner?.preferred ?? "unknown"
@@ -177,7 +189,7 @@ export function createStatusStore(options = {}) {
     const body = `${JSON.stringify(status(), null, 2)}\n`;
     const directory = dirname(snapshotPath);
     await mkdir(directory, { recursive: true });
-    const tmpPath = join(directory, `.${basename(snapshotPath)}.${process.pid}.${Date.now()}.tmp`);
+    const tmpPath = join(directory, `.${basename(snapshotPath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
     await writeFile(tmpPath, body, "utf8");
     await rename(tmpPath, snapshotPath);
     return {
@@ -202,7 +214,7 @@ export function createStatusStore(options = {}) {
     const body = `${JSON.stringify(record, null, 2)}\n`;
 
     await mkdir(runsDir, { recursive: true });
-    const tmpPath = join(runsDir, `.${fileName}.${process.pid}.${Date.now()}.tmp`);
+    const tmpPath = join(runsDir, `.${fileName}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
     await writeFile(tmpPath, body, "utf8");
     await rename(tmpPath, recordPath);
     return {
@@ -316,6 +328,14 @@ export function createStatusStore(options = {}) {
     touch();
   }
 
+  function recordShutdown(report = {}) {
+    state.shutdown = {
+      ...clone(report),
+      stopped_at: report.stopped_at ?? new Date().toISOString()
+    };
+    touch();
+  }
+
   function queueRun(run) {
     return putRun("queued", run, { status: "queued" });
   }
@@ -327,6 +347,7 @@ export function createStatusStore(options = {}) {
 
   function completeRun(runOrId, details = {}) {
     const run = runFrom(runOrId);
+    if (isCancelled(run)) return clone(run);
     const completed = putRun("completed", { ...run, ...details }, { status: "completed" });
     state.recent_completions.push({
       run_id: completed.id,
@@ -340,6 +361,7 @@ export function createStatusStore(options = {}) {
 
   function failRun(runOrId, error = {}) {
     const run = runFrom(runOrId);
+    if (isCancelled(run)) return clone(run);
     const failed = putRun("failed", { ...run, last_error: normalizeError(error) }, { status: "failed" });
     state.recent_failures.push({
       run_id: failed.id,
@@ -476,6 +498,7 @@ export function createStatusStore(options = {}) {
     recordTokenRateLimit,
     recordRetryQueue,
     recordCleanupState,
+    recordShutdown,
     queueRun,
     startRun,
     completeRun,
@@ -617,6 +640,10 @@ function webhookStatus(config = {}, managedWebhooks = {}) {
 
 function bucketValues(bucket) {
   return [...bucket.values()].map(clone);
+}
+
+function isCancelled(run) {
+  return run?.status === "cancelled" || run?.status === "preempted";
 }
 
 function normalizeError(error = {}) {

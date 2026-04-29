@@ -3,6 +3,7 @@
 import { fileURLToPath } from "node:url";
 
 import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
+import { startDaemon } from "../src/daemon.js";
 import { isFizzySymphonyError } from "../src/errors.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
@@ -16,7 +17,7 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
     } else if (command === "validate") {
       await validateCommand(args.slice(1), io);
     } else if (command === "daemon") {
-      daemonCommand(io);
+      await daemonCommand(args.slice(1), io);
     } else if (command === "status") {
       if (args.includes("--config")) {
         await statusDiscoveryCommand(args.slice(1), io);
@@ -73,13 +74,25 @@ async function validateCommand(args, io) {
   io.stdout.write(`${JSON.stringify({ ok: true, mode: "parse-only" })}\n`);
 }
 
-function daemonCommand(io) {
+async function daemonCommand(args, io) {
+  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.json";
+  const daemon = await startDaemon({
+    configPath,
+    env: io.env ?? process.env,
+    signalProcess: io.signalProcess ?? process,
+    ...(io.daemonOptions ?? {})
+  });
+
   io.stdout.write(`${JSON.stringify({
     ok: true,
     command: "daemon",
-    status: "stub",
-    message: "Later tasks implement the daemon loop."
+    status: "running",
+    instance_id: daemon.status.status().instance.id,
+    endpoint: daemon.endpoint
   })}\n`);
+
+  await io.daemonStarted?.(daemon);
+  await daemon.stopped;
 }
 
 function optionValue(args, name) {
@@ -93,7 +106,7 @@ function usage(exitCode, io) {
     "Usage:",
     "  fizzy-symphony setup --template-only [--config path]",
     "  fizzy-symphony validate --parse-only [--config path]",
-    "  fizzy-symphony daemon",
+    "  fizzy-symphony daemon [--config path]",
     "  fizzy-symphony status [--config path] [--instance id]",
     "  fizzy-symphony status [--registry-dir path] [--endpoint url]"
   ].join("\n");
