@@ -1,4 +1,4 @@
-import { buildCandidateQuery, discoverPollingCandidates } from "./polling.js";
+import { buildCandidateQuery, discoverPollingCandidates, refreshGoldenTicketRegistry } from "./polling.js";
 import {
   applyCompletionPolicy,
   createCompletionFailureMarker,
@@ -9,6 +9,7 @@ import {
   writeDurableProof
 } from "./completion.js";
 import { cardDigest } from "./domain.js";
+import { renderPrompt } from "./workflow.js";
 
 export async function runReconciliationTick(options = {}) {
   const {
@@ -55,12 +56,18 @@ export async function runReconciliationTick(options = {}) {
     result.cancelled = reconciled.cancelled;
     result.preempted = reconciled.preempted;
 
-    const hints = webhookEvents.map((event) => ({
+    let knownRoutes = routes ?? status?.status?.().routes ?? [];
+    knownRoutes = await refreshRoutesForPoll({ config, status, fizzy, currentRoutes: knownRoutes });
+
+    const hints = webhookEvents.map((event) => omitUndefined({
       event_id: event.id ?? event.event_id,
       card_id: event.card_id,
-      board_id: event.board_id
+      board_id: event.board_id,
+      action: event.action,
+      intent: event.intent,
+      cancel_reason: event.cancel_reason,
+      rerun_requested: event.rerun_requested
     }));
-    const knownRoutes = routes ?? status?.status?.().routes ?? [];
     const query = buildCandidateQuery({ config, routes: knownRoutes });
     const candidatesResult = typeof fizzy.discoverCandidates === "function"
       ? await fizzy.discoverCandidates({ config, hints, routes: knownRoutes, query })
@@ -79,8 +86,9 @@ export async function runReconciliationTick(options = {}) {
     const capacity = Math.max(0, (config.agent?.max_concurrent ?? 1) - (status?.activeRunCount?.() ?? 0));
     let dispatchesRemaining = capacity;
 
-    for (const card of candidates) {
+    for (const candidateCard of candidates) {
       if (dispatchesRemaining <= 0) break;
+      const card = await hydrateCardForRouting({ fizzy, card: candidateCard });
       if (reconciled.card_ids.has(card.id)) {
         result.ignored += 1;
         continue;
@@ -159,6 +167,32 @@ async function resolveWorkspaceIdentity({ config, card, decision, workspaceManag
     route: decision.route,
     decision
   });
+}
+
+async function refreshRoutesForPoll({ config, status, fizzy, currentRoutes = [] } = {}) {
+  if (config.routing?.refresh_golden_tickets_on_poll === false) return currentRoutes;
+  if (typeof fizzy?.listGoldenCards !== "function" || typeof fizzy?.getBoard !== "function") {
+    return currentRoutes;
+  }
+
+  const refreshed = await refreshGoldenTicketRegistry({ config, fizzy });
+  const routes = refreshed.routes ?? currentRoutes;
+  status?.setRoutes?.(routes);
+  return routes;
+}
+
+async function hydrateCardForRouting({ fizzy, card = {} } = {}) {
+  if (Array.isArray(card.comments)) return card;
+  const comments = await listCommentsIfAvailable(fizzy, card);
+  if (!Array.isArray(comments)) return card;
+  return { ...card, comments };
+}
+
+async function listCommentsIfAvailable(fizzy, card) {
+  if (typeof fizzy?.listComments === "function") return fizzy.listComments({ card, cardId: card.id, card_id: card.id });
+  if (typeof fizzy?.listCardComments === "function") return fizzy.listCardComments({ card, cardId: card.id, card_id: card.id });
+  if (typeof fizzy?.getCardComments === "function") return fizzy.getCardComments({ card, cardId: card.id, card_id: card.id });
+  return null;
 }
 
 async function reconcileActiveRuns({
@@ -311,7 +345,7 @@ async function cancelStatusRun({
   if (cancelResult.result) cancellation.runner_cancel = cancelResult.result;
 
   if (cancelResult.state.status !== "succeeded") {
-    const stopResult = await stopRunnerSession({ runner, run });
+    const stopResult = await stopRunnerSession({ config, runner, run });
     cancellation.states.session_stopped = stopResult.state;
     if (stopResult.result) cancellation.session_stop = stopResult.result;
 
@@ -391,12 +425,13 @@ async function cancelRunnerTurn({ config, runner, run, reason }) {
   }
 }
 
-async function stopRunnerSession({ runner, run }) {
+async function stopRunnerSession({ config, runner, run }) {
   if (!runner?.stopSession || !run.session) {
     return { state: { status: "skipped", reason: "no_session" } };
   }
   try {
-    const result = await runner.stopSession(run.session);
+    const result = await withOptionalTimeout(runner.stopSession(run.session), config?.runner?.stop_session_timeout_ms);
+    if (result?.timeout) return { state: { status: "timeout" }, result };
     const succeeded = result?.success !== false && result?.status !== "failed";
     return { state: { status: succeeded ? "succeeded" : "failed" }, result };
   } catch (error) {
@@ -497,33 +532,43 @@ async function runCard({
   await writeRunAttempt(status, run, "claimed");
   await writeRunAttempt(status, run, "preparing_workspace");
 
-  const workspace = await workspaceManager.prepare({
-    config,
-    card,
-    route,
-    claim,
-    decision,
-    identity: workspaceIdentity,
-    workspace: workspaceIdentity,
-    now
-  });
-  const workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
-  run = status?.startRun?.({
-    ...run,
-    workspace,
-    workflow: workflowSummary(workflow)
-  }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
-
-  await writeRunAttempt(status, run, "running");
+  let workspace;
+  let workflow;
 
   try {
+    workspace = await workspaceManager.prepare({
+      config,
+      card,
+      route,
+      claim,
+      decision,
+      identity: workspaceIdentity,
+      workspace: workspaceIdentity,
+      now
+    });
+    workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
+    run = status?.startRun?.({
+      ...run,
+      workspace,
+      workflow: workflowSummary(workflow)
+    }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
+
+    await writeRunAttempt(status, run, "running");
     await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
 
     const session = await runner.startSession(workspace.path, { config, route, workflow }, { run_id: runId });
     run = status?.startRun?.({ ...run, session }) ?? { ...run, session };
     await writeRunAttempt(status, run, "running");
 
-    const prompt = decision.prompt ?? workflow?.prompt ?? workflow?.body ?? "";
+    const prompt = decision.prompt ?? workflow?.prompt ?? renderRunPrompt({
+      workflow,
+      card,
+      route,
+      workspace,
+      claim,
+      config,
+      attempt: claim.attempt_number ?? claim.attemptNumber ?? 1
+    });
     const turn = await runner.startTurn(session, prompt, { run_id: runId, card_id: card.id, route_id: route?.id });
     run = status?.startRun?.({ ...run, turn }) ?? { ...run, turn };
     await writeRunAttempt(status, run, "running");
@@ -660,11 +705,14 @@ async function runCard({
       marker: completionMarker
     });
 
+    const runnerSessionStop = await stopRunnerSession({ config, runner, run: { ...run, session } });
+
     const completed = status?.completeRun?.(runId, {
       proof,
       result_comment_id: resultComment?.id,
       completion_marker: recordedCompletionMarker,
       runner_result: streamResult,
+      runner_session_stop: runnerSessionStop,
       completed_at: now
     });
 
@@ -822,6 +870,38 @@ function workflowSummary(workflow) {
   };
 }
 
+function renderRunPrompt({ workflow, card, route, workspace, claim, config, attempt }) {
+  return renderPrompt({
+    workflow,
+    board: {
+      id: card?.board_id ?? route?.board_id,
+      name: card?.board?.name ?? route?.board_name
+    },
+    column: {
+      id: card?.column_id ?? route?.source_column_id,
+      name: card?.column?.name ?? route?.source_column_name
+    },
+    route,
+    card,
+    attempt,
+    workspace: {
+      id: workspace?.key ?? workspace?.workspace_key,
+      path: workspace?.path ?? workspace?.workspace_path,
+      source_repo: workspace?.source_repo ?? workspace?.sourceRepo,
+      branch: workspace?.branch_name ?? workspace?.branch,
+      metadata_path: workspace?.metadata_path
+    },
+    completion: {
+      daemon_policy: config?.completion ?? {},
+      claim: {
+        claim_id: claim?.claim_id ?? claim?.id,
+        attempt_id: claim?.attempt_id ?? claim?.attemptId,
+        run_id: claim?.run_id ?? claim?.runId
+      }
+    }
+  });
+}
+
 function runnerFailure(result) {
   const error = new Error(result?.error?.message ?? `Runner turn did not complete: ${result?.status ?? "unknown"}`);
   error.code = result?.error?.code ?? "RUNNER_TURN_FAILED";
@@ -873,4 +953,8 @@ function normalizeError(error = {}) {
 function currentIso(now) {
   const value = typeof now === "function" ? now() : now;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function omitUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }

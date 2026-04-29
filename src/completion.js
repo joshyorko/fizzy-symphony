@@ -278,6 +278,13 @@ export async function applyCompletionPolicy({ fizzy, card, route }) {
     if (completion.policy === "close") {
       if (fizzy?.closeCard) await fizzy.closeCard({ card, route });
       else if (fizzy?.close) await fizzy.close({ card, route });
+      else {
+        return {
+          success: false,
+          code: "COMPLETION_MUTATOR_UNAVAILABLE",
+          message: "Fizzy client cannot close cards for completion."
+        };
+      }
       return { success: true, policy: "close" };
     }
 
@@ -293,6 +300,13 @@ export async function applyCompletionPolicy({ fizzy, card, route }) {
         await fizzy.moveCardToColumn({ card, route, column_id: completion.target_column_id });
       } else if (fizzy?.moveCard) {
         await fizzy.moveCard({ card, route, column_id: completion.target_column_id });
+      } else {
+        return {
+          success: false,
+          code: "COMPLETION_MUTATOR_UNAVAILABLE",
+          message: "Fizzy client cannot move cards for completion.",
+          details: { target_column_id: completion.target_column_id }
+        };
       }
       return { success: true, policy: "move_to_column", target_column_id: completion.target_column_id };
     }

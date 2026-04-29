@@ -67,6 +67,7 @@ const schema = {
     enabled: true,
     path: true,
     secret: true,
+    max_event_age_seconds: true,
     manage: true,
     managed_webhook_ids_by_board: { __map: true },
     callback_url: true,
@@ -315,8 +316,20 @@ function validateConfigValues(config) {
   validateEnum(config.runner?.preferred, ["sdk", "cli_app_server"], "runner.preferred");
   validateEnum(config.runner?.fallback, ["cli_app_server", "none"], "runner.fallback");
   validateEnum(config.server?.port_allocation, ["fixed", "next_available", "random"], "server.port_allocation");
+  validateEnum(config.workspaces?.default_isolation, ["git_worktree", "git_clone", "copy"], "workspaces.default_isolation");
+  for (const [name, workspace] of Object.entries(config.workspaces?.registry ?? {})) {
+    validateEnum(workspace?.isolation, ["git_worktree", "git_clone", "copy"], `workspaces.registry.${name}.isolation`);
+  }
 
   validateServerPort(config.server ?? {});
+
+  if (Number(config.agent?.max_turns ?? 1) > 1) {
+    throw new FizzySymphonyError(
+      "CONFIG_UNIMPLEMENTED_FEATURE",
+      "agent.max_turns > 1 requires same-thread continuation, which is not implemented yet.",
+      { path: "agent.max_turns", value: config.agent?.max_turns }
+    );
+  }
 
   for (const path of durationPaths()) {
     const value = getPath(config, path);

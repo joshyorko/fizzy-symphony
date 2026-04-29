@@ -74,7 +74,7 @@ function minimalConfig() {
       max_concurrent_per_card: 1,
       turn_timeout_ms: 3600000,
       stall_timeout_ms: 300000,
-      max_turns: 20,
+      max_turns: 1,
       max_retry_backoff_ms: 300000,
       default_backend: "codex",
       default_model: "",
@@ -325,6 +325,18 @@ test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross
         config.webhook.manage = true;
         config.webhook.callback_url = "";
       }
+    },
+    {
+      code: "CONFIG_UNIMPLEMENTED_FEATURE",
+      mutate: (config) => { config.agent.max_turns = 2; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.workspaces.default_isolation = "empty_directory"; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.workspaces.registry.app.isolation = "empty_directory"; }
     }
   ];
 

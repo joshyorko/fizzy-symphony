@@ -2,6 +2,23 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+const DEFAULT_WEBHOOK_MAX_EVENT_AGE_SECONDS = 300;
+const CANCELLATION_ACTIONS = new Map([
+  ["card_closed", "card_closed"],
+  ["card_postponed", "card_postponed"],
+  ["card_auto_postponed", "card_auto_postponed"],
+  ["card_board_changed", "card_board_changed"],
+  ["card_sent_back_to_triage", "card_left_routed_column"]
+]);
+const CANDIDATE_ACTIONS = new Set([
+  "card_assigned",
+  "card_published",
+  "card_reopened",
+  "card_triaged",
+  "card_unassigned",
+  "card_updated",
+  "comment_created"
+]);
 
 export function createLocalHttpHandler(deps = {}) {
   const {
@@ -124,7 +141,23 @@ async function handleWebhook(request, response, options = {}) {
     return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must be valid JSON.");
   }
 
-  const hint = candidateHintFromWebhookEvent(event, { now });
+  const freshness = eventFreshness(event, request.headers, config, now);
+  if (!freshness.ok) {
+    return writeError(response, 400, freshness.code, freshness.message, freshness.details);
+  }
+
+  const hint = candidateHintFromWebhookEvent(event, { config, now });
+  if (hint.ignored) {
+    return writeJson(response, 200, {
+      ok: true,
+      status: "ignored",
+      reason: hint.reason,
+      hint: publicHint(hint),
+      signature_verification: secret ? "enabled" : "disabled",
+      webhook_management: config.webhook?.manage ? "managed" : "unmanaged"
+    });
+  }
+
   if (!hint.card_id) {
     return writeError(response, 400, "INVALID_WEBHOOK_PAYLOAD", "Webhook payload must identify a candidate card.");
   }
@@ -210,19 +243,41 @@ function normalizeSignature(signatureHeader) {
   return value.startsWith("sha256=") ? value.slice("sha256=".length) : value;
 }
 
-function candidateHintFromWebhookEvent(event, { now = () => new Date() } = {}) {
+function candidateHintFromWebhookEvent(event, { config = {}, now = () => new Date() } = {}) {
   if (!event || typeof event !== "object" || Array.isArray(event)) return {};
 
   const card = event.card ?? event.data?.card ?? event.payload?.card ?? {};
   const board = event.board ?? event.data?.board ?? event.payload?.board ?? {};
   const cardId = event.card_id ?? event.cardId ?? card.id ?? card.card_id;
   const boardId = event.board_id ?? event.boardId ?? board.id ?? board.board_id ?? card.board_id ?? card.boardId;
+  const action = normalizeAction(event.action ?? event.type ?? event.event_type ?? event.eventType);
+  const rerunRequested = hasExplicitRerunSignal(event, card);
+
+  if (isSelfAuthoredDaemonComment(event, { config, action }) && !rerunRequested) {
+    return omitUndefined({
+      ignored: true,
+      reason: "self_authored_daemon_comment",
+      source: "webhook",
+      event_id: event.event_id ?? event.eventId ?? event.id,
+      action,
+      card_id: cardId,
+      board_id: boardId,
+      received_at: toIso(typeof now === "function" ? now() : now)
+    });
+  }
+
+  const intent = eventIntent({ action, card });
+  const cancelReason = CANCELLATION_ACTIONS.get(action);
 
   return omitUndefined({
     source: "webhook",
     event_id: event.event_id ?? event.eventId ?? event.id,
+    action,
+    intent,
+    cancel_reason: cancelReason,
     card_id: cardId,
     board_id: boardId,
+    rerun_requested: rerunRequested || undefined,
     received_at: toIso(typeof now === "function" ? now() : now)
   });
 }
@@ -230,13 +285,121 @@ function candidateHintFromWebhookEvent(event, { now = () => new Date() } = {}) {
 function publicHint(hint = {}) {
   return omitUndefined({
     event_id: hint.event_id,
+    action: hint.action,
+    intent: hint.intent,
+    cancel_reason: hint.cancel_reason,
     card_id: hint.card_id,
-    board_id: hint.board_id
+    board_id: hint.board_id,
+    rerun_requested: hint.rerun_requested
   });
+}
+
+function eventFreshness(event, headers = {}, config = {}, now = () => new Date()) {
+  const timestamp = eventTimestamp(event) ?? headerValue(headers, "x-webhook-timestamp");
+  if (!timestamp) return { ok: true };
+
+  const eventTime = Date.parse(timestamp);
+  const nowValue = typeof now === "function" ? now() : now;
+  const nowTime = nowValue instanceof Date ? nowValue.getTime() : Date.parse(nowValue);
+  const maxAgeSeconds = Number(config.webhook?.max_event_age_seconds ?? DEFAULT_WEBHOOK_MAX_EVENT_AGE_SECONDS);
+  if (!Number.isFinite(eventTime) || !Number.isFinite(nowTime)) {
+    return {
+      ok: false,
+      code: "STALE_WEBHOOK_EVENT",
+      message: "Webhook event timestamp is invalid or stale.",
+      details: { timestamp }
+    };
+  }
+
+  const ageMs = Math.abs(nowTime - eventTime);
+  if (ageMs <= maxAgeSeconds * 1000) return { ok: true };
+  return {
+    ok: false,
+    code: "STALE_WEBHOOK_EVENT",
+    message: "Webhook event timestamp is outside the allowed freshness window.",
+    details: {
+      timestamp,
+      max_event_age_seconds: maxAgeSeconds,
+      age_ms: ageMs
+    }
+  };
+}
+
+function eventTimestamp(event = {}) {
+  return event.created_at ??
+    event.createdAt ??
+    event.timestamp ??
+    event.event_timestamp ??
+    event.eventTimestamp ??
+    event.delivered_at ??
+    event.deliveredAt ??
+    event.data?.created_at ??
+    event.payload?.created_at;
+}
+
+function eventIntent({ action, card = {} } = {}) {
+  if (isGoldenTicketCard(card)) return "refresh_routes";
+  if (CANCELLATION_ACTIONS.has(action)) return "cancel_active";
+  if (CANDIDATE_ACTIONS.has(action)) return "candidate_changed";
+  return action ? "candidate_changed" : undefined;
+}
+
+function isSelfAuthoredDaemonComment(event = {}, { config = {}, action } = {}) {
+  if (action !== "comment_created") return false;
+  if (event.daemon === true || event.comment?.daemon === true) return true;
+  const daemonAuthorIds = new Set([
+    config.fizzy?.bot_user_id,
+    config.fizzy?.botUserId,
+    config.instance?.id
+  ].filter(Boolean).map(String));
+  const actorId = commentAuthorId(event);
+  return Boolean(actorId && daemonAuthorIds.has(String(actorId)));
+}
+
+function commentAuthorId(event = {}) {
+  return event.comment?.author?.id ??
+    event.comment?.author_id ??
+    event.comment?.authorId ??
+    event.author?.id ??
+    event.author_id ??
+    event.authorId ??
+    event.actor?.id ??
+    event.user?.id;
+}
+
+function hasExplicitRerunSignal(event = {}, card = {}) {
+  if (event.rerun_requested === true || event.rerunRequested === true) return true;
+  if (normalizedTags(card).includes("agent-rerun")) return true;
+  const body = event.comment?.body ?? event.comment?.content ?? event.body ?? "";
+  return /\bagent-rerun\b/iu.test(String(body));
+}
+
+function isGoldenTicketCard(card = {}) {
+  return card.golden === true || normalizedTags(card).includes("agent-instructions");
+}
+
+function normalizedTags(card = {}) {
+  return (card.tags ?? card.tag_names ?? [])
+    .map((tag) => String(tag ?? "").trim().replace(/^#/u, "").toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeAction(action) {
+  const value = String(action ?? "").trim();
+  if (!value) return undefined;
+  return value.replace(/[.\s-]+/gu, "_").toLowerCase();
 }
 
 function callStatus(status, method, fallback) {
   return typeof status?.[method] === "function" ? status[method]() : fallback;
+}
+
+function headerValue(headers = {}, name) {
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === lowerName) return Array.isArray(value) ? value[0] : value;
+  }
+  return undefined;
 }
 
 function requestPathname(request) {

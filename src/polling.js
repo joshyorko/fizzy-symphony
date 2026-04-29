@@ -52,18 +52,22 @@ export async function refreshGoldenTicketRegistry({ config = {}, fizzy } = {}) {
 }
 
 function routeOptionsFromConfig(config) {
+  const byBoardId = Object.fromEntries(
+    (config.boards?.entries ?? []).map((board) => [board.id, routeOptionsFromBoardEntry(board, config)])
+  );
+  const firstBoard = (config.boards?.entries ?? [])[0];
   return {
-    boards: Object.fromEntries(
-      (config.boards?.entries ?? []).map((board) => [
-        board.id,
-        {
-          defaults: board.defaults ?? {},
-          allowed_card_overrides: board.defaults?.allowed_card_overrides,
-          rerun_policy: config.routing?.rerun,
-          managed_tags: config.managed_tags
-        }
-      ])
-    )
+    ...routeOptionsFromBoardEntry(firstBoard, config),
+    byBoardId
+  };
+}
+
+function routeOptionsFromBoardEntry(board, config) {
+  return {
+    defaults: board?.defaults ?? {},
+    allowed_card_overrides: board?.defaults?.allowed_card_overrides,
+    unknownManagedTagPolicy: board?.defaults?.unknown_managed_tag_policy,
+    rerun_policy: config.routing?.rerun
   };
 }
 
