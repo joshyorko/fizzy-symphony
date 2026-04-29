@@ -51,6 +51,7 @@ export function renderPrompt({
   card = {},
   attempt = 1,
   workspace = {},
+  workpad = null,
   completion = {}
 } = {}) {
   const parsedWorkflow = typeof workflow === "string" ? parseWorkflow(workflow) : workflow;
@@ -64,8 +65,11 @@ export function renderPrompt({
     route_completion: route.completion ?? null,
     daemon_completion: completion
   };
+  const frontMatter = parsedWorkflow.frontMatter ?? parsedWorkflow.front_matter ?? {};
 
   return compactSections([
+    `Workflow front matter:\n\`\`\`json\n${JSON.stringify(frontMatter, null, 2)}\n\`\`\``,
+    "Workflow prompt body",
     renderedPolicy,
     "Fizzy task context",
     renderRecord("Board", {
@@ -95,6 +99,7 @@ export function renderPrompt({
       branch: workspace.branch,
       metadata_path: workspace.metadataPath ?? workspace.metadata_path
     }),
+    `Active workpad:\n\`\`\`json\n${JSON.stringify(workpadState(workpad), null, 2)}\n\`\`\``,
     `Completion policy:\n\`\`\`json\n${JSON.stringify(completionPolicy, null, 2)}\n\`\`\``
   ]);
 }
@@ -458,6 +463,11 @@ function commentLine(comment) {
   const author = personName(comment.author ?? comment.user ?? comment.created_by);
   const body = commentBody(comment);
   return author ? `${author}: ${body}` : body;
+}
+
+function workpadState(workpad) {
+  if (!workpad) return { status: "unavailable" };
+  return workpad;
 }
 
 function personName(person) {

@@ -16,7 +16,7 @@ operate the local scaffold safely while `fizzy-symphony` is still under construc
 ## Current Implementation Status
 
 The current scaffold is a Node.js ESM project with no external runtime dependencies. The local
-baseline on 2026-04-29 is 222/222 passing via `npm test` on Node v25.9.0.
+baseline on 2026-04-29 is 224/224 passing via `npm test` on Node v25.9.0.
 
 Implemented scaffold behavior:
 
@@ -31,6 +31,8 @@ Implemented scaffold behavior:
 - live Fizzy HTTP client wiring with ETag-aware reads and account-scoped resources
 - webhook freshness, signature, dedupe, self-event, and lifecycle hint handling
 - durable proof writing and completion policy failure markers
+- proof-file/digest verification before cleanup removal
+- canonical workspace containment for symlinked roots
 - live rich-text comment normalization for claims, completion markers, digests, and prompt context
 - timed claim renewal with failure cancellation
 - injected fake-Fizzy and fake-runner reconciliation slice

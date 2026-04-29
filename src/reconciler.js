@@ -586,7 +586,7 @@ async function runCard({
     }) ?? { ...run, workspace, workflow: workflowSummary(workflow) };
 
     await writeRunAttempt(status, run, "running");
-    await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
+    const workpad = await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "claimed", now });
 
     const session = await runner.startSession(workspace.path, { config, route, workflow }, { run_id: runId });
     run = status?.startRun?.({ ...run, session }) ?? { ...run, session };
@@ -597,6 +597,7 @@ async function runCard({
       card,
       route,
       workspace,
+      workpad,
       claim,
       config,
       attempt: claim.attempt_number ?? claim.attemptNumber ?? 1
@@ -751,14 +752,14 @@ async function runCard({
       marker: completionMarker
     });
 
-    const runnerSessionStop = await stopRunnerSession({ config, runner, run: { ...run, session } });
+    const runnerSessionFinalization = await finalizeRunnerSession({ config, runner, run: { ...run, session } });
 
     const completed = status?.completeRun?.(runId, {
       proof,
       result_comment_id: resultComment?.id,
       completion_marker: recordedCompletionMarker,
       runner_result: streamResult,
-      runner_session_stop: runnerSessionStop,
+      runner_session_finalization: runnerSessionFinalization,
       completed_at: now
     });
 
@@ -917,7 +918,7 @@ function workflowSummary(workflow) {
   };
 }
 
-function renderRunPrompt({ workflow, card, route, workspace, claim, config, attempt }) {
+function renderRunPrompt({ workflow, card, route, workspace, workpad, claim, config, attempt }) {
   return renderPrompt({
     workflow,
     board: {
@@ -938,6 +939,7 @@ function renderRunPrompt({ workflow, card, route, workspace, claim, config, atte
       branch: workspace?.branch_name ?? workspace?.branch,
       metadata_path: workspace?.metadata_path
     },
+    workpad,
     completion: {
       daemon_policy: config?.completion ?? {},
       claim: {

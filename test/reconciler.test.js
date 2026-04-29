@@ -259,6 +259,11 @@ test("runReconciliationTick renders full Fizzy card context for normal dispatch 
     url: "https://fizzy.example/cards/1"
   };
   const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.fizzy.postWorkpadComment = async ({ body }) => {
+    calls.push("postWorkpad");
+    assert.match(body, /fizzy-symphony:workpad:v1/u);
+    return { id: "workpad_1" };
+  };
 
   const result = await runReconciliationTick({
     config,
@@ -276,7 +281,13 @@ test("runReconciliationTick renders full Fizzy card context for normal dispatch 
     workflowLoader: {
       async load() {
         calls.push("loadWorkflow");
-        return { body: "Follow repo workflow for {{card.title}}.", front_matter: {} };
+        return {
+          body: "Follow repo workflow for {{card.title}}.",
+          frontMatter: {
+            owner: "repo-policy",
+            completion: { required_steps_block_completion: true }
+          }
+        };
       }
     },
     runner: {
@@ -291,6 +302,8 @@ test("runReconciliationTick renders full Fizzy card context for normal dispatch 
   });
 
   assert.equal(result.completed, 1);
+  assert.match(prompts[0], /Workflow front matter/u);
+  assert.match(prompts[0], /"owner": "repo-policy"/u);
   assert.match(prompts[0], /Follow repo workflow for Implement live daemon foundation\./u);
   assert.match(prompts[0], /Fizzy task context/u);
   assert.match(prompts[0], /Golden-ticket route:/u);
@@ -298,8 +311,48 @@ test("runReconciliationTick renders full Fizzy card context for normal dispatch 
   assert.match(prompts[0], /Wire real daemon dependencies and prompt context\./u);
   assert.match(prompts[0], /- \[ \] Run npm test/u);
   assert.match(prompts[0], /Josh: Use the golden ticket first\./u);
+  assert.match(prompts[0], /Active workpad/u);
+  assert.match(prompts[0], /"comment_id": "workpad_1"/u);
   assert.match(prompts[0], /Completion policy:/u);
   assert.match(prompts[0], /"policy": "comment_once"/u);
+});
+
+test("runReconciliationTick terminates owned app-server process when successful stop does not close", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-stop-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.runner.startSession = async (workspacePath) => {
+    calls.push("startSession");
+    return { session_id: "session_1", workspace: workspacePath, process_owned: true };
+  };
+  deps.runner.stopSession = async () => {
+    calls.push("stopSession");
+    return { status: "failed", success: false, close_result: { status: "closing" } };
+  };
+  deps.runner.terminateOwnedProcess = async () => {
+    calls.push("terminateOwnedProcess");
+    return { status: "terminated", success: true, signal: "SIGTERM" };
+  };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps
+  });
+
+  assert.equal(result.completed, 1);
+  assert.ok(calls.includes("stopSession"));
+  assert.ok(calls.includes("terminateOwnedProcess"));
+  const completed = status.status().runs.completed[0];
+  assert.equal(completed.runner_session_finalization.states.session_stopped.status, "failed");
+  assert.equal(completed.runner_session_finalization.states.process_terminated.status, "succeeded");
 });
 
 test("long-running streams renew active claims before another daemon can steal them", async () => {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -330,6 +331,9 @@ export async function cleanupWorkspace({
   const workspacePath = workspace.path ?? workspace.workspace_path;
   const workspaceKeyValue = workspace.key ?? workspace.workspace_key;
   if (!workspacePath) return preserve("workspace_path_missing");
+
+  const proofCheck = await verifyDurableProofFile({ proof, fs });
+  if (!proofCheck.ok) return preserve(proofCheck.reason, proofCheck.details);
 
   const metadataPath = workspace.metadata_path ??
     (workspaceKeyValue && config.workspaces?.metadata_root
@@ -1006,6 +1010,48 @@ function guardMismatches(guard, metadata, metadataPath) {
   return mismatches;
 }
 
+async function verifyDurableProofFile({ proof = {}, fs = nodeFs } = {}) {
+  const proofFile = proof.file ?? proof.proof_file;
+  const expectedDigest = proof.digest ?? proof.proof_digest;
+  if (!proofFile || !expectedDigest) {
+    return { ok: false, reason: "proof_missing" };
+  }
+
+  let raw;
+  try {
+    raw = await fs.readFile(proofFile, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return { ok: false, reason: "proof_file_missing", details: { proof_file: proofFile } };
+    }
+    return { ok: false, reason: "proof_file_unreadable", details: { proof_file: proofFile, error: normalizeError(error) } };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return { ok: false, reason: "proof_file_invalid", details: { proof_file: proofFile, error: normalizeError(error) } };
+  }
+
+  const { proof_digest: fileDigest, ...digestInput } = parsed;
+  const actualDigest = digest(digestInput);
+  if (fileDigest !== actualDigest || expectedDigest !== actualDigest) {
+    return {
+      ok: false,
+      reason: "proof_digest_mismatch",
+      details: {
+        proof_file: proofFile,
+        expected_digest: expectedDigest,
+        file_digest: fileDigest,
+        actual_digest: actualDigest
+      }
+    };
+  }
+
+  return { ok: true };
+}
+
 function workspacePreservation({ code, message, metadata_path, guard_path, workspace_key, workspace_path, details = {} }) {
   return omitUndefined({
     code,
@@ -1048,7 +1094,7 @@ function resolveSourceRef({ config, route, workspace }) {
 
 function workspacePathFromRoot(root, key, allowedRoots) {
   requireIdentityField("workspace_root", root);
-  const resolvedRoot = resolve(root);
+  const resolvedRoot = canonicalPath(root);
   const resolvedPath = resolve(resolvedRoot, String(key));
 
   assertPathInsideRoot(resolvedPath, resolvedRoot, "WORKSPACE_PATH_ESCAPE", { key });
@@ -1058,7 +1104,7 @@ function workspacePathFromRoot(root, key, allowedRoots) {
 }
 
 function assertPathInsideRoot(path, root, code, details = {}) {
-  const resolvedRoot = resolve(root);
+  const resolvedRoot = canonicalPath(root);
   const resolvedPath = resolve(path);
   if (!isInsideOrSame(resolvedPath, resolvedRoot)) {
     throw new FizzySymphonyError(code, "Workspace path escapes its configured root.", {
@@ -1072,8 +1118,8 @@ function assertPathInsideRoot(path, root, code, details = {}) {
 function assertPathInsideAllowedRoots(path, allowedRoots) {
   if (!Array.isArray(allowedRoots) || allowedRoots.length === 0) return;
 
-  const resolvedPath = resolve(path);
-  const resolvedRoots = allowedRoots.map((root) => resolve(root));
+  const resolvedPath = canonicalPath(path);
+  const resolvedRoots = allowedRoots.map((root) => canonicalPath(root));
   if (!resolvedRoots.some((root) => isInsideOrSame(resolvedPath, root))) {
     throw new FizzySymphonyError(
       "WORKSPACE_PATH_OUTSIDE_ALLOWED_ROOT",
@@ -1120,7 +1166,12 @@ function identityDigestInput(identity) {
 }
 
 function canonicalPath(path) {
-  return resolve(path);
+  const resolved = resolve(path);
+  try {
+    return realpathSync.native?.(resolved) ?? realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function sanitize(value) {
