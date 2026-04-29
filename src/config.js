@@ -111,6 +111,14 @@ const schema = {
       command: true,
       args: [true]
     },
+    initialize_timeout_ms: true,
+    request_timeout_ms: true,
+    cancel_timeout_ms: true,
+    stop_session_timeout_ms: true,
+    terminate_timeout_ms: true,
+    kill_timeout_ms: true,
+    stream_timeout_ms: true,
+    max_stderr_bytes: true,
     health: {
       enabled: true,
       interval_ms: true
@@ -346,6 +354,13 @@ function durationPaths() {
     "agent.stall_timeout_ms",
     "agent.max_retry_backoff_ms",
     "runner.health.interval_ms",
+    "runner.initialize_timeout_ms",
+    "runner.request_timeout_ms",
+    "runner.cancel_timeout_ms",
+    "runner.stop_session_timeout_ms",
+    "runner.terminate_timeout_ms",
+    "runner.kill_timeout_ms",
+    "runner.stream_timeout_ms",
     "claims.lease_ms",
     "claims.renew_interval_ms",
     "claims.steal_grace_ms",

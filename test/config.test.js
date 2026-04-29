@@ -86,6 +86,14 @@ function minimalConfig() {
       allow_fallback: true,
       sdk: { package: "", smoke_test: false },
       cli_app_server: { command: "codex", args: ["app-server"] },
+      initialize_timeout_ms: 10000,
+      request_timeout_ms: 60000,
+      cancel_timeout_ms: 10000,
+      stop_session_timeout_ms: 10000,
+      terminate_timeout_ms: 5000,
+      kill_timeout_ms: 2000,
+      stream_timeout_ms: 3600000,
+      max_stderr_bytes: 65536,
       health: { enabled: true, interval_ms: 60000 },
       codex: {
         approval_policy: {

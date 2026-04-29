@@ -16,7 +16,7 @@ operate the local scaffold safely while `fizzy-symphony` is still under construc
 ## Current Implementation Status
 
 The current scaffold is a Node.js ESM project with no external runtime dependencies. The local
-baseline on 2026-04-29 is 75/75 passing via `npm test`.
+baseline on 2026-04-29 is 157/157 passing via `npm test`.
 
 Implemented scaffold behavior:
 
@@ -29,9 +29,10 @@ Implemented scaffold behavior:
 - workflow loading and prompt rendering
 - status snapshots
 - injected fake-Fizzy and fake-runner reconciliation slice
+- real Codex CLI app-server runner behind the SDK-shaped runner interface
 
-The live Fizzy client, live Codex app-server runner, full supervisor, completion policy application,
-durable proof writing, webhook/poll hardening, and real smoke tests are not implemented yet.
+The live Fizzy client, full supervisor/completion policy application, durable proof writing,
+webhook/poll hardening, and real smoke tests are not implemented yet.
 
 ## Workspace Boundaries
 
@@ -150,8 +151,8 @@ These items are intentionally deferred or unsafe for the current MVP:
 - `codex exec` is not the normal MVP runner contract
 - silent duplicate golden-ticket resolution must not be used
 - destructive cleanup of dirty or unproven worktrees must not be used
-- real Fizzy smoke tests and real Codex app-server smoke tests come after the fake-Fizzy/fake-runner
-  scaffold is complete
+- real Fizzy smoke tests and model-consuming real Codex smoke tests come after the process/protocol
+  seams are covered by unit tests
 
 ## Suggested Next Card Ordering
 
@@ -161,7 +162,7 @@ order:
 1. Finish config, setup, and startup validation gaps.
 2. Extend deterministic workspace and claim foundations.
 3. Build polling, routing precedence, and loop-prevention reconciliation.
-4. Add the SDK-shaped Codex app-server runner and supervisor.
+4. Add the full supervisor around the SDK-shaped Codex app-server runner.
 5. Implement completion policies, proof recording, workpad updates, cleanup guards, and status
    endpoints.
 6. Add real Fizzy and real Codex smoke tests only after fake integrations cover the MVP safety

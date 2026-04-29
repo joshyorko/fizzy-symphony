@@ -5,14 +5,15 @@ Fizzy-backed Symphony daemon scaffold.
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 75/75 passing via `npm test`.
+current local baseline is 157/157 passing via `npm test`.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
 startup validation, route decisions, claim markers, workspace metadata, workflow loading/rendering,
-status snapshots, and an injected fake-Fizzy/fake-runner reconciliation slice.
+status snapshots, an injected fake-Fizzy/fake-runner reconciliation slice, and a real Codex CLI
+app-server runner behind the SDK-shaped runner interface.
 
-Live Fizzy and Codex integrations are still injected test seams. Real Fizzy HTTP, real Codex
-app-server execution, full completion handling, and hardening/smoke tests are later MVP layers.
+Live Fizzy HTTP, full completion handling, and hardening/smoke tests are later MVP layers. The
+Codex CLI app-server runner keeps process/protocol seams injectable for tests.
 
 ## Commands
 
