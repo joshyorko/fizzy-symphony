@@ -175,6 +175,7 @@ function errorCodes(report) {
 test("normalizeTag trims, removes leading hash, and compares case-insensitively", () => {
   assert.equal(normalizeTag(" #Agent-Instructions "), "agent-instructions");
   assert.equal(normalizeTag({ name: "#MOVE-To-Done" }), "move-to-done");
+  assert.equal(normalizeTag({ title: "#Backend-Codex" }), "backend-codex");
 });
 
 test("validateStartup resolves IDs for managed tags used by golden-ticket routes", async () => {
