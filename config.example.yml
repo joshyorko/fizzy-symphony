@@ -222,7 +222,7 @@ runner:
   cancel_timeout_ms: 10000
 
   # Required: no. Default: 10000 ms.
-  # Maximum time to wait for thread unsubscribe/archive during session stop.
+  # Maximum time to wait for thread unsubscribe during session stop.
   stop_session_timeout_ms: 10000
 
   # Required: no. Default: 5000 ms.

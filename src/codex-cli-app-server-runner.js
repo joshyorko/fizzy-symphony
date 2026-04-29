@@ -13,7 +13,7 @@ const execFile = promisify(nodeExecFile);
 const IMPLEMENTATION = "CodexCliAppServerRunner";
 const KIND = "cli_app_server";
 const PROTOCOL_VERSION = "0.125.0";
-const PROTOCOL_METHODS = ["initialize", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe", "thread/archive"];
+const PROTOCOL_METHODS = ["initialize", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe"];
 const REQUEST_METHODS_REQUIRING_OPERATOR = new Set([
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
@@ -333,9 +333,6 @@ export function createCodexCliAppServerRunner(options = {}) {
 
       try {
         await context.transport.request("thread/unsubscribe", { threadId: session.thread_id }, {
-          timeoutMs: timeoutValue(context.runnerConfig, "stopSessionTimeoutMs")
-        });
-        await context.transport.request("thread/archive", { threadId: session.thread_id }, {
           timeoutMs: timeoutValue(context.runnerConfig, "stopSessionTimeoutMs")
         });
         await context.transport.close?.();
@@ -678,7 +675,7 @@ function threadStartParams({ path, policies, metadata, runnerConfig }) {
     config: {},
     serviceName: "fizzy-symphony",
     ephemeral: false,
-    sessionStartSource: { custom: "fizzy-symphony" },
+    sessionStartSource: "clear",
     experimentalRawEvents: false,
     persistExtendedHistory: true
   });
