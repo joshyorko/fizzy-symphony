@@ -59,8 +59,8 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 
 ### Runner health checks
 - Status: passing
-- Tests: `test/runner-contract.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
-- Coverage: detect/validate/health success, app-server startup failure, input-required failure in unattended mode, timeout/stall cancellation, cancellation, metadata extraction, same-thread continuation, and runner failure release/status behavior.
+- Tests: `test/runner-contract.test.js`, `test/codex-app-server-transport.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/validation.test.js`, `test/reconciler.test.js`, `test/orchestrator-state.test.js`
+- Coverage: fake-runner seam preservation, Codex app-server argv/cwd launch without shell eval, JSONL request/response matching, initialize handshake, detect/validate/health success, malformed protocol/stderr/exit handling, input-required failure in unattended mode, timeout/stall cancellation, cancellation, metadata extraction, same-thread continuation, owned-process termination, and runner failure release/status behavior.
 
 ### Status snapshot
 - Status: newly covered
