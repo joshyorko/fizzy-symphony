@@ -1,5 +1,6 @@
 import { createFizzyClient as createOfficialFizzyClient } from "@37signals/fizzy";
 
+import { FizzySymphonyError } from "./errors.js";
 import {
   FizzyApiError,
   accountPathSegment,
