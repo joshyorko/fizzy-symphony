@@ -10,6 +10,7 @@ import {
   normalizeTagTitle,
   omitKeys,
   omitUndefined,
+  resultCommentBody,
   webhookNeedsUpdate,
   webhookUrl
 } from "./fizzy-http-client.js";
@@ -91,6 +92,16 @@ export function createSdkBackedFizzyClient(options = {}) {
   async function listCards(input = {}) {
     const query = input.query ?? omitKeys(input, ["account"]);
     return plainList(await callSdk(() => accountClient(input.account).cards.list(cardListOptionsFromQuery(query))));
+  }
+
+  async function discoverCandidates({ query = {}, config: candidateConfig = config } = {}) {
+    const candidates = await listCards({ query });
+    return {
+      data: candidates,
+      candidates,
+      etag_cache: legacy.etagStats?.(),
+      config: candidateConfig
+    };
   }
 
   async function listGoldenCards(input = {}) {
@@ -281,14 +292,14 @@ export function createSdkBackedFizzyClient(options = {}) {
     return current;
   }
 
-  async function getAccountSettings() {
-    return callSdk(() => rootClient().miscellaneous.accountSettings());
+  async function getAccountSettings(account) {
+    return callSdk(() => accountClient(account).miscellaneous.accountSettings());
   }
 
   async function getEntropy(account, boardIds = []) {
     const warnings = [];
     try {
-      const settings = await getAccountSettings();
+      const settings = await getAccountSettings(account);
       if (Number(settings?.auto_postpone_period_in_days) > 0) {
         warnings.push({
           code: "ENTROPY_AUTO_POSTPONE",
@@ -405,6 +416,23 @@ export function createSdkBackedFizzyClient(options = {}) {
     return callSdk(() => accountClient(input.account).cards.unwatch(cardNumberFrom(input)));
   }
 
+  async function postResultComment(input = {}) {
+    return createComment({
+      ...input,
+      body: input.body ?? resultCommentBody(input)
+    });
+  }
+
+  async function recordCompletionMarker(input = {}) {
+    const comment = await createComment(input);
+    if (input.tag) await toggleTag({ ...input, tag: input.tag });
+    return { ...(comment ?? {}), tag: input.tag, body: input.body, payload: input.payload };
+  }
+
+  async function recordCompletionFailureMarker(input = {}) {
+    return recordCompletionMarker(input);
+  }
+
   return {
     ...legacy,
     getIdentity,
@@ -413,6 +441,7 @@ export function createSdkBackedFizzyClient(options = {}) {
     listColumns,
     readColumn,
     listCards,
+    discoverCandidates,
     listGoldenCards,
     getCard,
     refreshCard,
@@ -424,6 +453,7 @@ export function createSdkBackedFizzyClient(options = {}) {
     createCardComment: createComment,
     postStructuredComment: createComment,
     postWorkpadComment: createComment,
+    postResultComment,
     updateComment,
     updateWorkpadComment: updateComment,
     deleteComment,
@@ -462,6 +492,8 @@ export function createSdkBackedFizzyClient(options = {}) {
     markGolden: markCardGolden,
     unmarkCardGolden,
     unmarkGoldenCard: unmarkCardGolden,
+    recordCompletionMarker,
+    recordCompletionFailureMarker,
     assignCard,
     assignToCard: assignCard,
     addAssignee: assignCard,
@@ -481,6 +513,7 @@ function normalizeSdkError(error) {
     code: error?.code,
     hint: error?.hint,
     retryable: error?.retryable,
+    retry_after: error?.retryAfter,
     request_id: error?.requestId
   }));
 }

@@ -1188,7 +1188,7 @@ function isWebhookFresh(timestamp, { now = new Date(), toleranceSeconds = 300 } 
   return Math.abs(nowTime - eventTime) <= toleranceSeconds * 1000;
 }
 
-function resultCommentBody({ result = {}, proof } = {}) {
+export function resultCommentBody({ result = {}, proof } = {}) {
   const body = result.output_html ?? result.body ?? result.output ?? result.output_summary ?? result.summary;
   if (body) return String(body);
   if (proof?.file) return `<p>Agent run completed. Proof: <code>${escapeHtml(proof.file)}</code></p>`;
