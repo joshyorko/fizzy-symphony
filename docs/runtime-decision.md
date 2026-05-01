@@ -67,11 +67,12 @@ App Server JSON-RPC rather than a native SDK.
 
 ### TypeScript / Node.js
 
-Best if the priority is fastest reuse and current SDK convenience: implementation reuse, npm packaging,
+Best if the priority is fastest reuse and current SDK convenience: npm packaging,
 HTTP/webhook ergonomics, and the currently available Codex TypeScript SDK.
 
 Tradeoff: long-running supervision, stale process cleanup, locks, and child-process safety require
-explicit discipline. TypeScript SHOULD win only if implementation reuse or SDK convenience is decisive.
+explicit discipline. TypeScript SHOULD win only if implementation reuse or SDK convenience is
+decisive.
 
 Decision note: TypeScript-shaped Node.js won here because reuse from the prior worktree is decisive
 for this implementation pass. The MVP still defaults to the Codex CLI app-server fallback unless an

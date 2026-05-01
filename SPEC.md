@@ -4,21 +4,20 @@
 
 Status: Draft v0.2.
 
-This document is a product and implementation specification for a fresh `fizzy-symphony`
-orchestrator. It is not an implementation plan for modifying `fizzy-popper`, and it MUST NOT be
-read as code.
+This document is a product and implementation specification for the `fizzy-symphony` orchestrator.
+It is not an implementation plan for modifying another project, and it MUST NOT be read as code.
 
 The key words `MUST`, `MUST NOT`, `REQUIRED`, `SHOULD`, `SHOULD NOT`, `RECOMMENDED`, `MAY`, and
 `OPTIONAL` in this document are to be interpreted as described in RFC 2119.
 
-Research inputs:
+Reference inputs:
 
 - OpenAI Symphony sources establish the long-running service, tracker-driven reconciliation,
   per-ticket workspace, `WORKFLOW.md`, Codex app-server, bounded concurrency, and observability
   pattern.
-- Fizzy Popper is an inspiration point for the Fizzy board control plane, webhook and polling ingestion,
-  golden tickets, column-aware routing, backend tags, completion tags, setup bootstrap, and current
-  workspace behavior.
+- Fizzy Popper is an inspiration point for board-native agent workflow: Fizzy boards, webhook and
+  polling ingestion, golden tickets, column-aware routing, backend tags, completion tags, and setup
+  bootstrap.
 - The pain points in this brief define the required corrections for a new design.
 
 Implementation runtime:
@@ -51,8 +50,8 @@ The product identity is **Fizzy-backed Symphony**:
 - OpenAI Symphony supplies the implementation pattern: tracker-driven reconciliation, isolated
   workspaces, repository-owned workflow policy, Codex app-server execution, bounded concurrency,
   restart handling, and observability.
-- Fizzy supplies the product surface: Fizzy boards, columns, cards, tags, comments, webhooks,
-  polling, golden-ticket routing, and board-native setup.
+- Fizzy supplies the product surface: boards, columns, cards, tags, comments, webhooks, polling,
+  golden-ticket routing, and board-native setup.
 
 The service MUST NOT collapse these responsibilities into a simple board-triggered backend runner.
 Golden tickets decide which route applies to a card; they do not replace repository policy,
@@ -97,9 +96,9 @@ Key design sentence:
 
 ## What we are no longer leaving on the table
 
-This specification intentionally compares the current Fizzy API, earlier board-agent behavior, and OpenAI
-Symphony's service model before defining `fizzy-symphony`. The implementation MUST use this section
-as a guardrail when cutting MVP scope.
+This specification intentionally compares the current Fizzy API, earlier board-agent behavior, and
+OpenAI Symphony's service model before defining `fizzy-symphony`. The implementation MUST use this
+section as a guardrail when cutting MVP scope.
 
 Fizzy API capabilities adopted by this design:
 
@@ -161,8 +160,8 @@ OpenAI Symphony concepts intentionally deferred or narrowed:
 
 ## 3. Problem statement
 
-Earlier Fizzy board-agent prototypes demonstrated that a Fizzy board can dispatch agents, but the next design MUST remove
-operational ambiguity before implementation.
+Earlier Fizzy board-agent prototypes demonstrated that a Fizzy board can dispatch agents, but this
+design MUST remove operational ambiguity before implementation.
 
 The major problems to eliminate are:
 
@@ -199,7 +198,7 @@ The major problems to eliminate are:
 
 `fizzy-symphony` MUST NOT attempt to be:
 
-- A rewrite of an existing board-agent runner with a different runner.
+- A rewrite of an existing board-agent runner with a different backend.
 - A general-purpose workflow engine.
 - A hosted multi-tenant control plane.
 - A replacement for Fizzy board semantics.
@@ -208,7 +207,7 @@ The major problems to eliminate are:
   behavior, merge policy, or cleanup rules.
 - A tool that hides all Codex authentication, model entitlement, billing, or local runtime setup.
 - A tool that mutates the host operating system during setup.
-- A migration path that preserves shared-directory execution model.
+- A migration path that preserves shared-directory execution.
 - A pluggable arbitrary-backend dispatcher for the MVP. Codex is the required runner, and every
   Codex path MUST use the same SDK-shaped runner abstraction.
 - A dashboard-first product. Status surfaces are required, but card execution correctness is the
@@ -622,7 +621,7 @@ chooses a higher value after seeing the isolation policy.
 ## 12. Golden-ticket model
 
 A dispatch-valid golden ticket is a Fizzy card with native `golden: true` status and an
-`#agent-instructions` tag. legacy tag-only instruction cards are not dispatch-valid in the
+`#agent-instructions` tag. Legacy tag-only instruction cards are not dispatch-valid in the
 MVP.
 
 Human-facing docs MAY include a leading `#`, but Fizzy API tag values are normalized without the
@@ -719,7 +718,7 @@ The implementation MUST support these MVP golden-ticket tags:
 - `no-repeat`
 
 The backend field has exactly one MVP canonical value: `codex`. Any non-Codex backend tag, including
-tags inherited from legacy multi-backend setups, MUST fail validation rather than dispatch to a
+tags inherited from multi-backend setups, MUST fail validation rather than dispatch to a
 generic command runner.
 
 Completion tags map as follows:

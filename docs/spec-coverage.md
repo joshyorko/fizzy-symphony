@@ -32,7 +32,7 @@ Status values are intentionally limited to `passing`, `newly covered`, or `defer
 - Status: newly covered
 - Tests: `test/etag-cache.test.js`, `test/fizzy-client.test.js`, `test/setup.test.js`, `test/polling.test.js`
 - Coverage: API-filtered golden and candidate discovery, default board/column filters when configured lists are empty, ETag `304 Not Modified` handling, ETag cache invalidation, live account-scoped Fizzy JSON transport, live account slug normalization, live tag `title` normalization, nested live board/column card shape, card-number resource routes, user/tag listing, assignment/watch visibility, workpad comment update paths, daemon-managed step updates, webhook create/update/reactivate/deliveries, safe API error metadata, and raw-body webhook HMAC verification.
-- Live proof: gated disposable-board smoke passed on 2026-04-29 against board `<private-board-id>`, proving identity, board/card/golden creation and reads, startup validation with one route, one daemon poll, unsafe-route refusal, and no destructive cleanup.
+- Live proof: gated disposable-board smoke passed on 2026-04-29 against a private operator-provided board, proving identity, board/card/golden creation and reads, startup validation with one route, one daemon poll, unsafe-route refusal, and no destructive cleanup.
 - Remaining: live webhook delivery against a disposable public callback is not smoked.
 - Follow-up: `fizzy-symphony: live webhook delivery smoke with disposable board`.
 

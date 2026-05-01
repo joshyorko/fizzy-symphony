@@ -22,18 +22,17 @@ Fizzy API calls now go through an SDK-backed adapter boundary: the daemon-facing
 under `src/fizzy-sdk-adapter.js`. See [docs/fizzy-sdk-adapter.md](docs/fizzy-sdk-adapter.md) for the
 adapter boundary and migration matrix.
 
-Disposable-board live smoke passed on 2026-04-29 against the self-hosted Fizzy instance using board
-`<private-board-id>`. It proved identity, board/card/golden-ticket creation, startup
-validation, one real daemon poll, unsafe-route refusal, and no destructive cleanup. Live webhook
-delivery is still not smoked. Same-thread continuation above `agent.max_turns: 1` is intentionally
-rejected by config validation until it is implemented.
+Disposable-board live smoke passed on 2026-04-29 against a private operator-provided Fizzy instance.
+It proved identity, board/card/golden-ticket creation, startup validation, one real daemon poll,
+unsafe-route refusal, and no destructive cleanup. Live webhook delivery is still not smoked.
+Same-thread continuation above `agent.max_turns: 1` is intentionally rejected by config validation
+until it is implemented.
 
 ## Commands
 
-Run these from the `fizzy-symphony` workspace, not from the sibling `fizzy-popper` checkout:
+Run these from the repository root:
 
 ```sh
-cd <fizzy-symphony checkout>
 npm test
 node bin/fizzy-symphony.js setup --template-only --config .fizzy-symphony/config.yml
 node bin/fizzy-symphony.js validate --parse-only --config .fizzy-symphony/config.yml
@@ -44,3 +43,7 @@ node bin/fizzy-symphony.js daemon
 Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,
 validate, status, and daemon commands default to `.fizzy-symphony/config.yml`.
 
+## Influences
+
+`fizzy-symphony` is its own daemon and spec. It is inspired by OpenAI Symphony's reconciliation
+model and by the board-native workflow ideas explored in `fizzy-popper`.

@@ -8,7 +8,7 @@ Allowed Severity values: `P0 fix now`, `P1 document/schedule`, `P2 defer`.
 
 | SPEC area | Requirement | Code path | Test path | Status | Severity | Action |
 | --- | --- | --- | --- | --- | --- | --- |
-| Public daemon production wiring | CLI daemon path loads config, validates startup, binds status/webhook server, and uses real Fizzy, runner, claims, workspace, router, and recovery factories outside explicit diagnostics. | `bin/fizzy-symphony.js`, `src/daemon.js`, `src/fizzy-client.js`, `src/codex-cli-app-server-runner.js`, `src/claims.js`, `src/workspace.js`, `src/server.js` | `test/daemon.test.js`, `test/fizzy-client.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/server.test.js`, gated live smoke 2026-04-29 | implemented and verified | P2 defer | Live smoke started the daemon with a real Fizzy client against board `<private-board-id>`, validated startup with one route, polled once, and refused an unsafe route without dispatch. |
+| Public daemon production wiring | CLI daemon path loads config, validates startup, binds status/webhook server, and uses real Fizzy, runner, claims, workspace, router, and recovery factories outside explicit diagnostics. | `bin/fizzy-symphony.js`, `src/daemon.js`, `src/fizzy-client.js`, `src/codex-cli-app-server-runner.js`, `src/claims.js`, `src/workspace.js`, `src/server.js` | `test/daemon.test.js`, `test/fizzy-client.test.js`, `test/codex-cli-app-server-runner.test.js`, `test/server.test.js`, gated live smoke 2026-04-29 | implemented and verified | P2 defer | Live smoke started the daemon with a real Fizzy client against a private operator-provided board, validated startup with one route, polled once, and refused an unsafe route without dispatch. |
 | Explicit diagnostics mode | Dry-run/no-dispatch mode may use no-op/fake dependencies only when explicit and visible. | `src/daemon.js`, `src/status.js` | `test/daemon.test.js` | implemented and verified | P1 document/schedule | Keep readiness blocker; consider adding dependency mode to startup JSON in a follow-up. |
 | Setup production wiring | Public setup should use real Fizzy access and runner detection outside template-only or injected test paths. | `src/setup.js`, `bin/fizzy-symphony.js` | `test/setup.test.js`, live identity shape from 2026-04-29 smoke | implemented but not wired in production | P1 document/schedule | Account slug selection is fixed for live identity responses; schedule CLI factory wiring so non-template setup can run without injected clients. |
 | Golden-ticket discovery and route validation | Native golden `agent-instructions` cards define exactly one column route with explicit completion policy and stable fingerprint. | `src/validation.js`, `src/polling.js`, `src/domain.js` | `test/validation.test.js`, `test/polling.test.js`, `test/domain.test.js` | implemented and verified | P2 defer | Live nested `board`/`column` card shape is covered; conflicting completion tags remain a deliberate startup rejection. |
@@ -32,8 +32,8 @@ Allowed Severity values: `P0 fix now`, `P1 document/schedule`, `P2 defer`.
 | Legacy webhook/status helper | Duplicate older handler should not drift from production `src/server.js` semantics. | `src/listener.js`, `src/server.js` | `test/listener.test.js`, `test/server.test.js` | test-only or fake-path only | P1 document/schedule | Schedule consolidation or delegation to one handler API. |
 | Periodic runner health | Runner health should be periodically rechecked while daemon is alive and reflected in readiness/status. | `src/validation.js`, `src/daemon.js`, `src/runner-health.js`, `src/status.js` | `test/daemon.test.js`, `test/validation.test.js`, `test/status.test.js` | implemented and verified | P2 defer | Daemon-owned periodic checks call only `runner.health`, update readiness/status, write snapshots, and stop with daemon shutdown. |
 | Status and observability | `/health`, `/ready`, `/status`, card status lookup, status snapshots, run records, cleanup state, claims, runner health, and lifecycle snapshots are exposed. | `src/server.js`, `src/status.js`, `src/status-cli.js`, `src/run-registry.js` | `test/server.test.js`, `test/status.test.js`, `test/status-cli.test.js`, `test/run-registry.test.js` | implemented and verified | P2 defer | Keep coverage. |
-| Documentation and metadata | README, spec coverage, Node engine, scripts, test count, and smoke status must match verified behavior only. | `README.md`, `docs/spec-coverage.md`, `docs/popper-handoff-runbook.md`, `docs/runtime-decision.md`, `package.json` | `test/spec-coverage.test.js`, `npm test` | implemented and verified | P2 defer | Docs reflect Node v25.9.0, 258/258 local tests, verified cleanup/normalization/renewal/session/workflow-cache/capacity behavior, and live smoke status. |
-| Live disposable-board smoke | Real Fizzy identity, disposable board/card/golden-ticket validation, poll-once behavior, unsafe-route refusal, and non-destructive behavior require gated credentials. | `src/fizzy-client.js`, `src/setup.js`, `src/reconciler.js`, `src/validation.js` | gated live smoke 2026-04-29 on board `<private-board-id>` | implemented and verified | P2 defer | Passed against `<private Fizzy API URL>`: identity resolved account slug `1`, board/card/golden resources were created and read, startup validation found one route, daemon poll discovered two candidates and dispatched zero, and cleanup was not run. |
+| Documentation and metadata | README, spec coverage, Node engine, scripts, test count, and smoke status must match verified behavior only. | `README.md`, `docs/spec-coverage.md`, `docs/runtime-decision.md`, `package.json` | `test/spec-coverage.test.js`, `npm test` | implemented and verified | P2 defer | Docs reflect Node v25.9.0, 258/258 local tests, verified cleanup/normalization/renewal/session/workflow-cache/capacity behavior, and live smoke status. |
+| Live disposable-board smoke | Real Fizzy identity, disposable board/card/golden-ticket validation, poll-once behavior, unsafe-route refusal, and non-destructive behavior require gated credentials. | `src/fizzy-client.js`, `src/setup.js`, `src/reconciler.js`, `src/validation.js` | gated live smoke 2026-04-29 on a private disposable board | implemented and verified | P2 defer | Passed against an operator-provided Fizzy API URL: identity resolved an account slug, board/card/golden resources were created and read, startup validation found one route, daemon poll discovered two candidates and dispatched zero, and cleanup was not run. |
 
 ## Live Smoke Recipe
 
@@ -41,7 +41,7 @@ Run on 2026-04-29 with explicit operator-provided disposable-board credentials. 
 
 ```sh
 export FIZZY_API_TOKEN=...
-export FIZZY_API_URL=<private Fizzy API URL>
+export FIZZY_API_URL=https://example.fizzy.local
 export FIZZY_SYMPHONY_LIVE_SMOKE=1
 # Smoke script created board/card/golden resources, wrote a temporary JSON config under /tmp,
 # ran validateStartup, started the daemon, executed daemon.scheduler.tickNow("live-smoke"),
@@ -50,9 +50,9 @@ export FIZZY_SYMPHONY_LIVE_SMOKE=1
 
 Live smoke result:
 
-- Board left up for human validation: `<private Fizzy board URL>`
+- Board left up for human validation in the private operator instance.
 - Golden ticket: card `#311`, `Repo Agent`, tags `agent-instructions`, `codex`, `move-to-done`.
 - Unsafe refusal card: card `#312`, `Unsafe route refusal smoke`, tag `backend-other`.
 - Daemon poll result: discovered `2`, ignored `2`, dispatched `0`, completed `0`, failed `0`.
 - Cleanup result: no destructive cleanup was run; board remains available.
-- Earlier route-probe board also remains available: `<private Fizzy board URL>`.
+- Earlier route-probe board also remains available in the private operator instance.
