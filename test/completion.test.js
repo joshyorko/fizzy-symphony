@@ -130,6 +130,37 @@ test("completion-failure markers parse with proof fields and canonical JSON", ()
   assert.equal(parsed.proof_digest, "sha256:proof");
 });
 
+test("completion markers parse when live Fizzy plain text strips HTML sentinels", () => {
+  const completion = createCompletionMarker({
+    run: run(),
+    route: route(),
+    instance: { id: "instance_1" },
+    workspace: workspace(),
+    card: card(),
+    proof: { file: "/state/proof/run_1.json", digest: "sha256:proof" },
+    resultComment: { id: "comment_1" },
+    completedAt: "2026-04-29T12:03:00.000Z"
+  });
+  const failure = createCompletionFailureMarker({
+    run: run(),
+    route: route(),
+    instance: { id: "instance_1" },
+    workspace: workspace(),
+    card: card(),
+    reason: "required steps remain unchecked",
+    createdAt: "2026-04-29T12:04:00.000Z"
+  });
+
+  assert.equal(
+    parseCompletionMarker(completion.body.replace("<!-- fizzy-symphony-marker -->\n", "")).run_id,
+    "run_1"
+  );
+  assert.equal(
+    parseCompletionFailureMarker(failure.body.replace("<!-- fizzy-symphony-marker -->\n", "")).run_id,
+    "run_1"
+  );
+});
+
 test("writeDurableProof stores proof under observability.state_dir/proof outside the workspace cleanup target", async () => {
   const root = await mkdtemp(join(tmpdir(), "fizzy-symphony-proof-"));
   const stateDir = join(root, "state");

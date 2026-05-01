@@ -89,7 +89,7 @@ export function createReleaseMarker({ claim = {}, status = "released", now = new
 
 export function parseClaimMarker(body) {
   const match = String(body).match(
-    /<!-- fizzy-symphony-marker -->\s*fizzy-symphony:claim:v1\s*```json\s*([\s\S]*?)\s*```/u
+    /(?:<!--\s*fizzy-symphony-marker\s*-->\s*)?fizzy-symphony:claim:v1\s*```json\s*([\s\S]*?)\s*```/u
   );
   if (!match) {
     throw new FizzySymphonyError("MALFORMED_CLAIM_MARKER", "Claim marker Markdown block was not found.");

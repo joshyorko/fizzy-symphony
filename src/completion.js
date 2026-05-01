@@ -588,7 +588,7 @@ function markerBody(marker, payload) {
 function parseMarker(body, marker, code) {
   const escaped = marker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const match = String(body).match(
-    new RegExp(`<!--\\s*fizzy-symphony-marker\\s*-->\\s*${escaped}\\s*\`\`\`json\\s*([\\s\\S]*?)\\s*\`\`\``, "u")
+    new RegExp(`(?:<!--\\s*fizzy-symphony-marker\\s*-->\\s*)?${escaped}\\s*\`\`\`json\\s*([\\s\\S]*?)\\s*\`\`\``, "u")
   );
   if (!match) {
     throw new FizzySymphonyError(code, "Completion marker Markdown block was not found.");

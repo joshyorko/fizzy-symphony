@@ -728,7 +728,6 @@ function sandboxPolicy(runnerConfig, path) {
   return {
     type: "workspaceWrite",
     writableRoots: [path],
-    readOnlyAccess: { type: "restricted", includePlatformDefaults: true, readableRoots: [] },
     networkAccess: false,
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false

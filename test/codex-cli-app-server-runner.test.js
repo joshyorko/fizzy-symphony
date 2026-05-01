@@ -122,8 +122,13 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   assert.equal(transport.requests[2].method, "turn/start");
   assert.deepEqual(transport.requests[2].params.input, [{ type: "text", text: "Implement the card.", text_elements: [] }]);
   assert.equal(transport.requests[2].params.cwd, "/tmp/card-workspace");
-  assert.equal(transport.requests[2].params.sandboxPolicy.type, "workspaceWrite");
-  assert.deepEqual(transport.requests[2].params.sandboxPolicy.writableRoots, ["/tmp/card-workspace"]);
+  assert.deepEqual(transport.requests[2].params.sandboxPolicy, {
+    type: "workspaceWrite",
+    writableRoots: ["/tmp/card-workspace"],
+    networkAccess: false,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false
+  });
 });
 
 test("Codex CLI app-server runner streams normalized activity and final turn result", async () => {
