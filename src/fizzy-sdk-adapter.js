@@ -541,7 +541,7 @@ function cardNumberFrom(card) {
     : card;
 
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && /^\d+$/u.test(value.trim())) return Number.parseInt(value, 10);
+  if (typeof value === "string" && /^\d+$/u.test(value.trim())) return value.trim();
 
   throw new FizzySymphonyError("FIZZY_CARD_NUMBER_REQUIRED", "Fizzy card number is required for this API route.");
 }
