@@ -169,6 +169,12 @@ function createSdkFixture() {
           return { id: userId, name: "Human" };
         }
       },
+      miscellaneous: {
+        async accountSettings() {
+          calls.push(["misc.accountSettings", baseUrl]);
+          return { auto_postpone_period_in_days: 0 };
+        }
+      },
       webhooks: {
         async list(boardId) {
           calls.push(["webhooks.list", baseUrl, boardId]);
@@ -293,4 +299,112 @@ test("createCliFizzyClient keeps the CLI path on the SDK-backed adapter when no 
 
   assert.equal(identity.user.id, "user_1");
   assert.deepEqual(sdk.calls, [["identity.me", "https://app.fizzy.test/api"]]);
+});
+
+test("SDK adapter reads entropy account settings through the account-scoped SDK client", async () => {
+  const sdk = createSdkFixture();
+  const client = createFizzyClient({
+    config: configFixture(),
+    sdkFactory: sdk.sdkFactory
+  });
+
+  const entropy = await client.getEntropy("acct", []);
+
+  assert.deepEqual(entropy, { warnings: [] });
+  assert.deepEqual(sdk.calls, [["misc.accountSettings", "https://app.fizzy.test/api/acct"]]);
+});
+
+test("SDK adapter discovers candidates through SDK-backed card listing", async () => {
+  const sdk = createSdkFixture();
+  const config = configFixture();
+  const client = createFizzyClient({
+    config,
+    sdkFactory: sdk.sdkFactory
+  });
+
+  const result = await client.discoverCandidates({
+    config,
+    query: {
+      board_ids: ["board_1"],
+      column_ids: ["col_ready"]
+    }
+  });
+
+  assert.deepEqual(result.candidates, [{ id: "card_uuid", number: 42, title: "Agent card", board_id: "board_1" }]);
+  assert.deepEqual(result.data, result.candidates);
+  assert.equal(result.config, config);
+  assert.deepEqual(
+    sdk.calls.find((call) => call[0] === "cards.list"),
+    ["cards.list", "https://app.fizzy.test/api/acct", {
+      boardIds: ["board_1"],
+      columnIds: ["col_ready"]
+    }]
+  );
+});
+
+test("SDK adapter completion helpers stay on SDK-backed comments and tags", async () => {
+  const sdk = createSdkFixture();
+  const client = createFizzyClient({
+    config: configFixture(),
+    sdkFactory: sdk.sdkFactory
+  });
+
+  const resultComment = await client.postResultComment({
+    card: { number: 42 },
+    result: { summary: "run complete" }
+  });
+  const marker = await client.recordCompletionMarker({
+    card: { number: 42 },
+    body: "marker body",
+    tag: "agent-rerun",
+    payload: { outcome: "ok" }
+  });
+
+  assert.deepEqual(resultComment, { id: "comment_1", body: "run complete" });
+  assert.deepEqual(marker, {
+    id: "comment_1",
+    body: "marker body",
+    tag: "agent-rerun",
+    payload: { outcome: "ok" }
+  });
+  assert.deepEqual(
+    sdk.calls.filter((call) => call[0] === "comments.create" || call[0] === "cards.tag"),
+    [
+      ["comments.create", "https://app.fizzy.test/api/acct", 42, { body: "run complete" }],
+      ["comments.create", "https://app.fizzy.test/api/acct", 42, { body: "marker body" }],
+      ["cards.tag", "https://app.fizzy.test/api/acct", 42, { tagTitle: "agent-rerun" }]
+    ]
+  );
+});
+
+test("SDK adapter preserves retry-after metadata from SDK errors", async () => {
+  const client = createFizzyClient({
+    config: configFixture(),
+    sdkFactory() {
+      return {
+        identity: {
+          async me() {
+            const error = new Error("Rate limited");
+            error.httpStatus = 429;
+            error.code = "rate_limit";
+            error.retryable = true;
+            error.retryAfter = 15;
+            error.requestId = "request_1";
+            throw error;
+          }
+        }
+      };
+    }
+  });
+
+  await assert.rejects(
+    () => client.getIdentity(),
+    (error) => {
+      assert.equal(error.name, "FizzyApiError");
+      assert.equal(error.status, 429);
+      assert.equal(error.metadata.retry_after, 15);
+      assert.equal(error.metadata.request_id, "request_1");
+      return true;
+    }
+  );
 });

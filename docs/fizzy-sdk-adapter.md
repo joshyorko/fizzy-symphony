@@ -29,7 +29,7 @@ This keeps the daemon, scheduler, router, validation, setup flow, and tests isol
 | `listUsers`, `getUser` | SDK-backed | `users.list/get()` |
 | `listWebhooks`, `getWebhook`, `createWebhook`, `updateWebhook`, `reactivateWebhook`, `listWebhookDeliveries` | SDK-backed | `webhooks.list/get/create/update/activate/listWebhookDeliveries()` |
 | `ensureWebhook` | SDK-backed wrapper | adapter-level orchestration around SDK webhook list/update/create/activate calls |
-| `getAccountSettings` | SDK-backed | `client.miscellaneous.accountSettings()` |
+| `getAccountSettings` | SDK-backed | account-scoped `miscellaneous.accountSettings()` |
 | `getEntropy` | SDK-backed wrapper | preserves existing warning contract while using SDK-backed account/board reads |
 | `createBoard`, `createColumn`, `createCard` | SDK-backed | `boards.create()`, `columns.create()`, `cards.create()` |
 | `closeCard`, `reopenCard` | SDK-backed | `cards.close()` / `cards.reopen()` |
@@ -39,8 +39,8 @@ This keeps the daemon, scheduler, router, validation, setup flow, and tests isol
 | `assignCard`, `assignToCard`, `addAssignee` | SDK-backed | `cards.assign()` |
 | `watchCard`, `addWatcher`, `unwatchCard` | SDK-backed | `cards.watch()` / `cards.unwatch()` |
 | `readIdentity`, `readBoards`, `readBoard`, `readColumns`, `readColumn`, `readCards`, `readGoldenCards`, `readCard`, `readComments`, `readTags`, `readUsers`, `readWebhooks` | Custom compatibility | preserved on the handwritten client because callers rely on the legacy response envelope and persisted ETag behavior |
-| `discoverCandidates` | Custom compatibility | preserves existing polling/ETag stats contract |
-| `postResultComment`, `recordCompletionMarker`, `recordCompletionFailureMarker` | Custom orchestration | Symphony-specific orchestration helpers built on top of comment/tag operations |
+| `discoverCandidates` | SDK-backed wrapper | preserves existing candidate result shape while calling SDK-backed `listCards()` |
+| `postResultComment`, `recordCompletionMarker`, `recordCompletionFailureMarker` | SDK-backed orchestration | Symphony-specific helpers built on top of SDK-backed comment/tag operations |
 
 ## Runtime behavior
 
