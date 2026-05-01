@@ -29,7 +29,7 @@ export function resolveFizzyClientConfig(options = {}) {
     defaultApiUrl = DEFAULT_FIZZY_API_URL
   } = options;
   const fizzy = config.fizzy ?? {};
-  const token = firstNonEmpty(fizzy.token, env.FIZZY_API_TOKEN);
+  const token = firstNonEmpty(fizzy.token, env.FIZZY_API_TOKEN, env.FIZZY_TOKEN, env.FIZYY_TOKEN);
   const apiUrl = firstNonEmpty(fizzy.api_url, env.FIZZY_API_URL, defaultApiUrl);
 
   return {

@@ -1,11 +1,59 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
 import { writeAnnotatedConfig } from "../src/config.js";
+
+test("public init creates a starter workflow, starter board config, and human next steps", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const calls = [];
+
+  await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
+  await writeFile(join(dir, ".env"), "FIZYY_TOKEN=token-from-local-env\n", "utf8");
+
+  const result = await runCli([
+    "init",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test"
+  ], {
+    env: {},
+    clientFactories: {
+      createFizzyClient({ config }) {
+        calls.push(["createFizzyClient", config.fizzy.api_url, Boolean(config.fizzy.token)]);
+        return fakeStarterSetupFizzy();
+      },
+      createRunner({ config }) {
+        calls.push(["createRunner", config.runner?.preferred ?? "cli_app_server"]);
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /fizzy-symphony is ready/u);
+  assert.match(result.stdout, /node bin\/fizzy-symphony\.js start --config/u);
+  assert.match(result.stdout, /Create a normal Fizzy card in Ready for Agents/u);
+  assert.deepEqual(calls, [
+    ["createFizzyClient", "https://fizzy.example.test", true],
+    ["createRunner", "cli_app_server"]
+  ]);
+
+  const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
+  assert.match(workflow, /fizzy-symphony starter workflow/u);
+  assert.match(workflow, /npm test/u);
+
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /id: starter_board/u);
+  assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
+});
 
 test("public setup constructs production clients when injected clients are absent", async () => {
   const dir = await setupWorkspace("fizzy-symphony-cli-setup-factory-");
@@ -312,6 +360,65 @@ function fakeSetupFizzy() {
     },
     async getBoard(_boardId, options = {}) {
       assert.equal(options.account, "acct_1");
+      return board;
+    },
+    async getEntropy() {
+      return { warnings: [] };
+    }
+  };
+}
+
+function fakeStarterSetupFizzy() {
+  const board = {
+    id: "starter_board",
+    name: "Agent Playground: cli-init",
+    columns: [],
+    cards: []
+  };
+
+  return {
+    async getIdentity() {
+      return { accounts: [{ id: "acct_1", name: "Team Account" }], user: { id: "user_1" } };
+    },
+    async listBoards() {
+      return [];
+    },
+    async listUsers() {
+      return [{ id: "user_1", name: "Human" }];
+    },
+    async listTags() {
+      return managedTags();
+    },
+    async createBoard(request) {
+      board.name = request.name;
+      return { id: board.id, name: board.name };
+    },
+    async createColumn(request) {
+      const column = {
+        id: request.name === "Ready for Agents" ? "starter_ready" : "starter_done",
+        name: request.name
+      };
+      board.columns.push(column);
+      return column;
+    },
+    async createCard(request) {
+      const card = {
+        id: "starter_golden",
+        number: 100,
+        title: request.title,
+        golden: Boolean(request.golden),
+        column_id: request.column_id,
+        description: request.description,
+        tags: request.tags
+      };
+      board.cards.push(card);
+      return card;
+    },
+    async markGolden() {
+      board.cards[0].golden = true;
+      return { ok: true };
+    },
+    async getBoard() {
       return board;
     },
     async getEntropy() {

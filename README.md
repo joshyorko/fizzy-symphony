@@ -10,8 +10,8 @@ New here? Start with the beginner runbook: [docs/user-guide.md](docs/user-guide.
 
 ## Current Status
 
-The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 266/266 passing via `npm test` on Node v25.9.0. `package.json`
+The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-05-01, the
+current local baseline is 268/268 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
@@ -39,11 +39,11 @@ until it is implemented.
 Run these from the repository root:
 
 ```sh
+npm install
+node bin/fizzy-symphony.js init --api-url https://fizzy.joshyorko.com
+node bin/fizzy-symphony.js start
+node bin/fizzy-symphony.js status
 npm test
-node bin/fizzy-symphony.js setup --template-only --config .fizzy-symphony/config.yml
-node bin/fizzy-symphony.js validate --parse-only --config .fizzy-symphony/config.yml
-FIZZY_API_TOKEN=... node bin/fizzy-symphony.js validate --config .fizzy-symphony/config.yml
-node bin/fizzy-symphony.js daemon
 ```
 
 Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,

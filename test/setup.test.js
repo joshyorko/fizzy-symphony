@@ -104,6 +104,7 @@ function fakeFizzy(overrides = {}) {
 
 function fakeStarterFizzy() {
   const calls = [];
+  let accountTags = [];
   const board = {
     id: "starter_board",
     name: "Agent Playground: repo",
@@ -130,11 +131,7 @@ function fakeStarterFizzy() {
     },
     async listTags(account) {
       calls.push(["listTags", account]);
-      return [
-        { id: "tag_agent", name: "agent-instructions" },
-        { id: "tag_codex", name: "codex" },
-        { id: "tag_done", name: "move-to-done" }
-      ];
+      return accountTags;
     },
     async createBoard(request) {
       calls.push(["createBoard", request]);
@@ -151,17 +148,20 @@ function fakeStarterFizzy() {
       calls.push(["createCard", request]);
       const card = {
         id: "starter_golden",
+        number: 100,
         title: request.title,
         golden: Boolean(request.golden),
         column_id: request.column_id,
         tags: request.tags
       };
       board.cards.push(card);
+      accountTags = request.tags.map((tag) => ({ id: `tag_${tag}`, name: tag }));
       return card;
     },
     async markGolden(request) {
       calls.push(["markGolden", request]);
-      const card = board.cards.find((candidate) => candidate.id === request.card_id);
+      assert.equal(request.card_number, 100);
+      const card = board.cards.find((candidate) => candidate.id === request.card_id || candidate.number === request.card_number);
       if (card) card.golden = true;
       return { ok: true };
     },
@@ -282,14 +282,15 @@ test("runSetup creates a starter board with native golden route defaults and wri
   assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Ready for Agents", "Done"]);
   assert.deepEqual(result.boards[0].cards[0], {
     id: "starter_golden",
+    number: 100,
     title: "Repo Agent",
     golden: true,
     column_id: "starter_ready",
     tags: ["agent-instructions", "codex", "move-to-done"]
   });
   assert.deepEqual(
-    fizzy.calls.filter((call) => ["createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])).map((call) => call[0]),
-    ["createBoard", "createColumn", "createColumn", "createCard", "markGolden"]
+    fizzy.calls.filter((call) => ["listTags", "createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])).map((call) => call[0]),
+    ["listTags", "createBoard", "createColumn", "createColumn", "createCard", "markGolden", "listTags"]
   );
 
   const written = await readFile(configPath, "utf8");

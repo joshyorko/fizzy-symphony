@@ -8,6 +8,8 @@
     "fizzy-symphony": "./bin/fizzy-symphony.js"
   },
   "scripts": {
+    "init": "node bin/fizzy-symphony.js init",
+    "start": "node bin/fizzy-symphony.js start",
     "test": "node --test"
   },
   "engines": {

@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
@@ -46,7 +46,7 @@ export async function runSetup(options = {}) {
     "Unable to list Fizzy users for setup.",
     { account }
   );
-  const tags = await callFizzySetupStep(
+  let tags = await callFizzySetupStep(
     () => fizzy.listTags(account),
     "FIZZY_TAGS_UNAVAILABLE",
     "Unable to list Fizzy tags for setup.",
@@ -64,6 +64,12 @@ export async function runSetup(options = {}) {
     selectedBoards.push(starterBoard);
     selectedBoardIds = [starterBoard.id];
     starter = { created: true, board_id: starterBoard.id };
+    tags = await callFizzySetupStep(
+      () => fizzy.listTags(account),
+      "FIZZY_TAGS_UNAVAILABLE",
+      "Unable to list Fizzy tags after starter board creation.",
+      { account }
+    );
   } else {
     selectedBoardIds = await selectBoardIds(boards, options, prompts);
     for (const boardId of selectedBoardIds) {
@@ -85,7 +91,7 @@ export async function runSetup(options = {}) {
   });
 
   validateBotUser(options.botUserId, users);
-  await validateWorkflow(workspaceRepo);
+  await ensureWorkflow(workspaceRepo, { create: Boolean(options.createStarterWorkflow) });
   const routes = discoverGoldenTicketRoutes(selectedBoards, {
     defaults: { backend: "codex", model: "", workspace: "app", persona: "repo-agent" }
   });
@@ -238,6 +244,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     columns: ["Ready for Agents", "Done"],
     golden_ticket: {
       title: "Repo Agent",
+      description: starterGoldenDescription(),
       column: "Ready for Agents",
       golden: true,
       tags: ["agent-instructions", "codex", "move-to-done"]
@@ -266,12 +273,18 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     board_id: board.id,
     column_id: ready.id,
     title: "Repo Agent",
+    description: plan.golden_ticket.description,
     tags: ["agent-instructions", "codex", "move-to-done"],
     golden: true
   });
 
   if (fizzy.markGolden) {
-    await fizzy.markGolden({ account, board_id: board.id, card_id: golden.id });
+    await fizzy.markGolden({
+      account,
+      board_id: board.id,
+      card_id: golden.id,
+      card_number: golden.number ?? golden.card_number
+    });
   }
 
   return await fizzy.getBoard(board.id, { account });
@@ -286,14 +299,42 @@ function validateBotUser(botUserId, users) {
   }
 }
 
-async function validateWorkflow(workspaceRepo) {
+async function ensureWorkflow(workspaceRepo, options = {}) {
   try {
     await access(join(workspaceRepo, "WORKFLOW.md"));
   } catch {
+    if (options.create) {
+      await writeFile(join(workspaceRepo, "WORKFLOW.md"), starterWorkflow(), { flag: "wx" });
+      return;
+    }
     throw new FizzySymphonyError("MISSING_WORKFLOW", "Setup requires WORKFLOW.md in the selected workspace repository.", {
       repo: workspaceRepo
     });
   }
+}
+
+function starterWorkflow() {
+  return [
+    "# fizzy-symphony starter workflow",
+    "",
+    "You are working from a Fizzy card through fizzy-symphony.",
+    "",
+    "Rules:",
+    "- Keep the change focused on the card request.",
+    "- Prefer the repo's existing patterns.",
+    "- Run `npm test` before reporting success.",
+    "- Leave a short result summary on the card.",
+    "- If the request is unsafe or unclear, stop and explain the blocker.",
+    ""
+  ].join("\n");
+}
+
+function starterGoldenDescription() {
+  return [
+    "Use Codex to complete normal cards moved into this column.",
+    "",
+    "Read the card, follow the repository WORKFLOW.md, make the smallest useful change, run the checks, and report the result back on the card."
+  ].join("\n");
 }
 
 async function detectRunner(runner) {

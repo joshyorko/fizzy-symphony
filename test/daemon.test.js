@@ -25,6 +25,30 @@ test("CLI daemon defaults to the setup-generated YAML config path", async () => 
   assert.equal(error.details.path, ".fizzy-symphony/config.yml");
 });
 
+test("CLI start aliases daemon for the operator-facing command", async () => {
+  const root = await tempProject("fizzy-symphony-start-cli-");
+  const configPath = await writeConfig(root, { diagnostics: { no_dispatch: true } });
+
+  const result = await runCli(["start", "--config", configPath], {
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    daemonOptions: {
+      schedulerOptions: { immediate: false },
+      dependencies: daemonDependencies({
+        cards: [],
+        runner: fakeRunner({ status: "unavailable", reason: "diagnostic runner missing" })
+      })
+    },
+    async daemonStarted(daemon) {
+      await daemon.stop("test");
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, "start");
+  assert.equal(payload.status, "running");
+});
+
 test("CLI daemon reports startup validation blockers and cleans the owned registry file", async () => {
   const root = await tempProject("fizzy-symphony-daemon-cli-blocked-");
   const configPath = await writeConfig(root, { workflow: { fallback_enabled: false, fallback_path: "" } });
