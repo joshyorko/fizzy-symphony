@@ -1,21 +1,16 @@
 import { createFizzyClient as createOfficialFizzyClient } from "@37signals/fizzy";
 
 import { FizzySymphonyError } from "./errors.js";
-import { FizzyApiError, createLegacyFizzyClient } from "./fizzy-http-client.js";
-
-const DEFAULT_WEBHOOK_ACTIONS = [
-  "card_assigned",
-  "card_closed",
-  "card_postponed",
-  "card_auto_postponed",
-  "card_board_changed",
-  "card_published",
-  "card_reopened",
-  "card_sent_back_to_triage",
-  "card_triaged",
-  "card_unassigned",
-  "comment_created"
-];
+import {
+  FizzyApiError,
+  accountPathSegment,
+  createLegacyFizzyClient,
+  normalizeActions,
+  normalizeTagTitle,
+  omitKeys,
+  omitUndefined,
+  webhookUrl
+} from "./fizzy-http-client.js";
 
 export function createSdkBackedFizzyClient(options = {}) {
   const { config = {} } = options;
@@ -492,28 +487,8 @@ function normalizeBaseUrl(value) {
   return String(value ?? "").replace(/\/+$/u, "");
 }
 
-function accountPathSegment(account) {
-  const raw = typeof account === "object" && account !== null
-    ? account.slug ?? account.path ?? account.id ?? account.name
-    : account;
-  const value = String(raw ?? "").trim().replace(/^\/+|\/+$/gu, "");
-  return value || null;
-}
-
 function plainList(value) {
   return Array.isArray(value) ? [...value] : value;
-}
-
-function omitKeys(value = {}, keys = []) {
-  return Object.fromEntries(
-    Object.entries(value).filter(([key]) => !keys.includes(key))
-  );
-}
-
-function omitUndefined(value = {}) {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined)
-  );
 }
 
 function cardListOptionsFromQuery(query = {}) {
@@ -546,18 +521,6 @@ function cardNumberFrom(card) {
   throw new FizzySymphonyError("FIZZY_CARD_NUMBER_REQUIRED", "Fizzy card number is required for this API route.");
 }
 
-function normalizeTagTitle(value) {
-  return String(value ?? "").trim().replace(/^#+/u, "");
-}
-
-function normalizeActions(actions) {
-  const values = Array.isArray(actions) ? actions : DEFAULT_WEBHOOK_ACTIONS;
-  return Array.from(new Set(values.filter(Boolean))).sort();
-}
-
-function webhookUrl(webhook = {}) {
-  return webhook.payload_url ?? webhook.callback_url ?? webhook.url ?? "";
-}
 
 function webhookNeedsUpdate(current = {}, desired = {}) {
   if (desired.name && current.name !== desired.name) return true;

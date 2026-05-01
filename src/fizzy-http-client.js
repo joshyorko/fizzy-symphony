@@ -1156,11 +1156,11 @@ function cardNumberFrom(input) {
   );
 }
 
-function normalizeActions(actions = DEFAULT_WEBHOOK_ACTIONS) {
+export function normalizeActions(actions = DEFAULT_WEBHOOK_ACTIONS) {
   return [...new Set(actions ?? DEFAULT_WEBHOOK_ACTIONS)].sort();
 }
 
-function webhookUrl(webhook = {}) {
+export function webhookUrl(webhook = {}) {
   return webhook.payload_url ?? webhook.url ?? webhook.callback_url;
 }
 
@@ -1206,23 +1206,23 @@ function encodePathPart(value) {
   return encodeURIComponent(String(value ?? ""));
 }
 
-function accountPathSegment(account) {
+export function accountPathSegment(account) {
   const raw = typeof account === "object" && account !== null
     ? account.slug ?? account.path ?? account.id ?? account.name
     : account;
   return String(raw ?? "").trim().replace(/^\/+|\/+$/gu, "");
 }
 
-function normalizeTagTitle(value) {
+export function normalizeTagTitle(value) {
   return String(value ?? "").trim().replace(/^#+/u, "");
 }
 
-function omitKeys(value = {}, keys = []) {
+export function omitKeys(value = {}, keys = []) {
   const skipped = new Set(keys);
   return Object.fromEntries(Object.entries(value).filter(([key]) => !skipped.has(key)));
 }
 
-function omitUndefined(value = {}) {
+export function omitUndefined(value = {}) {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
