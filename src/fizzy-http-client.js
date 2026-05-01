@@ -1143,7 +1143,7 @@ function parseNextLink(linkHeader) {
   return null;
 }
 
-function cardNumberFrom(input) {
+export function cardNumberFrom(input) {
   if (typeof input === "number") return input;
   if (typeof input === "string" && /^\d+$/u.test(input)) return input;
   const card = input?.card ?? input;
@@ -1164,7 +1164,7 @@ export function webhookUrl(webhook = {}) {
   return webhook.payload_url ?? webhook.url ?? webhook.callback_url;
 }
 
-function webhookNeedsUpdate(webhook, desired) {
+export function webhookNeedsUpdate(webhook, desired) {
   return webhook.name !== desired.name || !sameSet(webhook.subscribed_actions ?? [], desired.subscribed_actions);
 }
 

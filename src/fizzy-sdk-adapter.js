@@ -1,14 +1,15 @@
 import { createFizzyClient as createOfficialFizzyClient } from "@37signals/fizzy";
 
-import { FizzySymphonyError } from "./errors.js";
 import {
   FizzyApiError,
   accountPathSegment,
+  cardNumberFrom,
   createLegacyFizzyClient,
   normalizeActions,
   normalizeTagTitle,
   omitKeys,
   omitUndefined,
+  webhookNeedsUpdate,
   webhookUrl
 } from "./fizzy-http-client.js";
 
@@ -508,24 +509,4 @@ function cardListOptionsFromQuery(query = {}) {
     terms: query.terms,
     maxItems: query.max_items ?? query.maxItems
   });
-}
-
-function cardNumberFrom(card) {
-  const value = typeof card === "object" && card !== null
-    ? card.number ?? card.card_number ?? card.cardNumber ?? card.card?.number
-    : card;
-
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && /^\d+$/u.test(value.trim())) return value.trim();
-
-  throw new FizzySymphonyError("FIZZY_CARD_NUMBER_REQUIRED", "Fizzy card number is required for this API route.");
-}
-
-
-function webhookNeedsUpdate(current = {}, desired = {}) {
-  if (desired.name && current.name !== desired.name) return true;
-  const currentActions = new Set(current.subscribed_actions ?? []);
-  const desiredActions = new Set(desired.subscribed_actions ?? []);
-  if (currentActions.size !== desiredActions.size) return true;
-  return [...desiredActions].some((action) => !currentActions.has(action));
 }
