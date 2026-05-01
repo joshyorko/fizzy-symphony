@@ -13,5 +13,7 @@
   "engines": {
     "node": ">=25"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@37signals/fizzy": "^0.2.1"
+  }
 }

@@ -12,7 +12,9 @@ export function createCliFizzyClient(options = {}) {
     fetch: options.fetch,
     transport: options.transport,
     normalize: options.normalize,
-    etagCache: options.etagCache
+    etagCache: options.etagCache,
+    sdkFactory: options.sdkFactory,
+    sdkRootClient: options.sdkRootClient
   });
 }
 
