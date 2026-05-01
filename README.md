@@ -2,10 +2,16 @@
 
 Fizzy-backed Symphony daemon scaffold.
 
+<p align="center">
+  <img src="docs/assets/fizzy-symphony-logo.png" alt="fizzy-symphony logo" width="180">
+</p>
+
+New here? Start with the beginner runbook: [docs/user-guide.md](docs/user-guide.md).
+
 ## Current Status
 
 The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-04-29, the
-current local baseline is 258/258 passing via `npm test` on Node v25.9.0. `package.json`
+current local baseline is 266/266 passing via `npm test` on Node v25.9.0. `package.json`
 intentionally declares Node `>=25` until the project verifies a lower supported runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
@@ -42,6 +48,8 @@ node bin/fizzy-symphony.js daemon
 
 Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,
 validate, status, and daemon commands default to `.fizzy-symphony/config.yml`.
+
+For a step-by-step smoke test with a real Fizzy board, see [docs/user-guide.md](docs/user-guide.md).
 
 ## Influences
 
