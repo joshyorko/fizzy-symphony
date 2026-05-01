@@ -17,6 +17,11 @@ workflow cache fallback, visible capacity refusals, webhook freshness/self-event
 non-looping runner failure markers, runner session stop, and a real Codex CLI app-server runner
 behind the SDK-shaped runner interface.
 
+Fizzy API calls now go through an SDK-backed adapter boundary: the daemon-facing contract stays in
+`src/fizzy-client.js`, while the default live implementation uses the official Fizzy TypeScript SDK
+under `src/fizzy-sdk-adapter.js`. See [docs/fizzy-sdk-adapter.md](docs/fizzy-sdk-adapter.md) for the
+adapter boundary and migration matrix.
+
 Disposable-board live smoke passed on 2026-04-29 against the self-hosted Fizzy instance using board
 `<private-board-id>`. It proved identity, board/card/golden-ticket creation, startup
 validation, one real daemon poll, unsafe-route refusal, and no destructive cleanup. Live webhook
