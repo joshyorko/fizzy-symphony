@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createCliFizzyClient, createCliRunner, resolveFizzyClientConfig } from "../src/client-factories.js";
+import { writeOpener } from "../src/cli-opener.js";
 import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
 import { startDaemon } from "../src/daemon.js";
 import { isFizzySymphonyError } from "../src/errors.js";
@@ -119,6 +120,10 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
   });
 
   if (commandOptions.friendlyOutput) {
+    await writeOpener(io, {
+      env,
+      frameDelayMs: io.openerFrameDelayMs
+    });
     io.stdout.write(formatInitSuccess(result));
     return 0;
   }

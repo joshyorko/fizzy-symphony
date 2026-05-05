@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
+import { stripAnsi } from "../src/cli-opener.js";
 import { writeAnnotatedConfig } from "../src/config.js";
 
 test("public init creates a starter workflow, starter board config, and human next steps", async () => {
@@ -38,6 +39,9 @@ test("public init creates a starter workflow, starter board config, and human ne
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
+  const plainStdout = stripAnsi(result.stdout);
+  assert.match(plainStdout, /FIZZY SYMPHONY/u);
+  assert.equal(plainStdout.indexOf("FIZZY SYMPHONY") < plainStdout.indexOf("fizzy-symphony is ready."), true);
   assert.match(result.stdout, /fizzy-symphony is ready/u);
   assert.match(result.stdout, /node bin\/fizzy-symphony\.js start --config/u);
   assert.match(result.stdout, /Create a normal Fizzy card in Ready for Agents/u);
@@ -63,6 +67,77 @@ test("public help exits successfully", async () => {
     assert.match(result.stdout, /Usage:/u);
     assert.match(result.stdout, /fizzy-symphony start/u);
   }
+});
+
+test("public init animates the opener on an interactive terminal", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-tty-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await writeFile(join(dir, ".env"), "FIZZY_API_TOKEN=token-from-local-env\n", "utf8");
+
+  const result = await runCli([
+    "init",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test"
+  ], {
+    env: { TERM: "xterm-256color", FIZZY_SYMPHONY_ANIM: "paint" },
+    stdoutIsTTY: true,
+    openerFrameDelayMs: 0,
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  const plainStdout = stripAnsi(result.stdout);
+  assert.match(result.stdout, /\x1b\[\d+A/u);
+  assert.match(plainStdout, /FIZZY SYMPHONY/u);
+  assert.match(plainStdout, /GOLDEN TICKET/u);
+  assert.match(plainStdout, /fizzy-symphony is ready/u);
+});
+
+test("public init keeps dumb terminals static", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-dumb-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await writeFile(join(dir, ".env"), "FIZZY_API_TOKEN=token-from-local-env\n", "utf8");
+
+  const result = await runCli([
+    "init",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test"
+  ], {
+    env: { TERM: "dumb", FIZZY_SYMPHONY_ANIM: "pop" },
+    stdoutIsTTY: true,
+    openerFrameDelayMs: 0,
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /\x1b\[\d+A/u);
+  assert.doesNotMatch(result.stdout, /\x1b\[/u);
+  assert.match(stripAnsi(result.stdout), /FIZZY SYMPHONY/u);
+  assert.match(result.stdout, /fizzy-symphony is ready/u);
 });
 
 test("public setup constructs production clients when injected clients are absent", async () => {
@@ -320,7 +395,11 @@ async function runCli(args, options = {}) {
     clientFactories: options.clientFactories,
     runnerOptions: options.runnerOptions,
     fetch: options.fetch,
-    stdout: { write: (chunk) => { stdout += chunk; } },
+    openerFrameDelayMs: options.openerFrameDelayMs,
+    stdout: {
+      isTTY: options.stdoutIsTTY ?? false,
+      write: (chunk) => { stdout += chunk; }
+    },
     stderr: { write: (chunk) => { stderr += chunk; } }
   });
   return { exitCode, stdout, stderr };
