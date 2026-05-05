@@ -17,7 +17,9 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
   const command = args[0];
 
   try {
-    if (command === "init") {
+    if (isHelpCommand(args)) {
+      return usage(0, io);
+    } else if (command === "init") {
       return await initCommand(args.slice(1), io);
     } else if (command === "setup") {
       return await setupCommand(args.slice(1), io);
@@ -333,6 +335,10 @@ function webhookOptions(args) {
     callback_url: callbackUrl ?? "",
     subscribed_actions: actions?.split(",").map((action) => action.trim()).filter(Boolean)
   };
+}
+
+function isHelpCommand(args) {
+  return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
 }
 
 function usage(exitCode, io) {

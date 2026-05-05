@@ -7,7 +7,16 @@
   "bin": {
     "fizzy-symphony": "./bin/fizzy-symphony.js"
   },
+  "files": [
+    "bin",
+    "config.example.yml",
+    "docs",
+    "README.md",
+    "SPEC.md",
+    "src"
+  ],
   "scripts": {
+    "build": "node --check bin/fizzy-symphony.js && for file in src/*.js; do node --check \"$file\"; done",
     "init": "node bin/fizzy-symphony.js init",
     "start": "node bin/fizzy-symphony.js start",
     "test": "node --test"

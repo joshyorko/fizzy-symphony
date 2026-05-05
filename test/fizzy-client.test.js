@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { createEtagCache } from "../src/etag-cache.js";
 import {
   createFizzyClient,
+  resultCommentBody,
   verifyWebhookRequest,
   verifyWebhookSignature
 } from "../src/fizzy-client.js";
@@ -126,6 +127,25 @@ test("Fizzy fetch transport sends bearer JSON headers on account-scoped Rails ro
   assert.equal(calls[0].init.headers.Authorization, "Bearer secret-token");
   assert.equal(calls[0].init.headers.Accept, "application/json");
   assert.equal(calls[0].init.headers["Content-Type"], "application/json");
+});
+
+test("result comments are normalized to Fizzy rich-text HTML", () => {
+  assert.equal(
+    resultCommentBody({ result: { output_summary: "Changed files\nRan tests" } }),
+    "<p>Changed files<br>Ran tests</p>"
+  );
+  assert.equal(
+    resultCommentBody({ result: { output: "Summary\n\n- item" } }),
+    "<p>Summary</p>\n<p>- item</p>"
+  );
+  assert.equal(
+    resultCommentBody({ result: { output_html: "<p><strong>Done</strong></p>" } }),
+    "<p><strong>Done</strong></p>"
+  );
+  assert.equal(
+    resultCommentBody({ result: { summary: "<script>alert(1)</script>" } }),
+    "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"
+  );
 });
 
 test("Fizzy client normalizes account slugs before building account-scoped routes", async () => {

@@ -55,6 +55,16 @@ test("public init creates a starter workflow, starter board config, and human ne
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
 });
 
+test("public help exits successfully", async () => {
+  for (const flag of ["--help", "-h"]) {
+    const result = await runCli([flag], { env: {} });
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Usage:/u);
+    assert.match(result.stdout, /fizzy-symphony start/u);
+  }
+});
+
 test("public setup constructs production clients when injected clients are absent", async () => {
   const dir = await setupWorkspace("fizzy-symphony-cli-setup-factory-");
   const configPath = join(dir, "config.yml");

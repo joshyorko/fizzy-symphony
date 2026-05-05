@@ -178,6 +178,8 @@ Route: {{route.id}}
     }
   });
 
+  assert.match(prompt, /Fizzy result comment format/);
+  assert.match(prompt, /Return the final response as HTML suitable for a Fizzy rich-text comment/);
   assert.match(prompt, /Workflow front matter:\n```json\n\{/);
   assert.match(prompt, /"name": "Repo Agent"/);
   assert.match(prompt, /"required_steps_block_completion": true/);
