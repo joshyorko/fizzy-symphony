@@ -6,19 +6,28 @@ Run these from the repo root on your Bluefin host or another Linux shell:
 
 ```sh
 npm install
-node bin/fizzy-symphony.js init --api-url https://fizzy.joshyorko.com
+fizzy-symphony setup
+fizzy-symphony start
+```
+
+In the repo checkout, the same commands are:
+
+```sh
+node bin/fizzy-symphony.js setup
 node bin/fizzy-symphony.js start
 ```
 
 That is the normal path.
 
-`init` reads `.env`, checks Fizzy and Codex, creates the starter board route, writes `.fizzy-symphony/config.yml`, and creates a starter `WORKFLOW.md` if the repo does not have one yet.
+Interactive `setup` launches the opener, asks for any missing Fizzy URL/token values, checks Fizzy and Codex, creates the starter board route, writes `.fizzy-symphony/config.yml`, and creates a starter `WORKFLOW.md` if the repo does not have one yet.
+
+`init` remains a compatible alias for the same first-run flow.
 
 `start` runs the local daemon.
 
 ## What You Do In Fizzy
 
-After `init`, open the created board.
+After `setup`, open the created board.
 
 You will see:
 
@@ -57,14 +66,14 @@ node bin/fizzy-symphony.js start
 If you want to use a different env file:
 
 ```sh
-node bin/fizzy-symphony.js init --env-file path/to/.env --api-url https://fizzy.example.com
+fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com
 ```
 
 If you already built a Fizzy board route yourself:
 
 ```sh
-node bin/fizzy-symphony.js setup --board BOARD_ID --workspace-repo .
-node bin/fizzy-symphony.js start
+fizzy-symphony setup --mode existing --board BOARD_ID --workspace-repo .
+fizzy-symphony start
 ```
 
 Existing routes still use the same board-native contract: a native golden card tagged `agent-instructions`, `codex`, and one completion tag like `move-to-done`, `close-on-complete`, or `comment-once`.

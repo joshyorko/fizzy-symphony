@@ -43,7 +43,7 @@ test("public init creates a starter workflow, starter board config, and human ne
   assert.match(plainStdout, /FIZZY SYMPHONY/u);
   assert.equal(plainStdout.indexOf("FIZZY SYMPHONY") < plainStdout.indexOf("fizzy-symphony is ready."), true);
   assert.match(result.stdout, /fizzy-symphony is ready/u);
-  assert.match(result.stdout, /node bin\/fizzy-symphony\.js start --config/u);
+  assert.match(result.stdout, /fizzy-symphony start --config/u);
   assert.match(result.stdout, /Create a normal Fizzy card in Ready for Agents/u);
   assert.deepEqual(calls, [
     ["createFizzyClient", "https://fizzy.example.test", true],
@@ -57,6 +57,105 @@ test("public init creates a starter workflow, starter board config, and human ne
   const generatedConfig = await readFile(configPath, "utf8");
   assert.match(generatedConfig, /id: starter_board/u);
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
+});
+
+test("public setup defaults to the guided starter flow when no existing board is selected", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-guided-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  const plainStdout = stripAnsi(result.stdout);
+  assert.match(plainStdout, /FIZZY SYMPHONY/u);
+  assert.match(plainStdout, /fizzy-symphony is ready/u);
+  assert.match(plainStdout, /fizzy-symphony start --config/u);
+
+  const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
+  assert.match(workflow, /fizzy-symphony starter workflow/u);
+
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /id: starter_board/u);
+  assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
+});
+
+test("guided setup shows the opener and human remediation before missing credential failures", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-missing-token-"));
+  const result = await runCli([
+    "setup",
+    "--config",
+    join(dir, ".fizzy-symphony", "config.yml"),
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test"
+  ], {
+    env: { TERM: "dumb" }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(stripAnsi(result.stdout), /FIZZY SYMPHONY/u);
+  assert.doesNotMatch(result.stderr, /^\{/u);
+  assert.match(result.stderr, /Fizzy API credentials/u);
+  assert.match(result.stderr, /\.env/u);
+});
+
+test("guided setup can prompt for missing Fizzy URL and token", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-prompts-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const prompts = [];
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir
+  ], {
+    env: { TERM: "dumb" },
+    prompts: {
+      async input(prompt) {
+        prompts.push(prompt.name);
+        if (prompt.name === "fizzy_api_url") return "https://prompted.fizzy.test";
+        if (prompt.name === "fizzy_api_token") return "prompted-token";
+        return "";
+      }
+    },
+    clientFactories: {
+      createFizzyClient({ config }) {
+        assert.equal(config.fizzy.api_url, "https://prompted.fizzy.test");
+        assert.equal(config.fizzy.token, "prompted-token");
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(prompts, ["fizzy_api_url", "fizzy_api_token"]);
+  assert.match(await readFile(configPath, "utf8"), /api_url: https:\/\/prompted\.fizzy\.test/u);
 });
 
 test("public help exits successfully", async () => {
@@ -284,6 +383,8 @@ test("public setup reports missing Fizzy credentials with remediation", async ()
   const dir = await setupWorkspace("fizzy-symphony-cli-missing-token-");
   const result = await runCli([
     "setup",
+    "--mode",
+    "existing",
     "--config",
     join(dir, "config.yml"),
     "--workspace-repo",
@@ -302,6 +403,8 @@ test("public setup reports unreachable Fizzy API with remediation", async () => 
   const dir = await setupWorkspace("fizzy-symphony-cli-api-down-");
   const result = await runCli([
     "setup",
+    "--mode",
+    "existing",
     "--config",
     join(dir, "config.yml"),
     "--workspace-repo",
@@ -392,6 +495,7 @@ async function runCli(args, options = {}) {
   let stderr = "";
   const exitCode = await cliMain(args, {
     env: options.env ?? process.env,
+    prompts: options.prompts,
     clientFactories: options.clientFactories,
     runnerOptions: options.runnerOptions,
     fetch: options.fetch,

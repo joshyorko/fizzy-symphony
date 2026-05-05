@@ -40,11 +40,15 @@ Run these from the repository root:
 
 ```sh
 npm install
-node bin/fizzy-symphony.js init --api-url https://fizzy.joshyorko.com
+node bin/fizzy-symphony.js setup
 node bin/fizzy-symphony.js start
 node bin/fizzy-symphony.js status
 npm test
 ```
+
+Interactive `setup` asks for missing Fizzy URL/token values, creates the starter board route,
+writes `.fizzy-symphony/config.yml`, and creates `WORKFLOW.md` when the repo does not have one.
+`init` remains a compatible alias for the same first-run flow.
 
 Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,
 validate, status, and daemon commands default to `.fizzy-symphony/config.yml`.
