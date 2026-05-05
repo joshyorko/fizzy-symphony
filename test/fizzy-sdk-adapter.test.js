@@ -360,7 +360,7 @@ test("SDK adapter completion helpers stay on SDK-backed comments and tags", asyn
     payload: { outcome: "ok" }
   });
 
-  assert.deepEqual(resultComment, { id: "comment_1", body: "run complete" });
+  assert.deepEqual(resultComment, { id: "comment_1", body: "<p>run complete</p>" });
   assert.deepEqual(marker, {
     id: "comment_1",
     body: "marker body",
@@ -370,7 +370,7 @@ test("SDK adapter completion helpers stay on SDK-backed comments and tags", asyn
   assert.deepEqual(
     sdk.calls.filter((call) => call[0] === "comments.create" || call[0] === "cards.tag"),
     [
-      ["comments.create", "https://app.fizzy.test/api/acct", 42, { body: "run complete" }],
+      ["comments.create", "https://app.fizzy.test/api/acct", 42, { body: "<p>run complete</p>" }],
       ["comments.create", "https://app.fizzy.test/api/acct", 42, { body: "marker body" }],
       ["cards.tag", "https://app.fizzy.test/api/acct", 42, { tagTitle: "agent-rerun" }]
     ]

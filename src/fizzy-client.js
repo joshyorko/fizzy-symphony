@@ -3,6 +3,7 @@ import {
   FizzyApiError,
   createFetchTransport,
   createLegacyFizzyClient,
+  resultCommentBody,
   verifyWebhookRequest,
   verifyWebhookSignature
 } from "./fizzy-http-client.js";
@@ -11,6 +12,7 @@ export {
   FizzyApiError,
   createFetchTransport,
   createLegacyFizzyClient,
+  resultCommentBody,
   verifyWebhookRequest,
   verifyWebhookSignature
 };

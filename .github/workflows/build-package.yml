@@ -1,0 +1,40 @@
+name: Build package asset
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack npm tarball
+        run: npm pack
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fizzy-symphony-package
+          path: fizzy-symphony-*.tgz
+          if-no-files-found: error

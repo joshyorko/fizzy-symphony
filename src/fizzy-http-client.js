@@ -1190,9 +1190,24 @@ function isWebhookFresh(timestamp, { now = new Date(), toleranceSeconds = 300 } 
 
 export function resultCommentBody({ result = {}, proof } = {}) {
   const body = result.output_html ?? result.body ?? result.output ?? result.output_summary ?? result.summary;
-  if (body) return String(body);
+  if (body) return richCommentHtml(body);
   if (proof?.file) return `<p>Agent run completed. Proof: <code>${escapeHtml(proof.file)}</code></p>`;
   return "<p>Agent run completed.</p>";
+}
+
+function richCommentHtml(value) {
+  const body = String(value).trim();
+  if (!body) return "<p>Agent run completed.</p>";
+  if (looksLikeHtml(body)) return body;
+
+  return body
+    .split(/\n{2,}/u)
+    .map((block) => `<p>${escapeHtml(block).replace(/\n/gu, "<br>")}</p>`)
+    .join("\n");
+}
+
+function looksLikeHtml(value) {
+  return /<(?:p|br|strong|em|ul|ol|li|h[1-6]|pre|code|blockquote|a|div|span)\b[^>]*>/iu.test(value);
 }
 
 function escapeHtml(value) {

@@ -68,6 +68,8 @@ export function renderPrompt({
   const frontMatter = parsedWorkflow.frontMatter ?? parsedWorkflow.front_matter ?? {};
 
   return compactSections([
+    "Fizzy result comment format",
+    "Return the final response as HTML suitable for a Fizzy rich-text comment. Use only ordinary content tags such as <p>, <strong>, <em>, <ul>/<li>, <ol>/<li>, <h3>, <pre><code>, and <blockquote>. Do not return Markdown fences unless they are inside <pre><code>.",
     `Workflow front matter:\n\`\`\`json\n${JSON.stringify(frontMatter, null, 2)}\n\`\`\``,
     "Workflow prompt body",
     renderedPolicy,
