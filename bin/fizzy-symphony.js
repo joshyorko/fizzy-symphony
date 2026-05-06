@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
@@ -560,6 +561,19 @@ function defaultIo() {
   };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+function canonicalPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function isDirectInvocation() {
+  return Boolean(process.argv[1]) &&
+    canonicalPath(process.argv[1]) === canonicalPath(fileURLToPath(import.meta.url));
+}
+
+if (isDirectInvocation()) {
   process.exitCode = await main();
 }

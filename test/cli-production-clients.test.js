@@ -1,12 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { access, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
 import { stripAnsi } from "../src/cli-opener.js";
 import { writeAnnotatedConfig } from "../src/config.js";
+
+const CLI_PATH = fileURLToPath(new URL("../bin/fizzy-symphony.js", import.meta.url));
 
 test("public init creates a starter workflow, starter board config, and human next steps", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-"));
@@ -166,6 +170,21 @@ test("public help exits successfully", async () => {
     assert.match(result.stdout, /Usage:/u);
     assert.match(result.stdout, /fizzy-symphony start/u);
   }
+});
+
+test("public executable runs when invoked through a symlink path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-symlink-"));
+  const linkedCli = join(dir, "fizzy-symphony.js");
+  await symlink(CLI_PATH, linkedCli);
+
+  const result = spawnSync(process.execPath, [linkedCli, "--help"], {
+    encoding: "utf8",
+    env: {}
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Usage:/u);
+  assert.match(result.stdout, /fizzy-symphony setup/u);
 });
 
 test("public init animates the opener on an interactive terminal", async () => {
