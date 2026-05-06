@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { access, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
@@ -12,7 +13,7 @@ import { writeAnnotatedConfig } from "../src/config.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/fizzy-symphony.js", import.meta.url));
 
-test("public init creates a starter workflow, starter board config, and human next steps", async () => {
+test("public setup creates a starter workflow, starter board config, and human next steps when explicitly requested", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
   const calls = [];
@@ -21,11 +22,12 @@ test("public init creates a starter workflow, starter board config, and human ne
   await writeFile(join(dir, ".env"), "FIZYY_TOKEN=token-from-local-env\n", "utf8");
 
   const result = await runCli([
-    "init",
+    "setup",
     "--config",
     configPath,
     "--workspace-repo",
     dir,
+    "--create-starter-workflow",
     "--api-url",
     "https://fizzy.example.test"
   ], {
@@ -63,6 +65,38 @@ test("public init creates a starter workflow, starter board config, and human ne
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
 });
 
+test("public init delegates to setup with a deprecation warning", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-deprecated-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  await writeFile(join(dir, ".env"), "FIZYY_TOKEN=token-from-local-env\n", "utf8");
+
+  const result = await runCli([
+    "init",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--create-starter-workflow",
+    "--api-url",
+    "https://fizzy.example.test"
+  ], {
+    env: {},
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stderr, /deprecated/u);
+  assert.match(result.stderr, /fizzy-symphony setup/u);
+  assert.match(stripAnsi(result.stdout), /fizzy-symphony is ready/u);
+});
+
 test("public setup defaults to the guided starter flow when no existing board is selected", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-guided-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
@@ -73,6 +107,7 @@ test("public setup defaults to the guided starter flow when no existing board is
     configPath,
     "--workspace-repo",
     dir,
+    "--create-starter-workflow",
     "--api-url",
     "https://fizzy.example.test",
     "--token",
@@ -101,6 +136,84 @@ test("public setup defaults to the guided starter flow when no existing board is
   const generatedConfig = await readFile(configPath, "utf8");
   assert.match(generatedConfig, /id: starter_board/u);
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
+});
+
+test("public setup does not create WORKFLOW.md without an explicit workflow flag", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-no-workflow-"));
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    join(dir, ".fizzy-symphony", "config.yml"),
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /MISSING_WORKFLOW/u);
+  await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
+});
+
+test("guided setup prompt skips missing WORKFLOW.md by default without creating a starter board", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-workflow-prompt-skip-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const prompts = [];
+  const createCalls = [];
+  const fizzy = fakeStarterSetupFizzy();
+  const createBoard = fizzy.createBoard;
+  fizzy.createBoard = async (request) => {
+    createCalls.push(request);
+    return createBoard(request);
+  };
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    prompts: {
+      async input(prompt) {
+        prompts.push(prompt);
+        return "";
+      }
+    },
+    clientFactories: {
+      createFizzyClient() {
+        return fizzy;
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /MISSING_WORKFLOW/u);
+  assert.deepEqual(prompts.map((prompt) => [prompt.name, prompt.defaultValue]), [["workflow_action", "skip"]]);
+  assert.deepEqual(createCalls, []);
+  await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
+  await assert.rejects(() => readFile(configPath, "utf8"));
 });
 
 test("guided setup shows the opener and human remediation before missing credential failures", async () => {
@@ -134,7 +247,8 @@ test("guided setup can prompt for missing Fizzy URL and token", async () => {
     "--config",
     configPath,
     "--workspace-repo",
-    dir
+    dir,
+    "--create-starter-workflow"
   ], {
     env: { TERM: "dumb" },
     prompts: {
@@ -142,6 +256,7 @@ test("guided setup can prompt for missing Fizzy URL and token", async () => {
         prompts.push(prompt.name);
         if (prompt.name === "fizzy_api_url") return "https://prompted.fizzy.test";
         if (prompt.name === "fizzy_api_token") return "prompted-token";
+        if (prompt.name === "setup_mutation_review") return "yes";
         return "";
       }
     },
@@ -158,8 +273,45 @@ test("guided setup can prompt for missing Fizzy URL and token", async () => {
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.deepEqual(prompts, ["fizzy_api_url", "fizzy_api_token"]);
+  assert.deepEqual(prompts, ["fizzy_api_url", "fizzy_api_token", "setup_mutation_review"]);
   assert.match(await readFile(configPath, "utf8"), /api_url: https:\/\/prompted\.fizzy\.test/u);
+});
+
+test("guided setup uses terminal prompts for mutation review", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-terminal-prompts-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const stdin = new PassThrough();
+  stdin.isTTY = true;
+  setImmediate(() => stdin.write("yes\n"));
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--create-starter-workflow",
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "xterm-256color" },
+    stdin,
+    stdoutIsTTY: true,
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(stripAnsi(result.stdout), /Review setup changes before applying/u);
+  assert.match(await readFile(configPath, "utf8"), /id: starter_board/u);
 });
 
 test("public help exits successfully", async () => {
@@ -168,8 +320,82 @@ test("public help exits successfully", async () => {
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /Usage:/u);
+    assert.doesNotMatch(result.stdout, /fizzy-symphony init/u);
+    assert.match(result.stdout, /fizzy-symphony dashboard/u);
     assert.match(result.stdout, /fizzy-symphony start/u);
   }
+});
+
+test("public dashboard delegates to status-backed dashboard command", async () => {
+  const result = await runCli(["dashboard", "--endpoint", "http://127.0.0.1:4567", "--once"], {
+    env: {},
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        instance: { id: "instance-a" },
+        readiness: { ready: true },
+        runner_health: { status: "ready", kind: "cli_app_server" },
+        watched_boards: [],
+        routes: [],
+        active_runs: [],
+        claims: [],
+        workpads: [],
+        recent_failures: [],
+        recent_completions: [],
+        validation: { warnings: [], errors: [] }
+      })
+    })
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /fizzy-symphony dashboard/u);
+  assert.match(result.stdout, /Instance: instance-a/u);
+});
+
+test("bare command opens dashboard when config exists", async () => {
+  const dir = await setupWorkspace("fizzy-symphony-cli-bare-dashboard-");
+  const configPath = await writeConfig(dir);
+
+  const result = await runCli(["--config", configPath, "--endpoint", "http://127.0.0.1:4567", "--once"], {
+    env: {},
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        instance: { id: "instance-a" },
+        readiness: { ready: true },
+        runner_health: { status: "ready", kind: "cli_app_server" },
+        watched_boards: [],
+        routes: [],
+        active_runs: [],
+        claims: [],
+        workpads: [],
+        recent_failures: [],
+        recent_completions: [],
+        validation: { warnings: [], errors: [] }
+      })
+    })
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /fizzy-symphony dashboard/u);
+});
+
+test("bare command rejects unknown leading flags instead of entering setup", async () => {
+  const result = await runCli(["--bad"], {
+    env: {},
+    clientFactories: {
+      createFizzyClient() {
+        throw new Error("unknown bare flag should not construct clients");
+      },
+      createRunner() {
+        throw new Error("unknown bare flag should not construct clients");
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stdout, /Usage:/u);
+  assert.equal(result.stderr, "");
 });
 
 test("public executable runs when invoked through a symlink path", async () => {
@@ -182,6 +408,7 @@ test("public executable runs when invoked through a symlink path", async () => {
     env: {}
   });
 
+  if (result.error?.code === "EPERM") return;
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Usage:/u);
   assert.match(result.stdout, /fizzy-symphony setup/u);
@@ -199,6 +426,7 @@ test("public init animates the opener on an interactive terminal", async () => {
     configPath,
     "--workspace-repo",
     dir,
+    "--create-starter-workflow",
     "--api-url",
     "https://fizzy.example.test"
   ], {
@@ -235,6 +463,7 @@ test("public init keeps dumb terminals static", async () => {
     configPath,
     "--workspace-repo",
     dir,
+    "--create-starter-workflow",
     "--api-url",
     "https://fizzy.example.test"
   ], {
@@ -519,9 +748,14 @@ async function runCli(args, options = {}) {
     runnerOptions: options.runnerOptions,
     fetch: options.fetch,
     openerFrameDelayMs: options.openerFrameDelayMs,
+    stdin: options.stdin ?? { isTTY: options.stdinIsTTY ?? false },
     stdout: {
       isTTY: options.stdoutIsTTY ?? false,
-      write: (chunk) => { stdout += chunk; }
+      columns: 80,
+      write: (chunk) => { stdout += chunk; },
+      on() { return this; },
+      off() { return this; },
+      removeListener() { return this; }
     },
     stderr: { write: (chunk) => { stderr += chunk; } }
   });

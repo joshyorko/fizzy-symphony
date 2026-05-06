@@ -10,9 +10,10 @@ New here? Start with the beginner runbook: [docs/user-guide.md](docs/user-guide.
 
 ## Current Status
 
-The first MVP selects Node.js ESM with no external runtime dependencies. As of 2026-05-01, the
-current local baseline is 268/268 passing via `npm test` on Node v25.9.0. `package.json`
-intentionally declares Node `>=25` until the project verifies a lower supported runtime.
+The first MVP selects Node.js ESM with Terminal Kit for interactive terminal surfaces. As of
+2026-05-06, the current local baseline is 302/302 passing via `npm test` on Node v25.9.0.
+`package.json` intentionally declares Node `>=25` until the project verifies a lower supported
+runtime.
 
 The current implementation covers config generation/parsing, setup validation hooks, golden-ticket
 startup validation, route decisions, claim markers, workspace metadata, workflow loading/rendering,
@@ -42,16 +43,25 @@ Run these from the repository root:
 npm install
 node bin/fizzy-symphony.js setup
 node bin/fizzy-symphony.js start
+node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js status
 npm test
 ```
 
-Interactive `setup` asks for missing Fizzy URL/token values, creates the starter board route,
-writes `.fizzy-symphony/config.yml`, and creates `WORKFLOW.md` when the repo does not have one.
-`init` remains a compatible alias for the same first-run flow.
+`setup` is the primary first-run command. In guided mode it asks for missing Fizzy URL/token
+values, asks what to do with `WORKFLOW.md`, previews mutating actions, and waits for confirmation
+before remote starter board, managed webhook, or config writes. `WORKFLOW.md` is changed only when
+you choose create/append at the prompt or pass an explicit flag such as
+`--create-starter-workflow` or `--augment-workflow`; use `--no-workflow-change` to skip it in
+scripted runs. A missing `WORKFLOW.md` is not silently created by pressing Enter. `init` remains as
+a deprecated compatibility alias for `setup`.
+
+`dashboard` observes the daemon's existing `/status` truth. Interactive TTY output refreshes by
+default, `--once` prints a static snapshot, and non-TTY, CI, or dumb terminals use the same text
+fallback. It does not define a separate workflow model.
 
 Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,
-validate, status, and daemon commands default to `.fizzy-symphony/config.yml`.
+validate, status, dashboard, and daemon commands default to `.fizzy-symphony/config.yml`.
 
 For a step-by-step smoke test with a real Fizzy board, see [docs/user-guide.md](docs/user-guide.md).
 

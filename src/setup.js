@@ -1,4 +1,4 @@
-import { access, writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
@@ -55,11 +55,17 @@ export async function runSetup(options = {}) {
   const runnerReport = await detectRunner(runner);
 
   const setupMode = await selectSetupMode(options, prompts);
+  const workflowPlan = await planWorkflow(workspaceRepo, workflowPolicyFromOptions(options));
+  const webhookWarnings = webhook.manage ? validateWebhookSetup(webhook) : [];
+  validateBotUser(options.botUserId, users);
   const selectedBoards = [];
   let selectedBoardIds = [];
   let starter = { created: false };
+  let workflow;
+  let mutationsReviewed = false;
 
   if (setupMode === "create_starter") {
+    await reviewSetupMutations();
     const starterBoard = await createStarterBoard({ fizzy, account, workspaceRepo, options });
     selectedBoards.push(starterBoard);
     selectedBoardIds = [starterBoard.id];
@@ -90,11 +96,10 @@ export async function runSetup(options = {}) {
     required: ["agent-instructions", ...managedTagsUsedByBoards(selectedBoards)]
   });
 
-  validateBotUser(options.botUserId, users);
-  await ensureWorkflow(workspaceRepo, { create: Boolean(options.createStarterWorkflow) });
   const routes = discoverGoldenTicketRoutes(selectedBoards, {
     defaults: { backend: "codex", model: "", workspace: "app", persona: "repo-agent" }
   });
+  if (!mutationsReviewed) await reviewSetupMutations();
 
   const managedWebhooks = {};
   const warnings = (entropy?.warnings ?? []).map((warning) => ({
@@ -104,7 +109,7 @@ export async function runSetup(options = {}) {
   }));
 
   if (webhook.manage) {
-    warnings.push(...validateWebhookSetup(webhook));
+    warnings.push(...webhookWarnings);
     for (const boardId of selectedBoardIds) {
       managedWebhooks[boardId] = await manageWebhookForBoard(fizzy, {
         account,
@@ -150,10 +155,26 @@ export async function runSetup(options = {}) {
     warnings,
     managedWebhooks,
     starter,
+    workflow,
     env_used: {
       fizzy_token: Boolean(env.FIZZY_API_TOKEN)
     }
   };
+
+  async function reviewSetupMutations() {
+    await confirmSetupMutationReview(prompts, setupMutationReviewPlan({
+      account,
+      configPath,
+      setupMode,
+      workspaceRepo,
+      selectedBoardIds,
+      starterBoardName: options.starterBoardName ?? `Agent Playground: ${basename(resolve(workspaceRepo))}`,
+      workflowPlan,
+      webhook
+    }));
+    workflow = await applyWorkflowPlan(workflowPlan);
+    mutationsReviewed = true;
+  }
 }
 
 async function validateIdentity(fizzy) {
@@ -299,17 +320,131 @@ function validateBotUser(botUserId, users) {
   }
 }
 
-async function ensureWorkflow(workspaceRepo, options = {}) {
+function workflowPolicyFromOptions(options) {
+  if (options.workflowPolicy) return options.workflowPolicy;
+  if (options.augmentWorkflow) return { action: "append" };
+  if (options.createStarterWorkflow) return { action: "create" };
+  return { action: "skip" };
+}
+
+async function planWorkflow(workspaceRepo, policy = {}) {
+  const workflowPath = join(workspaceRepo, "WORKFLOW.md");
+  let existing;
+
   try {
-    await access(join(workspaceRepo, "WORKFLOW.md"));
-  } catch {
-    if (options.create) {
-      await writeFile(join(workspaceRepo, "WORKFLOW.md"), starterWorkflow(), { flag: "wx" });
-      return;
+    existing = await readFile(workflowPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    if (policy.action === "create") {
+      return { action: "create", path: workflowPath, result: { action: "created", path: workflowPath } };
     }
     throw new FizzySymphonyError("MISSING_WORKFLOW", "Setup requires WORKFLOW.md in the selected workspace repository.", {
-      repo: workspaceRepo
+      repo: workspaceRepo,
+      remediation: "Rerun setup with --create-starter-workflow, pass --augment-workflow for an existing file, or add WORKFLOW.md yourself."
     });
+  }
+
+  if (policy.action === "append") {
+    if (!existing.includes("## fizzy-symphony")) {
+      return { action: "append", path: workflowPath, result: { action: "appended", path: workflowPath } };
+    }
+    return { action: "none", path: workflowPath, result: { action: "unchanged", path: workflowPath, reason: "section_exists" } };
+  }
+
+  return { action: "none", path: workflowPath, result: { action: "unchanged", path: workflowPath } };
+}
+
+async function applyWorkflowPlan(plan) {
+  if (plan.action === "create") {
+    await writeFile(plan.path, starterWorkflow(), { flag: "wx" });
+    return plan.result;
+  }
+
+  if (plan.action === "append") {
+    await appendFile(plan.path, `\n${starterWorkflowSection()}`, "utf8");
+    return plan.result;
+  }
+
+  return plan.result;
+}
+
+async function confirmSetupMutationReview(prompts, plan) {
+  if (!prompts?.confirmSetupMutations && !prompts?.input) return;
+
+  const answer = prompts.confirmSetupMutations
+    ? await prompts.confirmSetupMutations(plan)
+    : await prompts.input({
+      name: "setup_mutation_review",
+      message: formatSetupMutationReview(plan),
+      defaultValue: "no"
+    });
+
+  if (setupMutationConfirmed(answer)) return;
+
+  throw new FizzySymphonyError("SETUP_MUTATION_CANCELLED", "Setup changes were not applied.", {
+    mutations: plan.mutations,
+    config_path: plan.config_path
+  });
+}
+
+function setupMutationConfirmed(answer) {
+  if (answer === true) return true;
+  const normalized = String(answer ?? "").trim().toLowerCase();
+  return ["yes", "y", "create", "apply", "confirm"].includes(normalized);
+}
+
+function setupMutationReviewPlan({ account, configPath, setupMode, workspaceRepo, selectedBoardIds, starterBoardName, workflowPlan, webhook }) {
+  const mutations = [];
+  if (workflowPlan.action === "create") mutations.push("create_workflow");
+  if (workflowPlan.action === "append") mutations.push("append_workflow");
+  if (setupMode === "create_starter") mutations.push("create_starter_board");
+  if (webhook.manage) mutations.push("manage_webhooks");
+  mutations.push("write_config");
+
+  return {
+    account,
+    setup_mode: setupMode,
+    workspace_repo: workspaceRepo,
+    config_path: configPath,
+    board_ids: selectedBoardIds,
+    starter_board_name: setupMode === "create_starter" ? starterBoardName : undefined,
+    workflow: { action: workflowPlan.action, path: workflowPlan.path },
+    webhook: webhook.manage ? {
+      manage: true,
+      callback_url: redactedUrl(webhook.callback_url),
+      subscribed_actions: webhookActions(webhook),
+      secret_configured: Boolean(webhook.secret)
+    } : { manage: false },
+    mutations
+  };
+}
+
+function formatSetupMutationReview(plan) {
+  const lines = ["Review setup changes before applying:"];
+  if (plan.workflow.action === "create") lines.push(`- create ${plan.workflow.path}`);
+  if (plan.workflow.action === "append") lines.push(`- append fizzy-symphony section to ${plan.workflow.path}`);
+  if (plan.setup_mode === "create_starter") lines.push(`- create Fizzy starter board: ${plan.starter_board_name}`);
+  if (plan.webhook.manage) lines.push(`- manage Fizzy webhooks for ${reviewBoardCount(plan)} board(s): ${plan.webhook.callback_url || "configured callback"}`);
+  lines.push(`- write config: ${plan.config_path}`);
+  lines.push("Type yes to apply these changes, or press Enter to skip.");
+  return lines.join("\n");
+}
+
+function reviewBoardCount(plan) {
+  if (plan.setup_mode === "create_starter") return 1;
+  return plan.board_ids.length;
+}
+
+function redactedUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    if (url.search) url.search = "?...";
+    return url.toString();
+  } catch {
+    return "[configured]";
   }
 }
 
@@ -325,6 +460,15 @@ function starterWorkflow() {
     "- Run `npm test` before reporting success.",
     "- Leave a short result summary on the card.",
     "- If the request is unsafe or unclear, stop and explain the blocker.",
+    ""
+  ].join("\n");
+}
+
+function starterWorkflowSection() {
+  return [
+    "## fizzy-symphony",
+    "",
+    "Fizzy card context is the visible work request. Follow the golden-ticket route, keep changes focused, run the repo checks, and report results back on the card.",
     ""
   ].join("\n");
 }

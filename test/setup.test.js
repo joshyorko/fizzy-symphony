@@ -298,6 +298,72 @@ test("runSetup creates a starter board with native golden route defaults and wri
   assert.match(written, /max_concurrent: 1/);
 });
 
+test("runSetup creates starter WORKFLOW.md only when workflow policy says create", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-create-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  const result = await runSetup({
+    configPath,
+    fizzy: fakeStarterFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    starterBoardName: "Agent Playground: repo",
+    workspaceRepo: dir,
+    workflowPolicy: { action: "create" },
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.workflow.action, "created");
+  assert.match(await readFile(join(dir, "WORKFLOW.md"), "utf8"), /fizzy-symphony starter workflow/u);
+});
+
+test("runSetup fails missing WORKFLOW.md when workflow policy says skip", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-skip-"));
+  const fizzy = fakeStarterFizzy();
+
+  await assert.rejects(
+    () => runSetup({
+      configPath: join(dir, ".fizzy-symphony", "config.yml"),
+      fizzy,
+      runner: fakeRunner(),
+      account: "acct_1",
+      setupMode: "create_starter",
+      workspaceRepo: dir,
+      workflowPolicy: { action: "skip" },
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "MISSING_WORKFLOW"
+  );
+  assert.deepEqual(
+    fizzy.calls.filter((call) => ["createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])),
+    []
+  );
+  await assert.rejects(() => readFile(join(dir, ".fizzy-symphony", "config.yml"), "utf8"));
+});
+
+test("runSetup appends a fizzy-symphony section to existing WORKFLOW.md only when requested", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-append-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n\nKeep existing rules.\n", "utf8");
+
+  const result = await runSetup({
+    configPath: join(dir, ".fizzy-symphony", "config.yml"),
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: dir,
+    workflowPolicy: { action: "append" },
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.workflow.action, "appended");
+  const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
+  assert.match(workflow, /Keep existing rules/u);
+  assert.match(workflow, /## fizzy-symphony/u);
+  assert.match(workflow, /Fizzy card/u);
+});
+
 test("runSetup adopts an existing starter board and keeps starter concurrency defaults", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-adopt-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
@@ -431,6 +497,43 @@ test("runSetup manages webhooks by listing, creating, updating, and reactivating
     fizzy.calls.filter((call) => ["listWebhooks", "createWebhook", "updateWebhook", "reactivateWebhook"].includes(call[0])).map((call) => call[0]),
     ["listWebhooks", "createWebhook", "listWebhooks", "reactivateWebhook", "listWebhooks", "updateWebhook"]
   );
+});
+
+test("runSetup requires interactive mutation review before managed webhooks and config writes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-mutation-review-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const configPath = join(dir, "config.yml");
+  const fizzy = fakeFizzy();
+  const prompts = [];
+
+  await assert.rejects(
+    () => runSetup({
+      configPath,
+      fizzy,
+      runner: fakeRunner(),
+      account: "acct_1",
+      selectedBoardIds: ["board_1"],
+      workspaceRepo: dir,
+      webhook: {
+        manage: true,
+        callback_url: "https://example.test/fizzy",
+        secret: "super-secret-token"
+      },
+      prompts: {
+        async input(prompt) {
+          prompts.push(prompt);
+          return "no";
+        }
+      },
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "SETUP_MUTATION_CANCELLED"
+  );
+
+  assert.deepEqual(prompts.map((prompt) => prompt.name), ["setup_mutation_review"]);
+  assert.doesNotMatch(JSON.stringify(prompts), /super-secret-token/u);
+  assert.equal(fizzy.calls.some((call) => call[0] === "ensureWebhook"), false);
+  await assert.rejects(() => readFile(configPath, "utf8"));
 });
 
 test("runSetup rejects unsafe existing golden-ticket structure before writing config", async () => {

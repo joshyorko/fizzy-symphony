@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { runStatusCommand } from "../src/status-cli.js";
+import { runDashboardCommand } from "../src/dashboard.js";
 
 function ioCapture() {
   return {
@@ -78,4 +79,62 @@ test("status CLI exits 3 with a clear message when no live instance is reachable
 
   assert.equal(exitCode, 3);
   assert.match(io.stderr.text, /No live fizzy-symphony instance found/);
+});
+
+test("dashboard CLI uses the same status discovery and prints non-TTY dashboard fallback", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-dashboard-cli-"));
+  await writeFile(
+    join(dir, "instance-a.json"),
+    `${JSON.stringify({
+      instance_id: "instance-a",
+      endpoint: { base_url: "http://127.0.0.1:4567" },
+      updated_at: "2026-04-29T12:00:00.000Z"
+    })}\n`,
+    "utf8"
+  );
+  const io = ioCapture();
+
+  const exitCode = await runDashboardCommand(["--registry-dir", dir, "--once"], io, {
+    fetch: async () => ({ ok: true, json: async () => statusSnapshot() })
+  });
+
+  assert.equal(exitCode, 0);
+  assert.match(io.stdout.text, /fizzy-symphony dashboard/u);
+  assert.match(io.stdout.text, /Boards: 1/u);
+  assert.match(io.stdout.text, /Active runs: 1/u);
+  assert.match(io.stdout.text, /Recent failures: 1/u);
+});
+
+test("dashboard CLI discovers endpoints from --config registry before default endpoint", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-dashboard-config-"));
+  const registryDir = join(dir, "instances");
+  const configPath = join(dir, "config.json");
+  await mkdir(registryDir, { recursive: true });
+  await writeFile(configPath, `${JSON.stringify({
+    server: { registry_dir: registryDir, heartbeat_interval_ms: 1000 }
+  })}\n`, "utf8");
+  await writeFile(join(registryDir, "instance-b.json"), `${JSON.stringify({
+    instance_id: "instance-b",
+    pid: process.pid,
+    endpoint: { base_url: "http://127.0.0.1:49171" },
+    heartbeat_at: "2026-04-29T12:00:04.000Z"
+  })}\n`, "utf8");
+  const io = {
+    ...ioCapture(),
+    env: { FIZZY_API_TOKEN: "token" },
+    now: () => new Date("2026-04-29T12:00:05.000Z"),
+    isPidAlive: () => true
+  };
+  const requested = [];
+
+  const exitCode = await runDashboardCommand(["--config", configPath, "--instance", "instance-b", "--once"], io, {
+    fetch: async (url) => {
+      requested.push(url);
+      return { ok: true, json: async () => statusSnapshot() };
+    }
+  });
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(requested, ["http://127.0.0.1:49171/status"]);
+  assert.match(io.stdout.text, /fizzy-symphony dashboard/u);
 });

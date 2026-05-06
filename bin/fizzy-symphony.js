@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_FIZZY_API_URL, createCliFizzyClient, createCliRunner, resolveFizzyClientConfig } from "../src/client-factories.js";
 import { writeOpener } from "../src/cli-opener.js";
 import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
+import { runDashboardCommand } from "../src/dashboard.js";
 import { startDaemon } from "../src/daemon.js";
 import { isFizzySymphonyError } from "../src/errors.js";
 import { runSetup } from "../src/setup.js";
@@ -17,27 +18,33 @@ import { discoverStatusEndpoints } from "../src/status-discovery.js";
 import { validateStartup } from "../src/validation.js";
 
 export async function main(args = process.argv.slice(2), io = defaultIo()) {
-  const command = args[0];
+  const command = args[0]?.startsWith("-") ? undefined : args[0];
+  const commandArgs = command ? args.slice(1) : args;
 
   try {
     if (isHelpCommand(args)) {
       return usage(0, io);
+    } else if (!command) {
+      if (!bareEntryArgsAllowed(commandArgs)) return usage(1, io);
+      return await smartEntryCommand(commandArgs, io);
     } else if (command === "init") {
-      return await initCommand(args.slice(1), io);
+      return await initCommand(commandArgs, io);
     } else if (command === "setup") {
-      return await setupCommand(args.slice(1), io);
+      return await setupCommand(commandArgs, io);
     } else if (command === "validate") {
-      return await validateCommand(args.slice(1), io);
+      return await validateCommand(commandArgs, io);
     } else if (command === "daemon" || command === "start") {
-      await daemonCommand(args.slice(1), io, { commandName: command });
+      await daemonCommand(commandArgs, io, { commandName: command });
     } else if (command === "status") {
       if (args.includes("--config")) {
-        await statusDiscoveryCommand(args.slice(1), io);
+        await statusDiscoveryCommand(commandArgs, io);
         return 0;
       }
-      return runStatusCommand(args.slice(1), io);
+      return runStatusCommand(commandArgs, io);
+    } else if (command === "dashboard") {
+      return runDashboardCommand(commandArgs, io, { fetch: io.fetch });
     } else {
-      return usage(command ? 1 : 0, io);
+      return usage(1, io);
     }
     return 0;
   } catch (error) {
@@ -79,12 +86,22 @@ async function setupCommand(args, io) {
 }
 
 async function initCommand(args, io) {
+  io.stderr.write("fizzy-symphony init is deprecated; use `fizzy-symphony setup`.\n");
   return setupCommandWithOptions(args, io, {
     defaultSetupMode: "create_starter",
-    createStarterWorkflow: true,
     friendlyOutput: true,
     promptForCredentials: true
   });
+}
+
+async function smartEntryCommand(args, io) {
+  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
+  try {
+    await access(configPath);
+    return runDashboardCommand(args, io, { fetch: io.fetch });
+  } catch {
+    return setupCommand(args, io);
+  }
 }
 
 async function setupCommandWithOptions(args, io, commandOptions = {}) {
@@ -103,10 +120,11 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     });
   }
 
+  const prompts = promptProvider(io);
   const env = await envWithCliOverrides(baseEnv, args, {
     dotenvBasePath: optionValue(args, "--workspace-repo") ?? ".",
     promptForCredentials: commandOptions.promptForCredentials,
-    prompts: promptProvider(io)
+    prompts
   });
   const dependencyConfig = resolveFizzyClientConfig({
     config: { runner: { preferred: "cli_app_server" } },
@@ -119,7 +137,7 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     configPath,
     fizzy,
     runner,
-    prompts: io.prompts,
+    prompts,
     env,
     apiUrl: dependencyConfig.fizzy.api_url,
     account: optionValue(args, "--account") ?? undefined,
@@ -127,11 +145,7 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     setupMode: setupModeForArgs(args, commandOptions.defaultSetupMode),
     workspaceRepo: optionValue(args, "--workspace-repo") ?? ".",
     starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
-    createStarterWorkflow: commandOptions.createStarterWorkflow ||
-      args.includes("--starter") ||
-      args.includes("--new-board") ||
-      args.includes("--create-starter-workflow") ||
-      args.includes("--starter-workflow"),
+    workflowPolicy: await workflowPolicyForArgs(args, prompts, optionValue(args, "--workspace-repo") ?? "."),
     createSmokeTestCard: args.includes("--smoke-card"),
     botUserId: optionValue(args, "--bot-user-id") ?? undefined,
     webhook: webhookOptions(args)
@@ -258,10 +272,71 @@ function setupCommandOptionsForArgs(args) {
   if (!isGuidedSetupArgs(args)) return {};
   return {
     defaultSetupMode: "create_starter",
-    createStarterWorkflow: true,
     friendlyOutput: true,
     promptForCredentials: true
   };
+}
+
+async function workflowPolicyForArgs(args, prompts, workspaceRepo) {
+  if (args.includes("--create-starter-workflow") || args.includes("--starter-workflow")) return { action: "create" };
+  if (args.includes("--augment-workflow")) return { action: "append" };
+  if (args.includes("--no-workflow-change")) return { action: "skip" };
+  const prompted = await promptWorkflowPolicy(prompts, workspaceRepo);
+  if (prompted) return prompted;
+  return { action: "skip" };
+}
+
+async function promptWorkflowPolicy(prompts, workspaceRepo) {
+  if (!prompts?.input) return null;
+  const exists = await pathExists(join(workspaceRepo, "WORKFLOW.md"));
+  const defaultValue = exists ? "leave" : "skip";
+  const answer = await prompts.input({
+    name: "workflow_action",
+    message: exists
+      ? "WORKFLOW.md action: leave, append, or skip"
+      : "WORKFLOW.md action: type create or yes to create, or press Enter to skip",
+    defaultValue
+  });
+  const normalized = String(answer || defaultValue).trim().toLowerCase();
+  if (normalized === "create" || normalized === "yes") return { action: "create" };
+  if (normalized === "append" || normalized === "augment") return { action: "append" };
+  return { action: "skip" };
+}
+
+const BARE_ENTRY_VALUE_FLAGS = new Set([
+  "--config",
+  "--endpoint",
+  "--registry-dir",
+  "--instance",
+  "--refresh-ms"
+]);
+const BARE_ENTRY_BOOLEAN_FLAGS = new Set([
+  "--once",
+  "--no-default-endpoint"
+]);
+
+function bareEntryArgsAllowed(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg.startsWith("-")) return false;
+    if (BARE_ENTRY_VALUE_FLAGS.has(arg)) {
+      if (!args[index + 1] || args[index + 1].startsWith("-")) return false;
+      index += 1;
+      continue;
+    }
+    if (BARE_ENTRY_BOOLEAN_FLAGS.has(arg)) continue;
+    return false;
+  }
+  return true;
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isGuidedSetupArgs(args) {
@@ -538,13 +613,13 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
-    "  fizzy-symphony init [--api-url url] [--token token] [--dotenv path] [--workspace-repo path]",
-    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path]",
+    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--create-starter-workflow]",
     "  fizzy-symphony setup --template-only [--config path]",
-    "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path]",
+    "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",
     "  fizzy-symphony start [--config path]",
     "  fizzy-symphony daemon [--config path]",
+    "  fizzy-symphony dashboard [--config path] [--endpoint url] [--registry-dir path] [--refresh-ms n]",
     "  fizzy-symphony status [--config path] [--instance id]",
     "  fizzy-symphony status [--registry-dir path] [--endpoint url]"
   ].join("\n");
