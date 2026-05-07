@@ -1,3 +1,5 @@
+import { redactGitRemoteUrl } from "./git-source-cache.js";
+
 const RESET = "\x1b[0m";
 const COLORS = {
   dim: "38;2;100;116;139",
@@ -88,7 +90,10 @@ export function formatDaemonStartSummary(daemon, options = {}) {
   const endpoint = daemon.endpoint?.base_url ?? snapshot.endpoint?.base_url ?? "unknown";
   const configPath = options.configPath ?? snapshot.config_path ?? daemon.instance?.record?.config_path;
   const workspace = defaultWorkspace(daemon.config);
-  const sourceRepo = daemon.config.workspaces?.default_repo ?? workspace?.repo;
+  const sourceConfig = workspace?.source ? daemon.config.workspaces?.sources?.[workspace.source] : null;
+  const sourceRepo = sourceConfig?.remote_url
+    ? redactGitRemoteUrl(sourceConfig.remote_url)
+    : daemon.config.workspaces?.default_repo ?? workspace?.repo;
   const worktreeRoot = workspace?.worktree_root ?? daemon.config.workspaces?.root;
   const dashboardCommand = endpoint === "unknown"
     ? "fizzy-symphony dashboard"

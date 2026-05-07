@@ -590,8 +590,9 @@ async function validateWorkspaceRoots(config, errors) {
     const paths = [
       ["workspaces.root", config.workspaces?.root],
       ["workspaces.metadata_root", config.workspaces?.metadata_root],
+      ["workspaces.source_cache_root", config.workspaces?.source_cache_root],
       ...Object.entries(registry).flatMap(([name, workspace]) => [
-        [`workspaces.registry.${name}.repo`, workspace.repo],
+        ...(workspace.source ? [] : [[`workspaces.registry.${name}.repo`, workspace.repo]]),
         [`workspaces.registry.${name}.worktree_root`, workspace.worktree_root]
       ])
     ];
@@ -611,6 +612,7 @@ async function validateWorkspaceRoots(config, errors) {
   }
 
   for (const [name, workspace] of Object.entries(registry)) {
+    if (workspace.source) continue;
     if (!workspace.repo) continue;
     try {
       await access(workspace.repo);
@@ -627,6 +629,7 @@ async function validateWorkflowFiles(config, errors) {
   if (config.workflow?.fallback_enabled) return;
 
   for (const [name, workspace] of Object.entries(config.workspaces?.registry ?? {})) {
+    if (workspace.source) continue;
     const workflowPath = join(workspace.repo, workspace.workflow_path || "WORKFLOW.md");
     try {
       await access(workflowPath);

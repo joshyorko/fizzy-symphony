@@ -8,6 +8,7 @@ import {
   writeOperatorConfig
 } from "./config.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
+import { isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
 import { formatSetupMutationReview } from "./terminal-ui.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
@@ -33,6 +34,8 @@ export async function runSetup(options = {}) {
     env = process.env,
     apiUrl,
     workspaceRepo = ".",
+    workspaceRepoRef,
+    sourceCacheRoot,
     webhook = {},
     prompts
   } = options;
@@ -150,6 +153,8 @@ export async function runSetup(options = {}) {
     apiUrl,
     botUserId: options.botUserId ?? "",
     workspaceRepo,
+    workspaceRepoRef,
+    sourceCacheRoot,
     noDispatch,
     webhook,
     managedWebhookIdsByBoard: Object.fromEntries(
@@ -186,9 +191,9 @@ export async function runSetup(options = {}) {
       account,
       configPath,
       setupMode,
-      workspaceRepo,
+      workspaceRepo: displayWorkspaceRepo(workspaceRepo),
       selectedBoardIds,
-      starterBoardName: options.starterBoardName ?? `Agent Playground: ${basename(resolve(workspaceRepo))}`,
+      starterBoardName: options.starterBoardName ?? `Agent Playground: ${workspaceRepoName(workspaceRepo)}`,
       workflowPlan,
       webhook
     }));
@@ -278,7 +283,7 @@ async function selectBoardIds(boards, options, prompts) {
 }
 
 async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
-  const name = options.starterBoardName ?? `Agent Playground: ${basename(resolve(workspaceRepo))}`;
+  const name = options.starterBoardName ?? `Agent Playground: ${workspaceRepoName(workspaceRepo)}`;
   const plan = {
     account,
     name,
@@ -398,6 +403,10 @@ function workflowPolicyFromOptions(options) {
 }
 
 async function planWorkflow(workspaceRepo, policy = {}) {
+  if (isRemoteGitUrl(workspaceRepo)) {
+    const workflowPath = `${redactGitRemoteUrl(workspaceRepo)}#WORKFLOW.md`;
+    return { action: "none", path: workflowPath, result: { action: "remote_skipped", path: workflowPath } };
+  }
   const workflowPath = join(workspaceRepo, "WORKFLOW.md");
   let existing;
 
@@ -484,6 +493,23 @@ function setupMutationReviewPlan({ account, configPath, setupMode, workspaceRepo
     } : { manage: false },
     mutations
   };
+}
+
+function displayWorkspaceRepo(workspaceRepo) {
+  return isRemoteGitUrl(workspaceRepo) ? redactGitRemoteUrl(workspaceRepo) : workspaceRepo;
+}
+
+function workspaceRepoName(workspaceRepo) {
+  if (!isRemoteGitUrl(workspaceRepo)) return basename(resolve(workspaceRepo));
+  const redacted = redactGitRemoteUrl(workspaceRepo);
+  if (/^[^@\s]+@[^:\s]+:.+$/u.test(redacted)) {
+    return basename(redacted.split(":").slice(1).join(":")).replace(/\.git$/u, "");
+  }
+  try {
+    return basename(new URL(redacted).pathname).replace(/\.git$/u, "") || "repo";
+  } catch {
+    return "repo";
+  }
 }
 
 function redactedUrl(value) {

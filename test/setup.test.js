@@ -553,6 +553,39 @@ test("runSetup writes default config paths that resolve to the selected workspac
   assert.equal(startup.ok, true, JSON.stringify(startup.errors));
 });
 
+test("runSetup writes managed remote source config when workspaceRepo is a Git URL", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-remote-setup-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await runSetup({
+    configPath,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: "https://user:secret@example.test/owner/repo.git",
+    workspaceRepoRef: "main",
+    sourceCacheRoot: join(dir, ".cache", "sources"),
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  const config = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+  assert.equal(config.workspaces.registry.app.source, "app");
+  assert.equal(config.workspaces.registry.app.repo, undefined);
+  assert.equal(config.workspaces.sources.app.type, "git_remote");
+  assert.equal(config.workspaces.sources.app.remote_url, "https://example.test/owner/repo.git");
+  assert.equal(config.workspaces.sources.app.base_ref, "main");
+  assert.equal(config.workspaces.source_cache_root, join(dir, ".cache", "sources"));
+  assert.equal(config.safety.allowed_roots.includes(join(dir, ".cache", "sources")), true);
+
+  const startup = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+  assert.equal(startup.ok, true, JSON.stringify(startup.errors));
+});
+
 test("runSetup manages webhooks by listing, creating, updating, and reactivating without requiring an optional secret", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-managed-webhooks-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");

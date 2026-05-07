@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
+import { isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
 
 const TEMPLATE_PATH = new URL("../config.example.yml", import.meta.url);
 const DEFAULT_FIZZY_API_URL = "https://app.fizzy.do";
@@ -38,12 +39,21 @@ const boardEntrySchema = {
 
 const workspaceEntrySchema = {
   repo: true,
+  source: true,
   isolation: true,
   base_ref: true,
   worktree_root: true,
   branch_prefix: true,
   workflow_path: true,
   require_clean_source: true
+};
+
+const workspaceSourceSchema = {
+  type: true,
+  remote_url: true,
+  base_ref: true,
+  fetch_depth: true,
+  auth: true
 };
 
 const schema = {
@@ -149,6 +159,8 @@ const schema = {
     root: true,
     metadata_root: true,
     default_isolation: true,
+    source_cache_root: true,
+    sources: { __map: workspaceSourceSchema },
     default_repo: true,
     registry: { __map: workspaceEntrySchema },
     retry: {
@@ -234,12 +246,21 @@ export function generateAnnotatedConfig(options = {}) {
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
     workspaceRepo = ".",
+    workspaceRepoRef,
+    sourceCacheRoot,
     allowedRoots
   } = options;
 
   const boardEntries = boards?.length ? boards : [board];
   const workspaceRepoPath = relativePathForConfig(configDir, workspaceRepo);
-  const safetyAllowedRoots = allowedRoots?.length ? allowedRoots : uniqueStrings([workspaceRepoPath, "."]);
+  const remoteWorkspaceRepo = isRemoteGitUrl(workspaceRepo);
+  const sourceCachePath = relativePathForConfig(
+    configDir,
+    sourceCacheRoot ?? resolve(configDir, defaultLocalPathForConfig(".fizzy-symphony/sources", configDir))
+  );
+  const safetyAllowedRoots = allowedRoots?.length
+    ? allowedRoots
+    : uniqueStrings(remoteWorkspaceRepo ? [sourceCachePath, "."] : [workspaceRepoPath, "."]);
   let template = readFileSync(TEMPLATE_PATH, "utf8");
   template = template.replace(/account: my-account/u, `account: ${yamlScalar(account)}`);
   template = template.replace(/api_url: https:\/\/app\.fizzy\.do/u, `api_url: ${yamlScalar(apiUrl)}`);
@@ -256,8 +277,28 @@ export function generateAnnotatedConfig(options = {}) {
   template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
   template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
   template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret_env ? `$${webhook.secret_env}` : "")}`);
-  template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(workspaceRepoPath)}`);
-  template = template.replace(/\n      repo: \.\n/u, `\n      repo: ${yamlScalar(workspaceRepoPath)}\n`);
+  if (remoteWorkspaceRepo) {
+    template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(".")}`);
+    template = template.replace(
+      /  registry:\n    app:\n      repo: \.\n/u,
+      [
+        `  source_cache_root: ${yamlScalar(sourceCachePath)}`,
+        "  sources:",
+        "    app:",
+        "      type: git_remote",
+        `      remote_url: ${yamlScalar(redactGitRemoteUrl(workspaceRepo))}`,
+        `      base_ref: ${yamlScalar(workspaceRepoRef ?? "main")}`,
+        "      fetch_depth: 0",
+        "      auth: auto",
+        "  registry:",
+        "    app:",
+        "      source: app"
+      ].join("\n") + "\n"
+    );
+  } else {
+    template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(workspaceRepoPath)}`);
+    template = template.replace(/\n      repo: \.\n/u, `\n      repo: ${yamlScalar(workspaceRepoPath)}\n`);
+  }
   template = template.replace(
     /  allowed_roots:\n(?:    - .+\n)+/u,
     `  allowed_roots:\n${renderStringList(safetyAllowedRoots, 4)}\n`
@@ -295,12 +336,19 @@ export function generateOperatorConfig(options = {}) {
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
     workspaceRepo = ".",
+    workspaceRepoRef,
+    sourceCacheRoot,
     noDispatch = false,
     ignoredDirtyPaths = DEFAULT_SETUP_IGNORED_DIRTY_PATHS
   } = options;
 
   const boardEntries = boards?.length ? boards : [board];
   const workspaceRepoPath = relativePathForConfig(configDir, workspaceRepo);
+  const remoteWorkspaceRepo = isRemoteGitUrl(workspaceRepo);
+  const sourceCachePath = relativePathForConfig(
+    configDir,
+    sourceCacheRoot ?? resolve(configDir, defaultLocalPathForConfig(".fizzy-symphony/sources", configDir))
+  );
 
   const lines = [
     "# fizzy-symphony",
@@ -337,11 +385,22 @@ export function generateOperatorConfig(options = {}) {
     ] : []),
     "",
     "workspaces:",
-    `  default_repo: ${yamlScalar(workspaceRepoPath)}`,
+    ...(remoteWorkspaceRepo
+      ? [
+        `  source_cache_root: ${yamlScalar(sourceCachePath)}`,
+        "  sources:",
+        "    app:",
+        "      type: git_remote",
+        `      remote_url: ${yamlScalar(redactGitRemoteUrl(workspaceRepo))}`,
+        `      base_ref: ${yamlScalar(workspaceRepoRef ?? "main")}`,
+        "      fetch_depth: 0",
+        "      auth: auto"
+      ]
+      : [`  default_repo: ${yamlScalar(workspaceRepoPath)}`]),
     "  registry:",
     "    app:",
-    `      repo: ${yamlScalar(workspaceRepoPath)}`,
-    "      base_ref: HEAD",
+    ...(remoteWorkspaceRepo ? ["      source: app"] : [`      repo: ${yamlScalar(workspaceRepoPath)}`]),
+    ...(remoteWorkspaceRepo ? [] : ["      base_ref: HEAD"]),
     "      workflow_path: WORKFLOW.md",
     "      require_clean_source: true",
     "",
@@ -351,7 +410,7 @@ export function generateOperatorConfig(options = {}) {
     "",
     "safety:",
     "  allowed_roots:",
-    renderStringList(uniqueStrings([workspaceRepoPath, "."]), 4),
+    renderStringList(uniqueStrings(remoteWorkspaceRepo ? [sourceCachePath, "."] : [workspaceRepoPath, "."]), 4),
     "  dirty_source_repo_policy: fail",
     "  ignored_dirty_paths:",
     renderStringList(ignoredDirtyPaths, 4)
@@ -424,6 +483,15 @@ function validateConfigValues(config) {
   validateWorkspaceIsolation(config.workspaces?.default_isolation, "workspaces.default_isolation");
   for (const [name, workspace] of Object.entries(config.workspaces?.registry ?? {})) {
     validateWorkspaceIsolation(workspace?.isolation, `workspaces.registry.${name}.isolation`);
+    if (workspace?.source && !config.workspaces?.sources?.[workspace.source]) {
+      throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Workspace source must reference a declared workspaces.sources entry.", {
+        path: `workspaces.registry.${name}.source`,
+        value: workspace.source
+      });
+    }
+  }
+  for (const [name, source] of Object.entries(config.workspaces?.sources ?? {})) {
+    validateWorkspaceSource(source, `workspaces.sources.${name}`);
   }
 
   validateServerPort(config.server ?? {});
@@ -465,6 +533,29 @@ function validateWorkspaceIsolation(value, path) {
       "Only git_worktree workspace isolation is implemented for live daemon dispatch.",
       { path, value, supported: ["git_worktree"] }
     );
+  }
+}
+
+function validateWorkspaceSource(source = {}, path) {
+  if (!source.type) return;
+  validateEnum(source.type, ["git_remote"], `${path}.type`);
+  validateEnum(source.auth, ["auto", "gh"], `${path}.auth`);
+  if (!source.remote_url) {
+    throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace sources require remote_url.", {
+      path: `${path}.remote_url`
+    });
+  }
+  if (!isRemoteGitUrl(source.remote_url)) {
+    throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace source remote_url must be a supported Git URL.", {
+      path: `${path}.remote_url`,
+      value: redactGitRemoteUrl(source.remote_url)
+    });
+  }
+  if (!Number.isInteger(source.fetch_depth) || source.fetch_depth < 0) {
+    throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace source fetch_depth must be a non-negative integer.", {
+      path: `${path}.fetch_depth`,
+      value: source.fetch_depth
+    });
   }
 }
 
@@ -671,6 +762,7 @@ function resolveRelativePaths(config, configDir) {
   setPath(config, ["server", "registry_dir"], resolveFrom(configDir, config.server?.registry_dir));
   setPath(config, ["workspaces", "root"], resolveFrom(configDir, config.workspaces?.root));
   setPath(config, ["workspaces", "metadata_root"], resolveFrom(configDir, config.workspaces?.metadata_root));
+  setPath(config, ["workspaces", "source_cache_root"], resolveFrom(configDir, config.workspaces?.source_cache_root));
   setPath(config, ["workspaces", "default_repo"], resolveFrom(configDir, config.workspaces?.default_repo));
   setPath(config, ["workflow", "fallback_path"], resolveFrom(configDir, config.workflow?.fallback_path));
   setPath(config, ["observability", "state_dir"], resolveFrom(configDir, config.observability?.state_dir));
@@ -732,6 +824,14 @@ function applyConfigDefaults(input = {}, options = {}) {
   const inputBoardEntries = Array.isArray(original.boards?.entries) ? original.boards.entries : [];
   config.boards.entries = inputBoardEntries.map((entry) => deepMerge(defaultBoardEntry(defaultModel), entry));
 
+  const inputSources = isPlainObject(original.workspaces?.sources) ? original.workspaces.sources : {};
+  config.workspaces.sources = Object.fromEntries(
+    Object.entries(inputSources).map(([name, source]) => [
+      name,
+      deepMerge(defaultWorkspaceSourceEntry(source), source)
+    ])
+  );
+
   const defaultRepo = config.workspaces?.default_repo ?? ".";
   const inputRegistry = original.workspaces?.registry;
   const registryEntries = isPlainObject(inputRegistry) && Object.keys(inputRegistry).length > 0
@@ -740,10 +840,12 @@ function applyConfigDefaults(input = {}, options = {}) {
   config.workspaces.registry = Object.fromEntries(
     Object.entries(registryEntries).map(([name, workspace]) => [
       name,
-      deepMerge(defaultWorkspaceEntry(defaultRepo, options), workspace)
+      deepMerge(defaultWorkspaceEntry(defaultRepo, options, workspace), workspace)
     ])
   );
-  if (config.workspaces.registry.app && !original.workspaces?.registry?.app?.repo) {
+  if (config.workspaces.registry.app &&
+    !original.workspaces?.registry?.app?.repo &&
+    !original.workspaces?.registry?.app?.source) {
     config.workspaces.registry.app.repo = defaultRepo;
   }
 
@@ -855,7 +957,9 @@ function defaultConfig(options = {}) {
       root: local(".fizzy-symphony/workspaces"),
       metadata_root: local(".fizzy-symphony/run/workspaces"),
       default_isolation: "git_worktree",
+      source_cache_root: local(".fizzy-symphony/sources"),
       default_repo: ".",
+      sources: {},
       registry: {},
       retry: { workspace_policy: "reuse" }
     },
@@ -943,16 +1047,29 @@ function defaultBoardEntry(defaultModel = DEFAULT_CODEX_MODEL) {
   };
 }
 
-function defaultWorkspaceEntry(defaultRepo = ".", options = {}) {
-  return {
-    repo: defaultRepo,
+function defaultWorkspaceEntry(defaultRepo = ".", options = {}, workspace = {}) {
+  return omitUndefined({
+    repo: workspace?.source ? undefined : defaultRepo,
     isolation: "git_worktree",
     base_ref: "HEAD",
     worktree_root: defaultLocalPathForConfig(".fizzy-symphony/worktrees", options.configDir),
     branch_prefix: "fizzy",
     workflow_path: "WORKFLOW.md",
     require_clean_source: true
-  };
+  });
+}
+
+function defaultWorkspaceSourceEntry(source = {}) {
+  if (source?.type === "git_remote" || source?.remote_url) {
+    return {
+      type: "git_remote",
+      remote_url: "",
+      base_ref: "main",
+      fetch_depth: 0,
+      auth: "auto"
+    };
+  }
+  return {};
 }
 
 function defaultLocalPathForConfig(path, configDir) {
@@ -1000,6 +1117,10 @@ function isPlainObject(value) {
 function clone(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
+}
+
+function omitUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 function parseGeneratedYaml(text, sourcePath) {

@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import {
   branchName,
   cleanupWorkspace,
+  createWorkspaceManager,
   prepareWorkspace,
   preflightWorkspaceSource,
   resolveWorkspaceIdentity,
@@ -143,6 +144,59 @@ test("resolveWorkspaceIdentity builds deterministic identity, key, path, and bra
   const shortIdentity = identity.workspace_identity_digest.replace(/^sha256:/u, "").slice(0, 12);
   assert.equal(branch, `fizzy/board_1-card-42-card_abc_123-app-${shortIdentity}`);
   assert.equal(branchName(identity), branch);
+});
+
+test("createWorkspaceManager resolves managed remote sources into stable identities and worktrees", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-remote-workspace-"));
+  const source = await initSourceRepo(dir);
+  const remote = join(dir, "remote.git");
+  await git(dir, ["clone", "--bare", source, remote]);
+  const head = await git(source, ["rev-parse", "HEAD"]);
+
+  const config = baseConfig(dir);
+  config.workspaces.source_cache_root = join(dir, ".fizzy-symphony", "sources-a");
+  config.workspaces.registry.app = {
+    source: "app",
+    isolation: "git_worktree",
+    worktree_root: join(dir, ".fizzy-symphony", "worktrees"),
+    branch_prefix: "fizzy",
+    workflow_path: "WORKFLOW.md",
+    require_clean_source: true
+  };
+  config.workspaces.sources = {
+    app: {
+      type: "git_remote",
+      remote_url: `file://${remote}`,
+      base_ref: "main",
+      fetch_depth: 0,
+      auth: "auto"
+    }
+  };
+  config.safety.allowed_roots = [dir];
+
+  const manager = createWorkspaceManager();
+  const identity = await manager.resolveIdentity({ config, route: route(), card: card() });
+
+  assert.equal(identity.source_kind, "git_remote");
+  assert.equal(identity.source_remote_url, `file://${remote}`);
+  assert.equal(identity.source_fetched_commit_sha, head);
+  assert.match(identity.source_cache_path, /sources-a\/git-[a-f0-9]{16}$/u);
+  const repoKey = shortDigest(`${identity.source_remote_url}@${head}`);
+  assert.equal(identity.workspace_key, `board_1-app-card-42-card_abcdef123456-${repoKey}`);
+
+  const configWithSecondCache = structuredClone(config);
+  configWithSecondCache.workspaces.source_cache_root = join(dir, ".fizzy-symphony", "sources-b");
+  const secondIdentity = await manager.resolveIdentity({ config: configWithSecondCache, route: route(), card: card() });
+  assert.equal(secondIdentity.workspace_key, identity.workspace_key);
+  assert.notEqual(secondIdentity.source_cache_path, identity.source_cache_path);
+
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  assert.equal(await git(prepared.workspace_path, ["rev-parse", "HEAD"]), head);
+  assert.equal(await git(prepared.workspace_path, ["rev-parse", "--show-toplevel"]), prepared.workspace_path);
 });
 
 test("resolveWorkspaceIdentity rejects unknown workspace names without falling back", async () => {
