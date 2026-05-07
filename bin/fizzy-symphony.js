@@ -15,7 +15,15 @@ import { isFizzySymphonyError } from "../src/errors.js";
 import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
+import {
+  createClackPromptProvider,
+  createHumanDaemonLogger,
+  formatDaemonStartSummary,
+  formatSetupSuccess,
+  supportsColor
+} from "../src/terminal-ui.js";
 import { validateStartup } from "../src/validation.js";
+import { createLogger } from "../src/logger.js";
 
 export async function main(args = process.argv.slice(2), io = defaultIo()) {
   const command = args[0]?.startsWith("-") ? undefined : args[0];
@@ -120,7 +128,7 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     });
   }
 
-  const prompts = promptProvider(io);
+  const prompts = await promptProvider(io);
   const env = await envWithCliOverrides(baseEnv, args, {
     dotenvBasePath: optionValue(args, "--workspace-repo") ?? ".",
     promptForCredentials: commandOptions.promptForCredentials,
@@ -152,7 +160,9 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
   });
 
   if (commandOptions.friendlyOutput) {
-    io.stdout.write(formatInitSuccess(result));
+    io.stdout.write(formatSetupSuccess(result, {
+      color: supportsColor(io.env ?? process.env, io.stdout)
+    }));
     return 0;
   }
 
@@ -219,13 +229,25 @@ async function daemonCommand(args, io, options = {}) {
   const env = await envWithCliOverrides(io.env ?? process.env, args, {
     dotenvBasePath: envBaseForConfig(configPath)
   });
+  const daemonOptions = io.daemonOptions ?? {};
+  const logger = daemonOptions.dependencies?.logger ?? io.logger ?? createDaemonLogger(io);
+  const dependencies = {
+    ...(daemonOptions.dependencies ?? {}),
+    logger
+  };
   const daemon = await startDaemon({
     configPath,
     env,
     signalProcess: io.signalProcess ?? process,
-    ...(io.daemonOptions ?? {})
+    ...daemonOptions,
+    dependencies
   });
 
+  if (isInteractiveStderr(io)) {
+    io.stderr.write(formatDaemonStartSummary(daemon, {
+      color: supportsColor(io.env ?? process.env, io.stderr)
+    }));
+  }
   io.stdout.write(`${JSON.stringify({
     ok: true,
     command: options.commandName ?? "daemon",
@@ -236,6 +258,11 @@ async function daemonCommand(args, io, options = {}) {
 
   await io.daemonStarted?.(daemon);
   await daemon.stopped;
+}
+
+function createDaemonLogger(io) {
+  if (isInteractiveStderr(io)) return createHumanDaemonLogger(io);
+  return createLogger({ writer: io.stderr });
 }
 
 function optionValue(args, name) {
@@ -287,8 +314,12 @@ async function workflowPolicyForArgs(args, prompts, workspaceRepo) {
 }
 
 async function promptWorkflowPolicy(prompts, workspaceRepo) {
+  const workflowPath = join(workspaceRepo, "WORKFLOW.md");
+  const exists = await pathExists(workflowPath);
+  if (prompts?.confirmWorkflowPolicy) {
+    return prompts.confirmWorkflowPolicy({ exists, path: workflowPath });
+  }
   if (!prompts?.input) return null;
-  const exists = await pathExists(join(workspaceRepo, "WORKFLOW.md"));
   const defaultValue = exists ? "leave" : "skip";
   const answer = await prompts.input({
     name: "workflow_action",
@@ -448,26 +479,8 @@ function nonEmpty(value) {
   return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
 }
 
-function formatInitSuccess(result) {
-  const board = result.boards[0];
-  const boardName = board?.name ?? board?.label ?? board?.id ?? "selected board";
-  const boardId = board?.id ?? "unknown";
-  return [
-    "fizzy-symphony is ready.",
-    "",
-    `Config: ${result.path}`,
-    `Board: ${boardName} (${boardId})`,
-    "Route: Ready for Agents -> Done",
-    `Runner: ${result.runner.kind}`,
-    "",
-    "Start:",
-    `  fizzy-symphony start --config ${result.path}`,
-    "",
-    "Use it:",
-    "  Create a normal Fizzy card in Ready for Agents.",
-    "  The golden card is already the route; do not edit it for the smoke test.",
-    ""
-  ].join("\n");
+function isInteractiveStderr(io) {
+  return Boolean(io.stderr?.isTTY) && !nonEmpty(io.env?.CI);
 }
 
 function formatFriendlyError(error, command) {
@@ -512,8 +525,10 @@ function friendlyRemediation(error) {
   return [];
 }
 
-function promptProvider(io) {
+async function promptProvider(io) {
   if (io.prompts) return io.prompts;
+  const clack = await createClackPromptProvider(io, io.env ?? process.env);
+  if (clack) return clack;
   return terminalPrompts(io);
 }
 

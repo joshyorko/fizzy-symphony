@@ -12,6 +12,8 @@ import { cardDigest } from "./domain.js";
 import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
 import { renderPrompt } from "./workflow.js";
 
+const MAX_LOGGED_DIRTY_PATHS = 10;
+
 export async function runReconciliationTick(options = {}) {
   const {
     config = {},
@@ -25,6 +27,7 @@ export async function runReconciliationTick(options = {}) {
     orchestratorState,
     routes,
     webhookEvents = [],
+    logger,
     now = () => new Date()
   } = options;
 
@@ -163,8 +166,35 @@ export async function runReconciliationTick(options = {}) {
   } catch (error) {
     recordLifecycle(status, orchestratorState);
     status?.recordPoll?.({ completedAt: currentIso(now), error });
+    logReconciliationError(logger, error, { config });
     throw error;
   }
+}
+
+function logReconciliationError(logger, error, { config = {} } = {}) {
+  if (!logger) return;
+
+  if (error?.code === "WORKSPACE_SOURCE_DIRTY") {
+    const dirtyPaths = Array.isArray(error.details?.dirty_paths) ? error.details.dirty_paths : [];
+    logger.warn?.("workspace.source_dirty_protected", {
+      code: error.code,
+      message: "Source repository has local changes; preserving work and skipping dispatch.",
+      source_repository_path: error.details?.source_repository_path,
+      dirty_paths: dirtyPaths.slice(0, MAX_LOGGED_DIRTY_PATHS),
+      dirty_paths_count: dirtyPaths.length,
+      dirty_paths_truncated: dirtyPaths.length > MAX_LOGGED_DIRTY_PATHS,
+      preserve_workspace: error.details?.preserve_workspace,
+      dirty_source_repo_policy: config.safety?.dirty_source_repo_policy ?? "fail",
+      remediation: "Commit, stash, or explicitly change the dirty source repo policy before retrying."
+    });
+    return;
+  }
+
+  logger.error?.("reconciliation.tick_failed", {
+    code: error?.code ?? "RECONCILIATION_TICK_FAILED",
+    message: error?.message ?? String(error),
+    details: error?.details
+  });
 }
 
 async function resolveWorkspaceIdentity({ config, card, decision, workspaceManager }) {

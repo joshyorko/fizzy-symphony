@@ -140,6 +140,7 @@ export async function startDaemon(options = {}) {
         orchestratorState,
         routes: status.status().routes,
         webhookEvents,
+        logger: dependencies.logger,
         now
       }),
       snapshot: () => writeSnapshot(status, config)

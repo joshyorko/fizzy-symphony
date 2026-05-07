@@ -47,7 +47,7 @@ test("public setup creates a starter workflow, starter board config, and human n
   assert.equal(result.exitCode, 0, result.stderr);
   const plainStdout = stripAnsi(result.stdout);
   assert.match(plainStdout, /FIZZY SYMPHONY/u);
-  assert.equal(plainStdout.indexOf("FIZZY SYMPHONY") < plainStdout.indexOf("fizzy-symphony is ready."), true);
+  assert.equal(plainStdout.indexOf("FIZZY SYMPHONY") < plainStdout.indexOf("fizzy-symphony is ready"), true);
   assert.match(result.stdout, /fizzy-symphony is ready/u);
   assert.match(result.stdout, /fizzy-symphony start --config/u);
   assert.match(result.stdout, /Create a normal Fizzy card in Ready for Agents/u);
@@ -310,7 +310,7 @@ test("guided setup uses terminal prompts for mutation review", async () => {
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(stripAnsi(result.stdout), /Review setup changes before applying/u);
+  assert.match(stripAnsi(result.stdout), /Review setup changes/u);
   assert.match(await readFile(configPath, "utf8"), /id: starter_board/u);
 });
 
@@ -852,13 +852,24 @@ function fakeStarterSetupFizzy() {
         id: "starter_golden",
         number: 100,
         title: request.title,
-        golden: Boolean(request.golden),
-        column_id: request.column_id,
+        golden: false,
+        column_id: "maybe",
         description: request.description,
-        tags: request.tags
+        tags: []
       };
       board.cards.push(card);
       return card;
+    },
+    async toggleTag(request) {
+      const card = board.cards.find((candidate) => candidate.number === request.card_number || candidate.id === request.card_id);
+      const tag = request.tag_title ?? request.tagTitle ?? request.tag;
+      if (card && tag && !card.tags.includes(tag)) card.tags.push(tag);
+      return { ok: true };
+    },
+    async moveCardToColumn(request) {
+      const card = board.cards.find((candidate) => candidate.number === request.card_number || candidate.id === request.card_id);
+      if (card) card.column_id = request.column_id;
+      return { ok: true };
     },
     async markGolden() {
       board.cards[0].golden = true;

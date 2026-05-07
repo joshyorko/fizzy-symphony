@@ -49,6 +49,103 @@ test("CLI start aliases daemon for the operator-facing command", async () => {
   assert.equal(payload.status, "running");
 });
 
+test("CLI start warns when workspace protection skips a dirty source repo", async () => {
+  const root = await tempProject("fizzy-symphony-start-dirty-source-");
+  const configPath = await writeConfig(root);
+  const calls = [];
+  const dirtyError = Object.assign(new Error("source repo is dirty"), {
+    code: "WORKSPACE_SOURCE_DIRTY",
+    details: {
+      preserve_workspace: true,
+      source_repository_path: root,
+      dirty_paths: ["README.md", "WORKFLOW.md", ".fizzy-symphony/config.yml"]
+    }
+  });
+
+  const result = await runCli(["start", "--config", configPath], {
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    daemonOptions: {
+      schedulerOptions: { immediate: false },
+      dependencies: {
+        ...daemonDependencies({
+          calls,
+          cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }]
+        }),
+        workspaceManagerFactory: () => ({
+          async resolveIdentity() {
+            calls.push("resolveWorkspace");
+            return { workspace_key: "workspace_card_1", workspace_identity_digest: "sha256:workspace" };
+          },
+          async preflight() {
+            calls.push("preflightWorkspace");
+            throw dirtyError;
+          }
+        })
+      }
+    },
+    async daemonStarted(daemon) {
+      await daemon.scheduler.tickNow("test").catch(() => {});
+      await daemon.stop("test");
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.ok(calls.includes("preflightWorkspace"));
+  const warning = result.stderr.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))[0];
+  assert.equal(warning.level, "warn");
+  assert.equal(warning.event, "workspace.source_dirty_protected");
+  assert.equal(warning.code, "WORKSPACE_SOURCE_DIRTY");
+  assert.equal(warning.message, "Source repository has local changes; preserving work and skipping dispatch.");
+  assert.equal(warning.source_repository_path, root);
+  assert.deepEqual(warning.dirty_paths, ["README.md", "WORKFLOW.md", ".fizzy-symphony/config.yml"]);
+  assert.equal(warning.dirty_paths_count, 3);
+});
+
+test("CLI start renders workspace protection warnings for interactive terminals", async () => {
+  const root = await tempProject("fizzy-symphony-start-dirty-source-tty-");
+  const configPath = await writeConfig(root);
+  const dirtyError = Object.assign(new Error("source repo is dirty"), {
+    code: "WORKSPACE_SOURCE_DIRTY",
+    details: {
+      preserve_workspace: true,
+      source_repository_path: root,
+      dirty_paths: ["README.md", "WORKFLOW.md"]
+    }
+  });
+
+  const result = await runCli(["start", "--config", configPath], {
+    stderrIsTTY: true,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    daemonOptions: {
+      schedulerOptions: { immediate: false },
+      dependencies: {
+        ...daemonDependencies({
+          cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }]
+        }),
+        workspaceManagerFactory: () => ({
+          async resolveIdentity() {
+            return { workspace_key: "workspace_card_1", workspace_identity_digest: "sha256:workspace" };
+          },
+          async preflight() {
+            throw dirtyError;
+          }
+        })
+      }
+    },
+    async daemonStarted(daemon) {
+      await daemon.scheduler.tickNow("test").catch(() => {});
+      await daemon.stop("test");
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stderr, /fizzy-symphony watching boards/u);
+  assert.match(result.stderr, /protecting your work/u);
+  assert.match(result.stderr, /Ready -> comment_once/u);
+  assert.match(result.stderr, /source repo has local changes, so this card was not dispatched/u);
+  assert.match(result.stderr, /README\.md/u);
+});
+
 test("CLI daemon reports startup validation blockers and cleans the owned registry file", async () => {
   const root = await tempProject("fizzy-symphony-daemon-cli-blocked-");
   const configPath = await writeConfig(root, { workflow: { fallback_enabled: false, fallback_path: "" } });
@@ -829,12 +926,16 @@ function mergeConfig(base, overrides) {
 async function runCli(args, options = {}) {
   let stdout = "";
   let stderr = "";
+  const stderrWriter = {
+    write: (chunk) => { stderr += chunk; },
+    isTTY: Boolean(options.stderrIsTTY)
+  };
   const exitCode = await cliMain(args, {
     env: options.env ?? process.env,
     daemonOptions: options.daemonOptions,
     daemonStarted: options.daemonStarted,
     stdout: { write: (chunk) => { stdout += chunk; } },
-    stderr: { write: (chunk) => { stderr += chunk; } }
+    stderr: stderrWriter
   });
   return { exitCode, stdout, stderr };
 }

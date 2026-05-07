@@ -59,12 +59,22 @@ test("invalid opener environment values fall back safely", () => {
   assert.equal(options.animate, true);
 });
 
-test("animation gating depends on TTY and TERM, not CI or NO_COLOR", () => {
+test("animation gating depends on TTY, TERM, CI, and NO_COLOR", () => {
   assert.equal(shouldAnimateOpener({
     animation: "pop",
-    env: { TERM: "xterm-256color", CI: "true", NO_COLOR: "1" },
+    env: { TERM: "xterm-256color" },
     stdout: { isTTY: true }
   }), true);
+  assert.equal(shouldAnimateOpener({
+    animation: "pop",
+    env: { TERM: "xterm-256color", CI: "true" },
+    stdout: { isTTY: true }
+  }), false);
+  assert.equal(shouldAnimateOpener({
+    animation: "pop",
+    env: { TERM: "xterm-256color", NO_COLOR: "1" },
+    stdout: { isTTY: true }
+  }), false);
   assert.equal(shouldAnimateOpener({
     animation: "pop",
     env: { TERM: "dumb" },

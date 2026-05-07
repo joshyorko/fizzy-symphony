@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 
 import { writeAnnotatedConfig } from "./config.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
+import { formatSetupMutationReview } from "./terminal-ui.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
 const DEFAULT_WEBHOOK_ACTIONS = [
@@ -282,7 +283,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     return await fizzy.getBoard(boardId, { account });
   }
 
-  if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard) {
+  if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard || !fizzy.toggleTag || !fizzy.moveCardToColumn) {
     throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Fizzy client cannot create starter board resources.");
   }
 
@@ -292,11 +293,28 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
   const golden = await fizzy.createCard({
     account,
     board_id: board.id,
-    column_id: ready.id,
     title: "Repo Agent",
-    description: plan.golden_ticket.description,
-    tags: ["agent-instructions", "codex", "move-to-done"],
-    golden: true
+    description: plan.golden_ticket.description
+  });
+  const goldenCardNumber = golden.number ?? golden.card_number;
+
+  for (const tag of plan.golden_ticket.tags) {
+    await fizzy.toggleTag({
+      account,
+      board_id: board.id,
+      card_id: golden.id,
+      card_number: goldenCardNumber,
+      tag_title: tag,
+      tag
+    });
+  }
+
+  await fizzy.moveCardToColumn({
+    account,
+    board_id: board.id,
+    card_id: golden.id,
+    card_number: goldenCardNumber,
+    column_id: ready.id
   });
 
   if (fizzy.markGolden) {
@@ -304,7 +322,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
       account,
       board_id: board.id,
       card_id: golden.id,
-      card_number: golden.number ?? golden.card_number
+      card_number: goldenCardNumber
     });
   }
 
@@ -417,22 +435,6 @@ function setupMutationReviewPlan({ account, configPath, setupMode, workspaceRepo
     } : { manage: false },
     mutations
   };
-}
-
-function formatSetupMutationReview(plan) {
-  const lines = ["Review setup changes before applying:"];
-  if (plan.workflow.action === "create") lines.push(`- create ${plan.workflow.path}`);
-  if (plan.workflow.action === "append") lines.push(`- append fizzy-symphony section to ${plan.workflow.path}`);
-  if (plan.setup_mode === "create_starter") lines.push(`- create Fizzy starter board: ${plan.starter_board_name}`);
-  if (plan.webhook.manage) lines.push(`- manage Fizzy webhooks for ${reviewBoardCount(plan)} board(s): ${plan.webhook.callback_url || "configured callback"}`);
-  lines.push(`- write config: ${plan.config_path}`);
-  lines.push("Type yes to apply these changes, or press Enter to skip.");
-  return lines.join("\n");
-}
-
-function reviewBoardCount(plan) {
-  if (plan.setup_mode === "create_starter") return 1;
-  return plan.board_ids.length;
 }
 
 function redactedUrl(value) {

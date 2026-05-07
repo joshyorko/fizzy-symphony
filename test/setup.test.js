@@ -150,13 +150,28 @@ function fakeStarterFizzy() {
         id: "starter_golden",
         number: 100,
         title: request.title,
-        golden: Boolean(request.golden),
-        column_id: request.column_id,
-        tags: request.tags
+        golden: false,
+        column_id: "maybe",
+        tags: []
       };
       board.cards.push(card);
-      accountTags = request.tags.map((tag) => ({ id: `tag_${tag}`, name: tag }));
       return card;
+    },
+    async toggleTag(request) {
+      calls.push(["toggleTag", request]);
+      const card = board.cards.find((candidate) => candidate.id === request.card_id || candidate.number === request.card_number);
+      const tag = request.tag_title ?? request.tagTitle ?? request.tag;
+      if (card && tag && !card.tags.includes(tag)) card.tags.push(tag);
+      if (tag && !accountTags.some((candidate) => candidate.name === tag)) {
+        accountTags.push({ id: `tag_${tag}`, name: tag });
+      }
+      return { ok: true };
+    },
+    async moveCardToColumn(request) {
+      calls.push(["moveCardToColumn", request]);
+      const card = board.cards.find((candidate) => candidate.id === request.card_id || candidate.number === request.card_number);
+      if (card) card.column_id = request.column_id;
+      return { ok: true };
     },
     async markGolden(request) {
       calls.push(["markGolden", request]);
@@ -289,8 +304,20 @@ test("runSetup creates a starter board with native golden route defaults and wri
     tags: ["agent-instructions", "codex", "move-to-done"]
   });
   assert.deepEqual(
-    fizzy.calls.filter((call) => ["listTags", "createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])).map((call) => call[0]),
-    ["listTags", "createBoard", "createColumn", "createColumn", "createCard", "markGolden", "listTags"]
+    fizzy.calls.filter((call) => ["listTags", "createBoard", "createColumn", "createCard", "toggleTag", "moveCardToColumn", "markGolden"].includes(call[0])).map((call) => call[0]),
+    [
+      "listTags",
+      "createBoard",
+      "createColumn",
+      "createColumn",
+      "createCard",
+      "toggleTag",
+      "toggleTag",
+      "toggleTag",
+      "moveCardToColumn",
+      "markGolden",
+      "listTags"
+    ]
   );
 
   const written = await readFile(configPath, "utf8");

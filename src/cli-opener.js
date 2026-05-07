@@ -15,25 +15,25 @@ const DEFAULT_FRAME_DELAY_MS = 20;
 const FULL_ART = [
   divider("┌", "┬", "┐", FULL_COLUMN_WIDTHS),
   boardRow([" Backlog        ♫", " Ready for Agents   ★", " Done            ♪"], FULL_COLUMN_WIDTHS),
-  boardRow([" column note:  ♩", " golden route cue   ♬", " cadence note: ♫"], FULL_COLUMN_WIDTHS),
+  boardRow([" normal work waits", " golden route lives here", " completed cards land"], FULL_COLUMN_WIDTHS),
   divider("├", "┼", "┤", FULL_COLUMN_WIDTHS),
-  boardRow([" ═════♪══════════════", " ═══════♬════════════", " ═════♫══════════════"], FULL_COLUMN_WIDTHS),
-  boardRow([" ══♬═══════════════", "  ╔════════════════╗", " ════════♪══════════"], FULL_COLUMN_WIDTHS),
-  boardRow([" ═══════♫══════════", "  ║ GOLDEN TICKET  ║ ★", " ═══♩═══════════════"], FULL_COLUMN_WIDTHS),
-  boardRow([" ═══════════♪══════", "  ╚════════════════╝", " ═════════♬═════════"], FULL_COLUMN_WIDTHS),
-  boardRow([" ♫ card queue", " route: ready -> done", " ♪ completed runs"], FULL_COLUMN_WIDTHS),
+  boardRow([" #42 setup polish", "  ╔════════════════╗", " #31 verified"], FULL_COLUMN_WIDTHS),
+  boardRow([" #43 docs cleanup", "  ║ GOLDEN TICKET  ║ ★", " #32 shipped"], FULL_COLUMN_WIDTHS),
+  boardRow([" ♫ card queue", "  ║ #agent-instr.  ║", " ♪ result notes"], FULL_COLUMN_WIDTHS),
+  boardRow(["", "  ╚═ ready -> done╝", ""], FULL_COLUMN_WIDTHS),
+  boardRow([" work cards move in", " protected dispatch", " proof moves out"], FULL_COLUMN_WIDTHS),
   divider("├", "┼", "┤", FULL_COLUMN_WIDTHS),
-  boardRow([" FIZZY SYMPHONY", " orchestration score", " board-first agents"], FULL_COLUMN_WIDTHS),
+  boardRow([" FIZZY SYMPHONY", " board-first agents", " safe local runs"], FULL_COLUMN_WIDTHS),
   divider("└", "┴", "┘", FULL_COLUMN_WIDTHS),
-  fitLine("      ♪        ♫        ♬        ★        ♩        ♫        ♪", OPENER_WIDTH)
+  fitLine("      setup checks: Fizzy  •  WORKFLOW.md  •  config  •  safe start", OPENER_WIDTH)
 ];
 
 const COMPACT_ART = [
   divider("┌", "┬", "┐", COMPACT_COLUMN_WIDTHS),
   boardRow([" ♫ Backlog", " ★ Ready", " ♪ Done"], COMPACT_COLUMN_WIDTHS),
-  boardRow([" ═══♪══════", " ╔════════╗", " ═══♬══════"], COMPACT_COLUMN_WIDTHS),
-  boardRow([" ═♬════════", " ║ GOLDEN ║", " ═════♫════"], COMPACT_COLUMN_WIDTHS),
-  boardRow([" card queue", " ticket ->", " completed"], COMPACT_COLUMN_WIDTHS),
+  boardRow([" work cards", " ╔════════╗", " completed"], COMPACT_COLUMN_WIDTHS),
+  boardRow([" queue in", " ║ GOLDEN ║", " proof out"], COMPACT_COLUMN_WIDTHS),
+  boardRow(["", " ready->done", ""], COMPACT_COLUMN_WIDTHS),
   divider("└", "┴", "┘", COMPACT_COLUMN_WIDTHS),
   fitLine("FIZZY SYMPHONY        ♪   ♫   ♬", COMPACT_WIDTH)
 ];
@@ -109,6 +109,8 @@ export function resolveOpenerOptions(env = process.env, stdout = process.stdout)
 export function shouldAnimateOpener({ animation = DEFAULT_ANIMATION, env = process.env, stdout = process.stdout } = {}) {
   if (animation === "none") return false;
   if (!stdout?.isTTY) return false;
+  if (env.CI) return false;
+  if (env.NO_COLOR !== undefined) return false;
   return env.TERM !== "dumb";
 }
 
