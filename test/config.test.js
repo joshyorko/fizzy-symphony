@@ -80,6 +80,7 @@ function minimalConfig() {
       max_retry_backoff_ms: 300000,
       default_backend: "codex",
       default_model: "",
+      reasoning_effort: "medium",
       default_persona: "repo-agent"
     },
     runner: {
@@ -234,6 +235,7 @@ test("generateOperatorConfig writes a compact user-facing config with the Codex 
     boards: [{ id: "board_ready", label: "Ready Board" }],
     runnerPreferred: "cli_app_server",
     defaultModel: "gpt-5.4",
+    reasoningEffort: "high",
     workspaceRepo: "."
   });
 
@@ -242,6 +244,7 @@ test("generateOperatorConfig writes a compact user-facing config with the Codex 
   assert.match(generated, /api_url: https:\/\/fizzy\.example\.test/u);
   assert.match(generated, /id: board_ready/u);
   assert.match(generated, /default_model: gpt-5\.4/u);
+  assert.match(generated, /reasoning_effort: high/u);
   assert.match(generated, /fallback_enabled: true/u);
   assert.match(generated, /allowed_roots:/u);
   assert.match(generated, /ignored_dirty_paths:/u);
@@ -257,11 +260,13 @@ test("generateOperatorConfig writes a compact user-facing config with the Codex 
     boards: [{ id: "board_ready", label: "Ready Board" }],
     runnerPreferred: "cli_app_server",
     defaultModel: "gpt-5.4",
+    reasoningEffort: "high",
     workspaceRepo: dir
   });
 
   const loaded = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "x" } });
   assert.equal(loaded.agent.default_model, "gpt-5.4");
+  assert.equal(loaded.agent.reasoning_effort, "high");
   assert.equal(loaded.boards.entries[0].defaults.model, "gpt-5.4");
   assert.equal(loaded.workflow.fallback_enabled, true);
   assert.deepEqual(loaded.safety.ignored_dirty_paths, [".fizzy-symphony/"]);
@@ -270,6 +275,30 @@ test("generateOperatorConfig writes a compact user-facing config with the Codex 
   assert.equal(loaded.server.registry_dir, join(dir, ".fizzy-symphony", "run", "instances"));
   assert.equal(loaded.runner.preferred, "cli_app_server");
   assert.equal(loaded.server.base_port, 4567);
+});
+
+test("generateOperatorConfig hard-pins the default Codex model and reasoning effort", async () => {
+  const generated = generateOperatorConfig({
+    account: "team",
+    boards: [{ id: "board_ready", label: "Ready Board" }],
+    runnerPreferred: "cli_app_server",
+    workspaceRepo: "."
+  });
+
+  assert.match(generated, /default_model: gpt-5\.5/u);
+  assert.match(generated, /reasoning_effort: medium/u);
+
+  const parsed = parseConfig({
+    fizzy: { token: "$FIZZY_API_TOKEN", account: "team" },
+    boards: { entries: [{ id: "board_ready" }] }
+  }, {
+    configPath: "/tmp/config.yml",
+    env: { FIZZY_API_TOKEN: "x" }
+  });
+
+  assert.equal(parsed.agent.default_model, "gpt-5.5");
+  assert.equal(parsed.agent.reasoning_effort, "medium");
+  assert.equal(parsed.boards.entries[0].defaults.model, "gpt-5.5");
 });
 
 test("writeAnnotatedConfig creates parent directories and writes the generated template", async () => {
@@ -343,6 +372,10 @@ test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross
     {
       code: "CONFIG_INVALID_ENUM",
       mutate: (config) => { config.runner.fallback = "sdk"; }
+    },
+    {
+      code: "CONFIG_INVALID_ENUM",
+      mutate: (config) => { config.agent.reasoning_effort = "overthink"; }
     },
     {
       code: "CONFIG_INVALID_SERVER_PORT",

@@ -8,7 +8,13 @@ import { fileURLToPath } from "node:url";
 
 import { DEFAULT_FIZZY_API_URL, createCliFizzyClient, createCliRunner, resolveFizzyClientConfig } from "../src/client-factories.js";
 import { writeOpener } from "../src/cli-opener.js";
-import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
+import {
+  ALLOWED_CODEX_REASONING_EFFORTS,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  loadConfig,
+  writeAnnotatedConfig
+} from "../src/config.js";
 import { runDashboardCommand } from "../src/dashboard.js";
 import { startDaemon } from "../src/daemon.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "../src/errors.js";
@@ -152,7 +158,9 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     selectedBoardIds: boardValues(args),
     setupMode: setupModeForArgs(args, commandOptions.defaultSetupMode),
     defaultModel: defaultModelForArgs(args, env),
+    reasoningEffort: reasoningEffortForArgs(args, env),
     maxAgents: maxAgentsForArgs(args, env),
+    workspaceMode: workspaceModeForArgs(args),
     workspaceRepo: optionValue(args, "--workspace-repo") ?? ".",
     starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
     workflowPolicy: await workflowPolicyForArgs(args, prompts, optionValue(args, "--workspace-repo") ?? "."),
@@ -319,8 +327,32 @@ function setupModeForArgs(args, defaultMode) {
 function defaultModelForArgs(args, env = process.env) {
   return optionValue(args, "--model") ??
     optionValue(args, "--codex-model") ??
-    firstNonEmpty(env.FIZZY_SYMPHONY_CODEX_MODEL, env.CODEX_MODEL) ??
-    "";
+    firstNonEmpty(env.FIZZY_SYMPHONY_CODEX_MODEL, env.CODEX_MODEL);
+}
+
+function reasoningEffortForArgs(args, env = process.env) {
+  const raw = optionValue(args, "--reasoning-effort") ??
+    optionValue(args, "--reasoning") ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_REASONING_EFFORT, env.CODEX_REASONING_EFFORT);
+  if (!nonEmpty(raw)) return undefined;
+
+  const value = String(raw).trim();
+
+  if (!ALLOWED_CODEX_REASONING_EFFORTS.includes(value)) {
+    throw new FizzySymphonyError("INVALID_REASONING_EFFORT", "--reasoning-effort must be low, medium, high, or xhigh.", {
+      value,
+      allowed: ALLOWED_CODEX_REASONING_EFFORTS,
+      remediation: "Use a value like `--reasoning-effort high`, or omit it for medium."
+    });
+  }
+
+  return value;
+}
+
+function workspaceModeForArgs(args) {
+  if (args.includes("--no-dispatch")) return "no_dispatch";
+  if (args.includes("--worktree") || args.includes("--protected-worktree")) return "protected_worktree";
+  return undefined;
 }
 
 function maxAgentsForArgs(args, env = process.env) {
@@ -673,7 +705,7 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
-    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--model model] [--max-agents n] [--create-starter-workflow]",
+    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow]",
     "  fizzy-symphony setup --template-only [--config path]",
     "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",

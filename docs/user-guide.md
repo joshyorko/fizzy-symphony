@@ -35,13 +35,22 @@ Interactive `setup` launches the opener, asks for any missing Fizzy URL/token va
 
 If the repo does not have `WORKFLOW.md`, pressing Enter at the setup prompt is not consent to create one silently. Choose create/append/skip in the prompt, or use the matching flag.
 
-Use `--model` or `--codex-model` to choose the Codex model written into the generated config and starter route. Use `--max-agents` to set the initial active-agent limit:
+Setup writes a hard-pinned Codex model into the generated config and starter route instead of relying on the Codex CLI default. Use `--model` or `--codex-model` to override that model, and use `--reasoning-effort` or `--reasoning` to choose the Codex reasoning effort. Use `--max-agents` to set the initial active-agent limit:
 
 ```sh
-fizzy-symphony setup --model <codex-model> --max-agents 1
+fizzy-symphony setup --model <codex-model> --reasoning-effort medium --max-agents 1
 ```
 
-You can also edit `agent.max_concurrent` in `.fizzy-symphony/config.yml` later. Starter-board setup defaults it to `1`.
+The generated `.fizzy-symphony/config.yml` keeps these operator choices in one place:
+
+```yaml
+agent:
+  default_model: gpt-5.4
+  reasoning_effort: medium
+  max_concurrent: 1
+```
+
+Maximum active agents stays on `--max-agents` and `agent.max_concurrent`; starter-board setup defaults it to `1`.
 
 Generated setup state under `.fizzy-symphony/` is ignored by source protection, so config/status/workspace metadata dirt does not block dispatch. Real user edits elsewhere in the repo still block when the clean-source policy is enabled.
 
@@ -91,10 +100,10 @@ node bin/fizzy-symphony.js validate
 node bin/fizzy-symphony.js start
 ```
 
-If you want to use a different env file or Codex model:
+If you want to use a different env file, Codex model, or reasoning effort:
 
 ```sh
-fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model>
+fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model> --reasoning medium
 ```
 
 If you already built a Fizzy board route yourself:

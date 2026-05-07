@@ -38,7 +38,7 @@ boards:
       routing_mode: column_scoped
       defaults:
         backend: codex
-        model: ""
+        model: gpt-5.5
         workspace: app
         persona: repo-agent
         unknown_managed_tag_policy: fail
@@ -170,8 +170,13 @@ agent:
   # backend plugin surface in MVP.
   default_backend: codex
 
-  # Required: no. Default: inherited from runner.
-  default_model: ""
+  # Required: no. Default: gpt-5.5.
+  # This is sent to the Codex app-server unless a route/card override supplies a model.
+  default_model: gpt-5.5
+
+  # Required: no. Default: medium.
+  # Codex reasoning effort. Valid: low, medium, high, xhigh.
+  reasoning_effort: medium
 
   # Required: no. Default: repo-agent.
   default_persona: repo-agent

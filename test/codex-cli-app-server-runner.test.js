@@ -131,6 +131,29 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   });
 });
 
+test("Codex CLI app-server runner sends configured default model and reasoning effort", async () => {
+  const transport = new FakeTransport({}, {
+    "initialize": () => initializeResult(),
+    "thread/start": () => threadStartResult()
+  });
+  const runner = createCodexCliAppServerRunner({
+    versionProbe: async () => ({ ok: true, version: "codex-cli 0.125.0" }),
+    transportFactory: () => transport
+  });
+  const config = runnerConfig({
+    agent: {
+      default_model: "gpt-5.5",
+      reasoning_effort: "high"
+    }
+  });
+
+  await runner.startSession("/tmp/card-workspace", { config }, { run_id: "run_1" });
+
+  assert.equal(transport.requests[1].method, "thread/start");
+  assert.equal(transport.requests[1].params.model, "gpt-5.5");
+  assert.equal(transport.requests[1].params.reasoningEffort, "high");
+});
+
 test("Codex CLI app-server runner streams normalized activity and final turn result", async () => {
   const transport = new FakeTransport({}, {
     "initialize": () => initializeResult(),
@@ -284,6 +307,7 @@ function runnerConfig(overrides = {}) {
     },
     agent: {
       default_model: "",
+      reasoning_effort: "medium",
       ...overrides.agent
     }
   };

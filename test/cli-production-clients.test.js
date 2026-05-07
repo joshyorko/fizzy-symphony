@@ -110,6 +110,8 @@ test("public setup defaults to the guided starter flow when no existing board is
     dir,
     "--model",
     "gpt-5.4",
+    "--reasoning-effort",
+    "high",
     "--max-agents",
     "3",
     "--api-url",
@@ -134,6 +136,7 @@ test("public setup defaults to the guided starter flow when no existing board is
   assert.match(plainStdout, /fizzy-symphony is ready/u);
   assert.match(plainStdout, /fizzy-symphony start --config/u);
   assert.match(plainStdout, /Model\s+gpt-5\.4/u);
+  assert.match(plainStdout, /Reasoning\s+high/u);
   assert.match(plainStdout, /Max agents\s+3/u);
 
   await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
@@ -142,9 +145,68 @@ test("public setup defaults to the guided starter flow when no existing board is
   assert.match(generatedConfig, /id: starter_board/u);
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
   assert.match(generatedConfig, /default_model: gpt-5\.4/u);
+  assert.match(generatedConfig, /reasoning_effort: high/u);
   assert.match(generatedConfig, /max_concurrent: 3/u);
   assert.match(generatedConfig, /fallback_enabled: true/u);
   assert.doesNotMatch(generatedConfig, /terminate_timeout_ms/u);
+});
+
+test("guided setup can ask for model, reasoning, max agents, and workspace mode", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-default-prompts-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const prompts = [];
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    prompts: {
+      async configureSetupDefaults(defaults) {
+        prompts.push(defaults);
+        return {
+          defaultModel: "gpt-5.5",
+          reasoningEffort: "xhigh",
+          maxAgents: 4,
+          workspaceMode: "no_dispatch"
+        };
+      }
+    },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].defaultModel, "gpt-5.5");
+  assert.equal(prompts[0].reasoningEffort, "medium");
+  assert.equal(prompts[0].maxAgents, 1);
+  assert.equal(prompts[0].workspaceMode, "protected_worktree");
+
+  const plainStdout = stripAnsi(result.stdout);
+  assert.match(plainStdout, /Reasoning\s+xhigh/u);
+  assert.match(plainStdout, /Max agents\s+4/u);
+  assert.match(plainStdout, /Workspace\s+no dispatch/u);
+
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /default_model: gpt-5\.5/u);
+  assert.match(generatedConfig, /reasoning_effort: xhigh/u);
+  assert.match(generatedConfig, /max_concurrent: 4/u);
+  assert.match(generatedConfig, /diagnostics:/u);
+  assert.match(generatedConfig, /no_dispatch: true/u);
 });
 
 test("public setup does not require or create WORKFLOW.md without an explicit workflow flag", async () => {
@@ -336,6 +398,7 @@ test("public help exits successfully", async () => {
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /Usage:/u);
     assert.match(result.stdout, /--max-agents n/u);
+    assert.match(result.stdout, /--reasoning-effort level/u);
     assert.doesNotMatch(result.stdout, /fizzy-symphony init/u);
     assert.match(result.stdout, /fizzy-symphony dashboard/u);
     assert.match(result.stdout, /fizzy-symphony start/u);

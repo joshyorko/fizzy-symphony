@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { canonicalJson, cardDigest, digest } from "./domain.js";
+import { cardDigest, digest } from "./domain.js";
 import { FizzySymphonyError } from "./errors.js";
 import { commentBody } from "./fizzy-normalize.js";
+import { htmlField, markerCommentBody, markerJsonFromBody } from "./marker-comment.js";
 
 export const COMPLETION_MARKER = "fizzy-symphony:completion:v1";
 export const COMPLETION_FAILED_MARKER = "fizzy-symphony:completion-failed:v1";
@@ -575,28 +576,31 @@ function missingCodeHandoff({ proof = {}, result = {}, workspace = {} } = {}) {
 }
 
 function markerBody(marker, payload) {
-  return [
-    MARKER_SENTINEL,
+  return markerCommentBody({
+    sentinel: MARKER_SENTINEL,
     marker,
-    "",
-    "```json",
-    canonicalJson(payload),
-    "```"
-  ].join("\n");
+    payload,
+    title: marker === COMPLETION_MARKER
+      ? "fizzy-symphony recorded completion."
+      : "fizzy-symphony recorded a completion problem.",
+    summary: [
+      htmlField("Run", payload.run_id, { code: true }),
+      payload.failure_reason ? htmlField("Reason", payload.failure_reason) : "",
+      htmlField("Proof", payload.proof_file),
+      htmlField("Result comment", payload.fizzy_result_comment_id ?? payload.result_comment_id, { code: true })
+    ]
+  });
 }
 
 function parseMarker(body, marker, code) {
-  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const match = String(body).match(
-    new RegExp(`(?:<!--\\s*fizzy-symphony-marker\\s*-->\\s*)?${escaped}\\s*\`\`\`json\\s*([\\s\\S]*?)\\s*\`\`\``, "u")
-  );
-  if (!match) {
-    throw new FizzySymphonyError(code, "Completion marker Markdown block was not found.");
+  const markerJson = markerJsonFromBody(body, marker);
+  if (!markerJson) {
+    throw new FizzySymphonyError(code, "Completion marker JSON block was not found.");
   }
 
   let parsed;
   try {
-    parsed = JSON.parse(match[1]);
+    parsed = JSON.parse(markerJson);
   } catch (error) {
     throw new FizzySymphonyError(code, "Completion marker is not valid JSON.", {
       cause: error.message
@@ -669,6 +673,8 @@ function workpadBody({ card, route, run, workspace, phase, proof, resultComment,
     route_fingerprint: route.fingerprint ?? route.route_fingerprint,
     run_id: run.id ?? run.run_id,
     workspace_key: workspace.key ?? workspace.workspace_key,
+    workspace_path: workspace.path ?? workspace.workspace_path,
+    workspace_branch: workspace.branch_name ?? workspace.branch,
     phase,
     replacement_of_comment_id: replacementOfCommentId,
     proof_file: proof?.file,
@@ -677,19 +683,20 @@ function workpadBody({ card, route, run, workspace, phase, proof, resultComment,
     updated_at: toIso(now)
   });
 
-  return [
-    WORKPAD_SENTINEL,
-    "fizzy-symphony:workpad:v1",
-    "",
-    `Run: ${payload.run_id ?? "pending"}`,
-    `Phase: ${phase}`,
-    replacementOfCommentId ? `Replaces failed workpad: ${replacementOfCommentId}` : "",
-    proof?.file ? `Proof: ${proof.file}` : "",
-    "",
-    "```json",
-    canonicalJson(payload),
-    "```"
-  ].filter((line) => line !== "").join("\n");
+  return markerCommentBody({
+    sentinel: WORKPAD_SENTINEL,
+    marker: "fizzy-symphony:workpad:v1",
+    payload,
+    title: "fizzy-symphony workpad.",
+    summary: [
+      htmlField("Run", payload.run_id ?? "pending", { code: true }),
+      htmlField("Phase", phase, { strong: true }),
+      htmlField("Worktree", payload.workspace_path, { code: true }),
+      htmlField("Branch", payload.workspace_branch, { code: true }),
+      replacementOfCommentId ? htmlField("Replaces failed workpad", replacementOfCommentId, { code: true }) : "",
+      proof?.file ? htmlField("Proof", proof.file) : ""
+    ]
+  });
 }
 
 function requiredStepPolicy(route, workflow) {
@@ -716,10 +723,10 @@ function requiredStepPolicy(route, workflow) {
 }
 
 function parseJsonBlock(body) {
-  const match = String(body ?? "").match(/```json\s*([\s\S]*?)\s*```/u);
-  if (!match) return null;
+  const markerJson = markerJsonFromBody(body, "fizzy-symphony:workpad:v1");
+  if (!markerJson) return null;
   try {
-    return JSON.parse(match[1]);
+    return JSON.parse(markerJson);
   } catch {
     return null;
   }

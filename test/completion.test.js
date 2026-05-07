@@ -64,12 +64,6 @@ function workspace(overrides = {}) {
   };
 }
 
-function jsonBlock(body) {
-  const match = body.match(/```json\s*([\s\S]*?)\s*```/u);
-  assert.ok(match, "expected a fenced JSON block");
-  return match[1];
-}
-
 test("completion markers use canonical JSON and include durable proof and result IDs", () => {
   const activeCard = card();
   const activeRoute = route();
@@ -85,11 +79,13 @@ test("completion markers use canonical JSON and include durable proof and result
     completedAt: "2026-04-29T12:03:00.000Z"
   });
 
-  const rawJson = jsonBlock(marker.body);
   const parsed = parseCompletionMarker(marker.body);
 
   assert.match(marker.tag, /^agent-completed-[a-f0-9]{12}$/u);
-  assert.equal(rawJson, canonicalJson(parsed));
+  assert.match(marker.body, /<p><strong>fizzy-symphony recorded completion\.<\/strong><\/p>/);
+  assert.match(marker.body, /<details><summary>Automation marker<\/summary>/);
+  assert.doesNotMatch(marker.body, /```json/u);
+  assert.match(marker.body, new RegExp(escapeRegExp(canonicalJson(parsed).replaceAll("\"", "&quot;")), "u"));
   assert.equal(parsed.marker, "fizzy-symphony:completion:v1");
   assert.equal(parsed.kind, "completion");
   assert.equal(parsed.run_id, "run_1");
@@ -121,7 +117,10 @@ test("completion-failure markers parse with proof fields and canonical JSON", ()
   const parsed = parseCompletionFailureMarker(`operator note\n\n${marker.body}`);
 
   assert.match(marker.tag, /^agent-completion-failed-[a-f0-9]{12}$/u);
-  assert.equal(jsonBlock(marker.body), canonicalJson(parsed));
+  assert.match(marker.body, /<p><strong>fizzy-symphony recorded a completion problem\.<\/strong><\/p>/);
+  assert.match(marker.body, /<details><summary>Automation marker<\/summary>/);
+  assert.doesNotMatch(marker.body, /```json/u);
+  assert.match(marker.body, new RegExp(escapeRegExp(canonicalJson(parsed).replaceAll("\"", "&quot;")), "u"));
   assert.equal(parsed.marker, "fizzy-symphony:completion-failed:v1");
   assert.equal(parsed.kind, "completion_failed");
   assert.equal(parsed.failure_reason, "required steps remain unchecked");
@@ -315,9 +314,12 @@ test("workpad update failure posts one replacement and records runtime status", 
   assert.equal(result.action, "replaced");
   assert.equal(result.comment_id, "comment_replacement");
   assert.equal(result.replacement_of_comment_id, "comment_old");
-  assert.match(replacementBody, /Replaces failed workpad: comment_old/u);
-  assert.match(replacementBody, /Run: run_1/u);
-  assert.match(replacementBody, /Phase: runner_completed/u);
+  assert.match(replacementBody, /Replaces failed workpad: <code>comment_old<\/code>/u);
+  assert.match(replacementBody, /Run: <code>run_1<\/code>/u);
+  assert.match(replacementBody, /Phase: <strong>runner_completed<\/strong>/u);
+  assert.match(replacementBody, /Worktree: <code>\/tmp\/workspace_1<\/code>/u);
+  assert.match(replacementBody, /<details><summary>Automation marker<\/summary>/u);
+  assert.doesNotMatch(replacementBody, /```json/u);
 
   const snapshot = store.status();
   assert.equal(snapshot.workpads[0].comment_id, "comment_replacement");
@@ -439,6 +441,10 @@ function createWorkpadStatusStore() {
       polling: { interval_ms: 30000 }
     }
   });
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function workpadCommentBody({ comment_id, replacement_of_comment_id, updated_at }) {

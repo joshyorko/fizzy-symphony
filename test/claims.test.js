@@ -127,7 +127,7 @@ function statusRecorder() {
   };
 }
 
-test("claim markers round-trip as append-only JSON fenced Markdown", () => {
+test("claim markers round-trip as human-readable rich text with a collapsible automation marker", () => {
   const marker = createClaimMarker({
     claim: claim(),
     route: route(),
@@ -139,7 +139,9 @@ test("claim markers round-trip as append-only JSON fenced Markdown", () => {
 
   assert.match(marker.body, /<!-- fizzy-symphony-marker -->/);
   assert.match(marker.body, /fizzy-symphony:claim:v1/);
-  assert.match(marker.body, /```json/);
+  assert.match(marker.body, /<p><strong>fizzy-symphony claimed this card\.<\/strong><\/p>/);
+  assert.match(marker.body, /<details><summary>Automation marker<\/summary>/);
+  assert.doesNotMatch(marker.body, /```json/);
   assert.deepEqual(marker.claim, {
     marker: "fizzy-symphony:claim:v1",
     claim_id: "claim_1",

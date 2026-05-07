@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { FizzySymphonyError } from "./errors.js";
 import { commentBody } from "./fizzy-normalize.js";
+import { htmlField, markerCommentBody, markerJsonFromBody } from "./marker-comment.js";
 
 export const CLAIM_MARKER = "fizzy-symphony:claim:v1";
 
@@ -88,16 +89,14 @@ export function createReleaseMarker({ claim = {}, status = "released", now = new
 }
 
 export function parseClaimMarker(body) {
-  const match = String(body).match(
-    /(?:<!--\s*fizzy-symphony-marker\s*-->\s*)?fizzy-symphony:claim:v1\s*```json\s*([\s\S]*?)\s*```/u
-  );
-  if (!match) {
-    throw new FizzySymphonyError("MALFORMED_CLAIM_MARKER", "Claim marker Markdown block was not found.");
+  const markerJson = markerJsonFromBody(body, CLAIM_MARKER);
+  if (!markerJson) {
+    throw new FizzySymphonyError("MALFORMED_CLAIM_MARKER", "Claim marker JSON block was not found.");
   }
 
   let parsed;
   try {
-    parsed = JSON.parse(match[1]);
+    parsed = JSON.parse(markerJson);
   } catch (error) {
     throw new FizzySymphonyError("MALFORMED_CLAIM_MARKER", "Claim marker is not valid JSON.", {
       cause: error.message
@@ -578,14 +577,24 @@ function normalizeError(error) {
 }
 
 function markerBody(payload) {
-  return [
-    MARKER_SENTINEL,
-    CLAIM_MARKER,
-    "",
-    "```json",
-    canonicalJson(payload),
-    "```"
-  ].join("\n");
+  return markerCommentBody({
+    sentinel: MARKER_SENTINEL,
+    marker: CLAIM_MARKER,
+    payload,
+    title: claimMarkerTitle(payload.status),
+    summary: [
+      htmlField("Status", payload.status, { strong: true }),
+      htmlField("Run", payload.run_id, { code: true }),
+      htmlField("Expires", payload.expires_at)
+    ]
+  });
+}
+
+function claimMarkerTitle(status) {
+  if (status === "claimed") return "fizzy-symphony claimed this card.";
+  if (status === "renewed") return "fizzy-symphony renewed its claim.";
+  if (status === "lost") return "fizzy-symphony lost this claim.";
+  return `fizzy-symphony marked this claim ${status}.`;
 }
 
 function validateClaimPayload(payload, code) {
@@ -717,17 +726,4 @@ function defaultSleep(ms) {
 
 function omitUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
-}
-
-function canonicalJson(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }

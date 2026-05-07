@@ -1,7 +1,12 @@
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { writeOperatorConfig } from "./config.js";
+import {
+  ALLOWED_CODEX_REASONING_EFFORTS,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  writeOperatorConfig
+} from "./config.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
 import { formatSetupMutationReview } from "./terminal-ui.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
@@ -56,7 +61,12 @@ export async function runSetup(options = {}) {
   const runnerReport = await detectRunner(runner);
 
   const setupMode = await selectSetupMode(options, prompts);
-  const maxAgents = setupMaxAgents(options.maxAgents, setupMode);
+  const setupDefaults = await selectSetupDefaults(options, prompts, setupMode);
+  const maxAgents = setupDefaults.maxAgents;
+  const defaultModel = setupDefaults.defaultModel;
+  const reasoningEffort = setupDefaults.reasoningEffort;
+  const workspaceMode = setupDefaults.workspaceMode;
+  const noDispatch = workspaceMode === "no_dispatch";
   const workflowPlan = await planWorkflow(workspaceRepo, workflowPolicyFromOptions(options));
   const webhookWarnings = webhook.manage ? validateWebhookSetup(webhook) : [];
   validateBotUser(options.botUserId, users);
@@ -98,7 +108,6 @@ export async function runSetup(options = {}) {
     required: ["agent-instructions", ...managedTagsUsedByBoards(selectedBoards)]
   });
 
-  const defaultModel = options.defaultModel ?? "";
   const routes = discoverGoldenTicketRoutes(selectedBoards, {
     defaults: { backend: "codex", model: defaultModel, workspace: "app", persona: "repo-agent" }
   });
@@ -135,11 +144,13 @@ export async function runSetup(options = {}) {
     runnerPreferred: runnerReport.kind === "sdk" ? "sdk" : "cli_app_server",
     runnerFallback: "cli_app_server",
     defaultModel,
+    reasoningEffort,
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     apiUrl,
     botUserId: options.botUserId ?? "",
     workspaceRepo,
+    noDispatch,
     webhook,
     managedWebhookIdsByBoard: Object.fromEntries(
       Object.entries(managedWebhooks).map(([boardId, managedWebhook]) => [boardId, managedWebhook.id])
@@ -156,6 +167,9 @@ export async function runSetup(options = {}) {
     resolvedTags,
     routes,
     default_model: defaultModel,
+    reasoning_effort: reasoningEffort,
+    workspace_mode: workspaceMode,
+    no_dispatch: noDispatch,
     max_agents: maxAgents,
     runner: runnerReport,
     warnings,
@@ -527,6 +541,43 @@ function starterSmokeCardDescription() {
   ].join("\n");
 }
 
+async function selectSetupDefaults(options, prompts, setupMode) {
+  const defaults = {
+    defaultModel: options.defaultModel ?? DEFAULT_CODEX_MODEL,
+    reasoningEffort: options.reasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT,
+    maxAgents: setupMaxAgents(options.maxAgents, setupMode),
+    workspaceMode: options.workspaceMode ?? "protected_worktree"
+  };
+
+  const prompted = await prompts?.configureSetupDefaults?.({
+    ...defaults,
+    reasoningEfforts: ALLOWED_CODEX_REASONING_EFFORTS,
+    workspaceModes: ["protected_worktree", "no_dispatch"]
+  });
+  if (!prompted) return defaults;
+
+  const selected = {
+    defaultModel: nonEmptyString(prompted.defaultModel) ? String(prompted.defaultModel).trim() : defaults.defaultModel,
+    reasoningEffort: nonEmptyString(prompted.reasoningEffort) ? String(prompted.reasoningEffort).trim() : defaults.reasoningEffort,
+    maxAgents: setupMaxAgents(prompted.maxAgents ?? defaults.maxAgents, setupMode),
+    workspaceMode: nonEmptyString(prompted.workspaceMode) ? String(prompted.workspaceMode).trim() : defaults.workspaceMode
+  };
+
+  if (!ALLOWED_CODEX_REASONING_EFFORTS.includes(selected.reasoningEffort)) {
+    throw new FizzySymphonyError("INVALID_REASONING_EFFORT", "Setup reasoning effort must be low, medium, high, or xhigh.", {
+      value: selected.reasoningEffort,
+      allowed: ALLOWED_CODEX_REASONING_EFFORTS
+    });
+  }
+  if (!["protected_worktree", "no_dispatch"].includes(selected.workspaceMode)) {
+    throw new FizzySymphonyError("INVALID_WORKSPACE_MODE", "Setup workspace mode must be protected_worktree or no_dispatch.", {
+      value: selected.workspaceMode
+    });
+  }
+
+  return selected;
+}
+
 function setupMaxAgents(value, setupMode) {
   if (value === undefined || value === null || value === "") {
     return setupMode === "create_starter" || setupMode === "adopt_starter" ? 1 : 2;
@@ -540,6 +591,10 @@ function setupMaxAgents(value, setupMode) {
   }
 
   return number;
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
 }
 
 async function detectRunner(runner) {

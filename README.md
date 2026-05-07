@@ -59,10 +59,21 @@ The board is the workflow surface: the golden card defines the route and normal 
 alone unless you explicitly choose create/append in the prompt or pass `--create-starter-workflow`
 or `--augment-workflow`; use `--no-workflow-change` to keep scripted runs from touching it.
 
-Use `--model` or `--codex-model` during setup to set the Codex model in the generated config and
-starter route. Use `--max-agents` during setup, or edit `agent.max_concurrent` in
-`.fizzy-symphony/config.yml`, to control the maximum number of active agents. Starter-board setup
-defaults it to `1`.
+Setup hard-pins a Codex model in generated config instead of floating with whatever the Codex CLI
+currently defaults to. Use `--model` or `--codex-model` during setup to override the pinned model,
+and use `--reasoning-effort` or `--reasoning` to set the Codex reasoning effort. The generated config
+keeps both choices visible:
+
+```yaml
+agent:
+  default_model: gpt-5.4
+  reasoning_effort: medium
+  max_concurrent: 1
+```
+
+Maximum active agents stays on the existing concurrency contract: use `--max-agents` during setup,
+or edit `agent.max_concurrent` in `.fizzy-symphony/config.yml`. Starter-board setup defaults it to
+`1`.
 
 Source protection ignores setup-owned `.fizzy-symphony/` dirt so generated config, status, and
 workspace metadata do not block dispatch. Real changes in the source repo still block when the

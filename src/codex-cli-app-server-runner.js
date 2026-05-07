@@ -683,8 +683,13 @@ function wake(context) {
 
 function threadStartParams({ path, policies, metadata, runnerConfig }) {
   const model = metadata.model ?? policies.route?.model ?? policies.config?.agent?.default_model;
+  const reasoningEffort = metadata.reasoningEffort ??
+    metadata.reasoning_effort ??
+    policies.route?.reasoning_effort ??
+    policies.config?.agent?.reasoning_effort;
   return omitUndefined({
     model: model || undefined,
+    reasoningEffort: reasoningEffort || undefined,
     cwd: path,
     approvalPolicy: approvalPolicy(runnerConfig),
     approvalsReviewer: "user",

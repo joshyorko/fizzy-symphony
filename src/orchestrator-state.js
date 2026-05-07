@@ -1,4 +1,5 @@
 import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
+import { readClaims } from "./claims.js";
 
 export function createOrchestratorState(options = {}) {
   const {
@@ -299,14 +300,7 @@ function cancellationReason(run, card) {
 }
 
 function parseRecoveredClaims(claimCommentsByCard = {}) {
-  return Object.values(claimCommentsByCard)
-    .flat()
-    .map((comment) => {
-      const body = String(comment.body ?? "");
-      const match = body.match(/claim_id["']?\s*[:=]\s*["']?([A-Za-z0-9._-]+)/u);
-      return match ? { claim_id: match[1] } : null;
-    })
-    .filter(Boolean);
+  return readClaims(Object.values(claimCommentsByCard).flat());
 }
 
 function normalizeError(error = {}) {

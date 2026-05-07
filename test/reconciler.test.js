@@ -543,7 +543,8 @@ test("long-running streams renew active claims before another daemon can steal t
   const renewal = await scheduler.fire(renewalTimer.id);
 
   assert.equal(renewal.status, "renewed");
-  assert.match(comments.at(-1).body, /"status":"renewed"/u);
+  assert.match(comments.at(-1).body, /Status: <strong>renewed<\/strong>/u);
+  assert.match(comments.at(-1).body, /<details><summary>Automation marker<\/summary>/u);
 
   const competingClaims = createBoardClaimStore({ fizzy, status, sleep: async () => {} });
   clock.advance(600);

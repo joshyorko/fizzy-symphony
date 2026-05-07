@@ -7,6 +7,9 @@ import { FizzySymphonyError } from "./errors.js";
 const TEMPLATE_PATH = new URL("../config.example.yml", import.meta.url);
 const DEFAULT_FIZZY_API_URL = "https://app.fizzy.do";
 const DEFAULT_SETUP_IGNORED_DIRTY_PATHS = [".fizzy-symphony/"];
+export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+export const DEFAULT_CODEX_REASONING_EFFORT = "medium";
+export const ALLOWED_CODEX_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
 
 const allowedCardOverridesSchema = {
   backend: true,
@@ -99,6 +102,7 @@ const schema = {
     max_retry_backoff_ms: true,
     default_backend: true,
     default_model: true,
+    reasoning_effort: true,
     default_persona: true
   },
   runner: {
@@ -224,6 +228,8 @@ export function generateAnnotatedConfig(options = {}) {
     sdkContract = "",
     apiUrl = DEFAULT_FIZZY_API_URL,
     botUserId = "",
+    defaultModel = DEFAULT_CODEX_MODEL,
+    reasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
     webhook = {},
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
@@ -239,9 +245,11 @@ export function generateAnnotatedConfig(options = {}) {
   template = template.replace(/api_url: https:\/\/app\.fizzy\.do/u, `api_url: ${yamlScalar(apiUrl)}`);
   template = template.replace(
     /  entries:\n[\s\S]*?\nserver:/u,
-    `  entries:\n${renderBoardEntries(boardEntries, boardMaxConcurrent)}\nserver:`
+    `  entries:\n${renderBoardEntries(boardEntries, boardMaxConcurrent, defaultModel)}\nserver:`
   );
   template = template.replace(/\n  max_concurrent: 2\n/u, `\n  max_concurrent: ${agentMaxConcurrent}\n`);
+  template = template.replace(/default_model: gpt-5\.5|default_model: ""/u, `default_model: ${yamlScalar(defaultModel)}`);
+  template = template.replace(/reasoning_effort: medium/u, `reasoning_effort: ${yamlScalar(reasoningEffort)}`);
   template = template.replace(/bot_user_id: ""/u, `bot_user_id: ${yamlScalar(botUserId)}`);
   template = template.replace(/preferred: sdk/u, `preferred: ${yamlScalar(runnerPreferred)}`);
   template = template.replace(/fallback: cli_app_server/u, `fallback: ${yamlScalar(runnerFallback)}`);
@@ -281,11 +289,13 @@ export function generateOperatorConfig(options = {}) {
     runnerPreferred = "cli_app_server",
     apiUrl = DEFAULT_FIZZY_API_URL,
     botUserId = "",
-    defaultModel = "",
+    defaultModel = DEFAULT_CODEX_MODEL,
+    reasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
     webhook = {},
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
     workspaceRepo = ".",
+    noDispatch = false,
     ignoredDirtyPaths = DEFAULT_SETUP_IGNORED_DIRTY_PATHS
   } = options;
 
@@ -308,8 +318,10 @@ export function generateOperatorConfig(options = {}) {
     "",
     "agent:",
     `  max_concurrent: ${agentMaxConcurrent}`,
-    "  # Codex model. Leave empty to use the Codex CLI default.",
+    "  # Codex model sent to the Codex app-server.",
     `  default_model: ${yamlScalar(defaultModel)}`,
+    "  # Codex reasoning effort: low, medium, high, xhigh.",
+    `  reasoning_effort: ${yamlScalar(reasoningEffort)}`,
     "",
     "runner:",
     `  preferred: ${yamlScalar(runnerPreferred)}`,
@@ -317,6 +329,12 @@ export function generateOperatorConfig(options = {}) {
     "",
     "polling:",
     "  interval_ms: 30000",
+    ...(noDispatch ? [
+      "",
+      "diagnostics:",
+      "  # Setup workspace mode was no-dispatch; start will watch status but not run agents.",
+      "  no_dispatch: true"
+    ] : []),
     "",
     "workspaces:",
     `  default_repo: ${yamlScalar(workspaceRepoPath)}`,
@@ -401,6 +419,7 @@ function validateConfigValues(config) {
   validateEnum(config.claims?.mode, ["structured_comment"], "claims.mode");
   validateEnum(config.runner?.preferred, ["sdk", "cli_app_server"], "runner.preferred");
   validateEnum(config.runner?.fallback, ["cli_app_server", "none"], "runner.fallback");
+  validateEnum(config.agent?.reasoning_effort, ALLOWED_CODEX_REASONING_EFFORTS, "agent.reasoning_effort");
   validateEnum(config.server?.port_allocation, ["fixed", "next_available", "random"], "server.port_allocation");
   validateWorkspaceIsolation(config.workspaces?.default_isolation, "workspaces.default_isolation");
   for (const [name, workspace] of Object.entries(config.workspaces?.registry ?? {})) {
@@ -576,7 +595,7 @@ function resolveEnvironmentReferences(value, env, path = "") {
   return value;
 }
 
-function renderBoardEntries(boards, maxConcurrent) {
+function renderBoardEntries(boards, maxConcurrent, defaultModel = DEFAULT_CODEX_MODEL) {
   return boards.map((board) => [
     `    - id: ${yamlScalar(board.id)}`,
     `      label: ${yamlScalar(board.label ?? board.name ?? board.id)}`,
@@ -584,7 +603,7 @@ function renderBoardEntries(boards, maxConcurrent) {
     "      routing_mode: column_scoped",
     "      defaults:",
     "        backend: codex",
-    "        model: \"\"",
+    `        model: ${yamlScalar(defaultModel)}`,
     "        workspace: app",
     "        persona: repo-agent",
     "        unknown_managed_tag_policy: fail",
@@ -716,7 +735,7 @@ function uniqueStrings(values) {
 function applyConfigDefaults(input = {}, options = {}) {
   const original = clone(input ?? {});
   const config = deepMerge(defaultConfig(options), original);
-  const defaultModel = config.agent?.default_model ?? "";
+  const defaultModel = config.agent?.default_model ?? DEFAULT_CODEX_MODEL;
 
   const inputBoardEntries = Array.isArray(original.boards?.entries) ? original.boards.entries : [];
   config.boards.entries = inputBoardEntries.map((entry) => deepMerge(defaultBoardEntry(defaultModel), entry));
@@ -808,7 +827,8 @@ function defaultConfig(options = {}) {
       max_turns: 1,
       max_retry_backoff_ms: 300000,
       default_backend: "codex",
-      default_model: "",
+      default_model: DEFAULT_CODEX_MODEL,
+      reasoning_effort: DEFAULT_CODEX_REASONING_EFFORT,
       default_persona: "repo-agent"
     },
     runner: {
@@ -906,7 +926,7 @@ function defaultConfig(options = {}) {
   };
 }
 
-function defaultBoardEntry(defaultModel = "") {
+function defaultBoardEntry(defaultModel = DEFAULT_CODEX_MODEL) {
   return {
     id: "",
     label: "",

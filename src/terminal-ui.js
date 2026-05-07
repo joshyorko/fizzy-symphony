@@ -47,6 +47,10 @@ export function formatSetupSuccess(result = {}, options = {}) {
     ? golden.tags.map((tag) => `#${normalizeTagLabel(tag)}`).join(" ")
     : "#agent-instructions #codex #move-to-done";
   const model = result.default_model ?? route.model ?? "";
+  const reasoning = result.reasoning_effort ?? "";
+  const workspaceMode = result.workspace_mode === "no_dispatch"
+    ? "no dispatch"
+    : "protected git worktrees";
   const maxAgents = result.max_agents ?? "";
   const startCommand = `fizzy-symphony start --config ${configPath}`;
 
@@ -60,7 +64,9 @@ export function formatSetupSuccess(result = {}, options = {}) {
     `  ${label(options, "Route")} ${routeLabel}`,
     `  ${label(options, "Golden")} ${golden ? goldenTitle(golden) : "Repo Agent"} ${muted(options, tags)}`,
     `  ${label(options, "Model")} ${model || "Codex default"}`,
+    `  ${label(options, "Reasoning")} ${reasoning || "medium"}`,
     `  ${label(options, "Max agents")} ${maxAgents || "1"}`,
+    `  ${label(options, "Workspace")} ${workspaceMode}`,
     `  ${label(options, "Runner")} ${runner}`,
     "",
     formatBoardSnapshot(result.boards, result.routes, options),
@@ -222,6 +228,46 @@ export async function createClackPromptProvider(io, env = process.env) {
         }))
       });
       return cancelToEmpty(prompts, value);
+    },
+
+    async configureSetupDefaults(defaults = {}) {
+      const defaultModel = cancelToEmpty(prompts, await prompts.text({
+        message: "Codex model",
+        placeholder: defaults.defaultModel,
+        defaultValue: defaults.defaultModel
+      })) || defaults.defaultModel;
+      const reasoningEffort = cancelToEmpty(prompts, await prompts.select({
+        message: "Codex reasoning effort",
+        options: (defaults.reasoningEfforts ?? ["low", "medium", "high", "xhigh"]).map((effort) => ({
+          value: effort,
+          label: effort,
+          hint: effort === defaults.reasoningEffort ? "default" : undefined
+        })),
+        initialValue: defaults.reasoningEffort
+      })) || defaults.reasoningEffort;
+      const maxAgents = cancelToEmpty(prompts, await prompts.text({
+        message: "Max agents",
+        placeholder: String(defaults.maxAgents ?? 1),
+        defaultValue: String(defaults.maxAgents ?? 1)
+      })) || defaults.maxAgents;
+      const workspaceMode = cancelToEmpty(prompts, await prompts.select({
+        message: "Workspace mode",
+        options: [
+          {
+            value: "protected_worktree",
+            label: "Protected git worktrees",
+            hint: "recommended; keeps card edits outside the source repo"
+          },
+          {
+            value: "no_dispatch",
+            label: "Watch only",
+            hint: "no agents run until you edit config"
+          }
+        ],
+        initialValue: defaults.workspaceMode ?? "protected_worktree"
+      })) || defaults.workspaceMode;
+
+      return { defaultModel, reasoningEffort, maxAgents, workspaceMode };
     },
 
     async confirmWorkflowPolicy({ exists, path }) {
