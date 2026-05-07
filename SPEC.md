@@ -1061,10 +1061,11 @@ package details, last check time, status (`ready`, `degraded`, `unavailable`), r
 failure code, failure message, auth/config evidence, and remediation.
 
 `Session` MUST include session ID when available, thread ID, runner kind, process ID for app-server
-fallback, workspace path, start timestamp, policy payloads, and owned-process flag.
+fallback, workspace path, execution environment, start timestamp, policy payloads, model selection
+metadata when available, and owned-process flag.
 
 `Turn` MUST include run ID, attempt number, turn ID, thread ID, started timestamp, prompt digest,
-workspace path, cancellation token/handle, and runner metadata.
+workspace path, execution environment, cancellation token/handle, and runner metadata.
 
 `CancelResult` MUST include success boolean, final status (`cancelled`, `timeout`, `failed`,
 `unknown_ownership`), whether the turn was interrupted, whether the session was stopped, whether a
@@ -1096,10 +1097,42 @@ The fallback runner MUST follow the same behavioral contract as the SDK runner. 
 workspace, claim, completion, and observability code MUST NOT know which runner is active except
 through runner metadata.
 
+Execution environment identity:
+
+- Runner session metadata MUST carry an `execution_environment` object.
+- For the MVP, `execution_environment` maps to the prepared workspace path / Codex cwd with a stable
+  ID and kind such as `local_workspace`.
+- Future selected-environment routing MAY add adapter-level Codex environment IDs, but daemon routing
+  MUST keep using the runner-neutral execution environment object rather than Codex-specific field
+  names.
+- Workspaces and worktrees MUST remain deterministic enough that an execution environment can be
+  resolved back to the card, route, workspace identity, and prepared cwd.
+
+Model selection metadata:
+
+- `model` remains the canonical route field for MVP.
+- Runner/session metadata MAY include optional runtime metadata such as `service_tier`,
+  `reasoning_effort`, and `model_profile`.
+- Startup validation MUST NOT depend on live model entitlement, service tier, or model-consuming
+  checks unless an operator explicitly opts into that check.
+- Route and daemon logic MUST NOT hardcode assumptions about Codex model names, tier IDs, or speed
+  metadata beyond normal string validation.
+
 Normal operation MUST NOT use `codex exec`, prompt-in/stdout CLI execution, or generic command
 backends as a substitute for the runner contract. CLI probing such as `codex --version` is allowed.
 The only CLI runner fallback for normal operation is `codex app-server` behind this SDK-shaped
 interface.
+
+Runner policy and hook boundary:
+
+- `WORKFLOW.md` and config hooks are repository/workspace lifecycle hooks for create, run, and
+  cleanup phases.
+- Codex `PreToolUse`/`PostToolUse`-style controls, if adopted, MUST live behind the runner adapter or
+  a runner-policy layer, not in card routing or reconciliation code.
+- Hook or policy output that is large enough to affect prompt/status size MUST be represented with a
+  bounded preview plus a durable spill/artifact reference. Full large payloads MUST NOT be dumped into
+  prompts, Fizzy comments, or status snapshots by default.
+- Version-specific MCP/app-server compatibility shims MUST stay inside the runner adapter boundary.
 
 Runner health:
 
@@ -1122,8 +1155,9 @@ Run metadata schemas:
 
 - run ID and attempt number
 - card ID, card number, board ID, route ID, route fingerprint
-- workspace identity and workspace path
-- runner kind, SDK package or app-server command/version, model
+- workspace identity, workspace path, and execution environment
+- runner kind, SDK package or app-server command/version, model, and optional model selection
+  metadata
 - instance ID, claim ID, start timestamp
 
 `RunnerEvent` MUST include:

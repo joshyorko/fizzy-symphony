@@ -104,11 +104,24 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   assert.equal(session.session_id, "thread_1");
   assert.equal(session.thread_id, "thread_1");
   assert.equal(session.workspace, "/tmp/card-workspace");
+  assert.deepEqual(session.execution_environment, {
+    id: "/tmp/card-workspace",
+    kind: "local_workspace",
+    workspace_path: "/tmp/card-workspace",
+    cwd: "/tmp/card-workspace"
+  });
+  assert.deepEqual(session.model_selection, {
+    model: "gpt-5.4",
+    provider: "openai",
+    service_tier: null,
+    reasoning_effort: "medium"
+  });
   assert.equal(session.process_owned, true);
   assert.equal(session.process_id, 4321);
   assert.equal(turn.turn_id, "turn_1");
   assert.equal(turn.thread_id, "thread_1");
   assert.equal(turn.workspace, "/tmp/card-workspace");
+  assert.deepEqual(turn.execution_environment, session.execution_environment);
   assert.equal(turn.prompt_digest.length, 64);
 
   assert.equal(transport.requests[1].method, "thread/start");
