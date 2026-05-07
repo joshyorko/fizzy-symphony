@@ -89,6 +89,18 @@ test("loadWorkflow uses deterministic discovery and fails missing files unless f
   assert.equal(workflow.body, "# Fallback");
 });
 
+test("loadWorkflow can use the built-in board-first fallback when no repo workflow exists", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-builtin-"));
+
+  const workflow = await loadWorkflow({
+    workspace: { sourceRepo: dir, path: dir, config: { workflow_path: "WORKFLOW.md" } },
+    config: { workflow: { fallback_enabled: true } }
+  });
+
+  assert.equal(workflow.source, "built_in_fallback");
+  assert.match(workflow.body, /Fizzy card and golden-ticket instructions/u);
+});
+
 test("loadWorkflow prefers explicit workflow_path, then source repo, then prepared workspace", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-order-"));
   const sourceRepo = join(dir, "source");

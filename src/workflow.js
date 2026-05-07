@@ -5,6 +5,12 @@ import { FizzySymphonyError } from "./errors.js";
 import { asArray, cardDescription, commentBody, richText } from "./fizzy-normalize.js";
 
 const defaultFileSystem = { readFile: readFileAsync };
+const BUILT_IN_FALLBACK_WORKFLOW = [
+  "Fizzy card and golden-ticket instructions are the primary workflow.",
+  "",
+  "Use the card request, checklist, comments, and golden-ticket route as the source of truth.",
+  "Inspect relevant repository files, make the smallest safe change, run appropriate local checks, and summarize the result."
+].join("\n");
 
 export function parseWorkflow(text) {
   const source = stripBom(String(text ?? ""));
@@ -34,6 +40,14 @@ export async function loadWorkflow({ workspace = {}, config = {}, fs = defaultFi
     searched.push(candidate.path);
     const loaded = await tryReadWorkflow(candidate, fs);
     if (!loaded.missing) return loaded.workflow;
+  }
+
+  if (config.workflow?.fallback_enabled) {
+    return {
+      ...parseWorkflow(BUILT_IN_FALLBACK_WORKFLOW),
+      path: "",
+      source: "built_in_fallback"
+    };
   }
 
   throw new FizzySymphonyError("WORKFLOW_MISSING", "No WORKFLOW.md was found for the resolved workspace.", {

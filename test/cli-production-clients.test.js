@@ -57,8 +57,9 @@ test("public setup creates a starter workflow, starter board config, and human n
   ]);
 
   const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
-  assert.match(workflow, /fizzy-symphony starter workflow/u);
-  assert.match(workflow, /npm test/u);
+  assert.match(workflow, /Repository workflow/u);
+  assert.match(workflow, /Fizzy card and golden-ticket instructions/u);
+  assert.doesNotMatch(workflow, /npm test/u);
 
   const generatedConfig = await readFile(configPath, "utf8");
   assert.match(generatedConfig, /id: starter_board/u);
@@ -107,7 +108,10 @@ test("public setup defaults to the guided starter flow when no existing board is
     configPath,
     "--workspace-repo",
     dir,
-    "--create-starter-workflow",
+    "--model",
+    "gpt-5.4",
+    "--max-agents",
+    "3",
     "--api-url",
     "https://fizzy.example.test",
     "--token",
@@ -129,22 +133,28 @@ test("public setup defaults to the guided starter flow when no existing board is
   assert.match(plainStdout, /FIZZY SYMPHONY/u);
   assert.match(plainStdout, /fizzy-symphony is ready/u);
   assert.match(plainStdout, /fizzy-symphony start --config/u);
+  assert.match(plainStdout, /Model\s+gpt-5\.4/u);
+  assert.match(plainStdout, /Max agents\s+3/u);
 
-  const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
-  assert.match(workflow, /fizzy-symphony starter workflow/u);
+  await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
 
   const generatedConfig = await readFile(configPath, "utf8");
   assert.match(generatedConfig, /id: starter_board/u);
   assert.match(generatedConfig, /api_url: https:\/\/fizzy\.example\.test/u);
+  assert.match(generatedConfig, /default_model: gpt-5\.4/u);
+  assert.match(generatedConfig, /max_concurrent: 3/u);
+  assert.match(generatedConfig, /fallback_enabled: true/u);
+  assert.doesNotMatch(generatedConfig, /terminate_timeout_ms/u);
 });
 
-test("public setup does not create WORKFLOW.md without an explicit workflow flag", async () => {
+test("public setup does not require or create WORKFLOW.md without an explicit workflow flag", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-no-workflow-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
 
   const result = await runCli([
     "setup",
     "--config",
-    join(dir, ".fizzy-symphony", "config.yml"),
+    configPath,
     "--workspace-repo",
     dir,
     "--api-url",
@@ -163,12 +173,14 @@ test("public setup does not create WORKFLOW.md without an explicit workflow flag
     }
   });
 
-  assert.equal(result.exitCode, 2);
-  assert.match(result.stderr, /MISSING_WORKFLOW/u);
+  assert.equal(result.exitCode, 0, result.stderr);
   await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /fallback_enabled: true/u);
+  assert.match(generatedConfig, /ignored_dirty_paths:/u);
 });
 
-test("guided setup prompt skips missing WORKFLOW.md by default without creating a starter board", async () => {
+test("guided setup prompt skips missing WORKFLOW.md by default and still creates the starter board", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-workflow-prompt-skip-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
   const prompts = [];
@@ -195,6 +207,7 @@ test("guided setup prompt skips missing WORKFLOW.md by default without creating 
     prompts: {
       async input(prompt) {
         prompts.push(prompt);
+        if (prompt.name === "setup_mutation_review") return "yes";
         return "";
       }
     },
@@ -208,12 +221,14 @@ test("guided setup prompt skips missing WORKFLOW.md by default without creating 
     }
   });
 
-  assert.equal(result.exitCode, 2);
-  assert.match(result.stderr, /MISSING_WORKFLOW/u);
-  assert.deepEqual(prompts.map((prompt) => [prompt.name, prompt.defaultValue]), [["workflow_action", "skip"]]);
-  assert.deepEqual(createCalls, []);
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(
+    prompts.map((prompt) => [prompt.name, prompt.defaultValue]),
+    [["workflow_action", "skip"], ["setup_mutation_review", "no"]]
+  );
+  assert.equal(createCalls.length, 1);
   await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
-  await assert.rejects(() => readFile(configPath, "utf8"));
+  assert.match(await readFile(configPath, "utf8"), /id: starter_board/u);
 });
 
 test("guided setup shows the opener and human remediation before missing credential failures", async () => {
@@ -320,6 +335,7 @@ test("public help exits successfully", async () => {
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /Usage:/u);
+    assert.match(result.stdout, /--max-agents n/u);
     assert.doesNotMatch(result.stdout, /fizzy-symphony init/u);
     assert.match(result.stdout, /fizzy-symphony dashboard/u);
     assert.match(result.stdout, /fizzy-symphony start/u);

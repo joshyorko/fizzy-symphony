@@ -49,6 +49,55 @@ test("CLI start aliases daemon for the operator-facing command", async () => {
   assert.equal(payload.status, "running");
 });
 
+test("CLI start renders a real board snapshot for interactive terminals", async () => {
+  const root = await tempProject("fizzy-symphony-start-live-board-");
+  const configPath = await writeConfig(root, { diagnostics: { no_dispatch: true } });
+  const board = boardFixture({
+    columns: [
+      { id: "col_ready", name: "Ready" },
+      { id: "col_done", name: "Done" }
+    ],
+    cards: [
+      {
+        id: "golden_ready",
+        title: "Ready Route",
+        golden: true,
+        column_id: "col_ready",
+        tags: ["agent-instructions", "comment-once"]
+      },
+      {
+        id: "card_42",
+        number: 42,
+        title: "Fix terminal output",
+        column_id: "col_ready",
+        tags: []
+      }
+    ]
+  });
+
+  const result = await runCli(["start", "--config", configPath], {
+    stderrIsTTY: true,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    daemonOptions: {
+      schedulerOptions: { immediate: false },
+      dependencies: {
+        ...daemonDependencies({
+          cards: [],
+          runner: fakeRunner({ status: "unavailable", reason: "diagnostic runner missing" })
+        }),
+        fizzyFactory: () => fakeFizzy({ board })
+      }
+    },
+    async daemonStarted(daemon) {
+      await daemon.stop("test");
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stderr, /Live board/u);
+  assert.match(result.stderr, /#42 Fix terminal output/u);
+});
+
 test("CLI start warns when workspace protection skips a dirty source repo", async () => {
   const root = await tempProject("fizzy-symphony-start-dirty-source-");
   const configPath = await writeConfig(root);

@@ -192,6 +192,23 @@ function successfulDependencies({ calls, cards, route }) {
   };
 }
 
+function loggerFixture(events) {
+  return {
+    info(event, fields) {
+      events.push({ level: "info", event, fields });
+    },
+    warn(event, fields) {
+      events.push({ level: "warn", event, fields });
+    },
+    error(event, fields) {
+      events.push({ level: "error", event, fields });
+    },
+    child() {
+      return this;
+    }
+  };
+}
+
 test("runReconciliationTick proves the fake vertical slice order from discovery through completion status", async () => {
   const calls = [];
   const config = {
@@ -233,6 +250,46 @@ test("runReconciliationTick proves the fake vertical slice order from discovery 
   assert.equal(snapshot.runs.completed[0].result_comment_id, "comment_1");
   assert.equal(snapshot.runs.completed[0].completion_marker.id, "marker_1");
   assert.equal(snapshot.poll.last_completed_at, "2026-04-29T12:02:00.000Z");
+});
+
+test("runReconciliationTick logs live card progress for start terminals", async () => {
+  const calls = [];
+  const events = [];
+  const config = {
+    ...configFixture(2),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-live-log-")) }
+  };
+  const status = statusStore(config);
+  const route = {
+    ...routeFixture(),
+    source_column_name: "Ready for Agents",
+    completion: { policy: "move_to_column", target_column_id: "col_done", target_column_name: "Done" }
+  };
+  const card = { ...cardFixture("card_1", 42), title: "Fix terminal output" };
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.fizzy.moveCardToColumn = async ({ column_id }) => {
+    calls.push("moveCardToColumn");
+    assert.equal(column_id, "col_done");
+    return { ok: true };
+  };
+
+  await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    logger: loggerFixture(events),
+    ...deps
+  });
+
+  assert.deepEqual(events.map((event) => event.event), [
+    "card.dispatch_started",
+    "card.workspace_prepared",
+    "card.runner_started",
+    "card.runner_completed",
+    "card.dispatch_completed"
+  ]);
+  assert.match(events[0].fields.message, /#42 Fix terminal output/u);
+  assert.match(events.at(-1).fields.message, /Done/u);
 });
 
 test("runReconciliationTick renders full Fizzy card context for normal dispatch prompts", async () => {

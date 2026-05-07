@@ -1,7 +1,7 @@
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { writeAnnotatedConfig } from "./config.js";
+import { writeOperatorConfig } from "./config.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
 import { formatSetupMutationReview } from "./terminal-ui.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
@@ -56,6 +56,7 @@ export async function runSetup(options = {}) {
   const runnerReport = await detectRunner(runner);
 
   const setupMode = await selectSetupMode(options, prompts);
+  const maxAgents = setupMaxAgents(options.maxAgents, setupMode);
   const workflowPlan = await planWorkflow(workspaceRepo, workflowPolicyFromOptions(options));
   const webhookWarnings = webhook.manage ? validateWebhookSetup(webhook) : [];
   validateBotUser(options.botUserId, users);
@@ -97,8 +98,9 @@ export async function runSetup(options = {}) {
     required: ["agent-instructions", ...managedTagsUsedByBoards(selectedBoards)]
   });
 
+  const defaultModel = options.defaultModel ?? "";
   const routes = discoverGoldenTicketRoutes(selectedBoards, {
-    defaults: { backend: "codex", model: "", workspace: "app", persona: "repo-agent" }
+    defaults: { backend: "codex", model: defaultModel, workspace: "app", persona: "repo-agent" }
   });
   if (!mutationsReviewed) await reviewSetupMutations();
 
@@ -122,16 +124,17 @@ export async function runSetup(options = {}) {
     }
   }
 
-  await writeAnnotatedConfig(configPath, {
+  await writeOperatorConfig(configPath, {
     account,
     boards: selectedBoards.map((board) => ({
       id: board.id,
       label: board.name ?? board.label ?? board.id
     })),
-    agentMaxConcurrent: starter.created || setupMode === "adopt_starter" ? 1 : 2,
-    boardMaxConcurrent: starter.created || setupMode === "adopt_starter" ? 1 : 2,
+    agentMaxConcurrent: maxAgents,
+    boardMaxConcurrent: maxAgents,
     runnerPreferred: runnerReport.kind === "sdk" ? "sdk" : "cli_app_server",
     runnerFallback: "cli_app_server",
+    defaultModel,
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     apiUrl,
@@ -152,6 +155,8 @@ export async function runSetup(options = {}) {
     tags,
     resolvedTags,
     routes,
+    default_model: defaultModel,
+    max_agents: maxAgents,
     runner: runnerReport,
     warnings,
     managedWebhooks,
@@ -263,7 +268,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
   const plan = {
     account,
     name,
-    columns: ["Ready for Agents", "Done"],
+    columns: ["Ready for Agents"],
     golden_ticket: {
       title: "Repo Agent",
       description: starterGoldenDescription(),
@@ -283,13 +288,14 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     return await fizzy.getBoard(boardId, { account });
   }
 
-  if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard || !fizzy.toggleTag || !fizzy.moveCardToColumn) {
+  if (!fizzy.createBoard || !fizzy.createColumn || !fizzy.createCard || !fizzy.toggleTag || !fizzy.moveCardToColumn || !fizzy.getBoard) {
     throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Fizzy client cannot create starter board resources.");
   }
 
   const board = await fizzy.createBoard({ account, name });
-  const ready = await fizzy.createColumn({ account, board_id: board.id, name: "Ready for Agents" });
-  await fizzy.createColumn({ account, board_id: board.id, name: "Done" });
+  const initialBoard = Array.isArray(board.columns) ? board : await fizzy.getBoard(board.id, { account });
+  const ready = await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Ready for Agents" });
+  await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Done" });
   const golden = await fizzy.createCard({
     account,
     board_id: board.id,
@@ -326,7 +332,39 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     });
   }
 
+  if (plan.smoke_test) {
+    const smoke = await fizzy.createCard({
+      account,
+      board_id: board.id,
+      title: "Smoke test fizzy-symphony",
+      description: starterSmokeCardDescription()
+    });
+    await fizzy.moveCardToColumn({
+      account,
+      board_id: board.id,
+      card_id: smoke.id,
+      card_number: smoke.number ?? smoke.card_number,
+      column_id: ready.id
+    });
+  }
+
   return await fizzy.getBoard(board.id, { account });
+}
+
+async function ensureStarterColumn({ fizzy, account, board, name }) {
+  const existing = findColumnByName(board, name);
+  if (existing) return existing;
+
+  return fizzy.createColumn({ account, board_id: board.id, name });
+}
+
+function findColumnByName(board = {}, name) {
+  const normalized = normalizeColumnName(name);
+  return (board.columns ?? []).find((column) => normalizeColumnName(column.name ?? column.title) === normalized);
+}
+
+function normalizeColumnName(name) {
+  return String(name ?? "").trim().toLowerCase();
 }
 
 function validateBotUser(botUserId, users) {
@@ -356,10 +394,7 @@ async function planWorkflow(workspaceRepo, policy = {}) {
     if (policy.action === "create") {
       return { action: "create", path: workflowPath, result: { action: "created", path: workflowPath } };
     }
-    throw new FizzySymphonyError("MISSING_WORKFLOW", "Setup requires WORKFLOW.md in the selected workspace repository.", {
-      repo: workspaceRepo,
-      remediation: "Rerun setup with --create-starter-workflow, pass --augment-workflow for an existing file, or add WORKFLOW.md yourself."
-    });
+    return { action: "none", path: workflowPath, result: { action: "missing_skipped", path: workflowPath } };
   }
 
   if (policy.action === "append") {
@@ -452,16 +487,17 @@ function redactedUrl(value) {
 
 function starterWorkflow() {
   return [
-    "# fizzy-symphony starter workflow",
+    "# Repository workflow",
     "",
-    "You are working from a Fizzy card through fizzy-symphony.",
+    "Fizzy card and golden-ticket instructions are the workflow for agent runs.",
     "",
-    "Rules:",
-    "- Keep the change focused on the card request.",
-    "- Prefer the repo's existing patterns.",
-    "- Run `npm test` before reporting success.",
-    "- Leave a short result summary on the card.",
-    "- If the request is unsafe or unclear, stop and explain the blocker.",
+    "Use this file only for repository-specific policy that is true for every card.",
+    "",
+    "- Keep changes focused on the card request.",
+    "- Prefer the repository's existing patterns and tools.",
+    "- Run the smallest relevant local check you can identify.",
+    "- Report what changed, what was checked, and any blocker.",
+    "- Do not commit unless the card explicitly asks for a commit.",
     ""
   ].join("\n");
 }
@@ -470,7 +506,7 @@ function starterWorkflowSection() {
   return [
     "## fizzy-symphony",
     "",
-    "Fizzy card context is the visible work request. Follow the golden-ticket route, keep changes focused, run the repo checks, and report results back on the card.",
+    "Fizzy card and golden-ticket instructions are the visible work request. Keep changes focused, use the repo's existing tools, run relevant checks, and report results back on the card.",
     ""
   ].join("\n");
 }
@@ -479,8 +515,31 @@ function starterGoldenDescription() {
   return [
     "Use Codex to complete normal cards moved into this column.",
     "",
-    "Read the card, follow the repository WORKFLOW.md, make the smallest useful change, run the checks, and report the result back on the card."
+    "Read the card, follow any repository policy that exists, make the smallest useful change, run the checks, and report the result back on the card."
   ].join("\n");
+}
+
+function starterSmokeCardDescription() {
+  return [
+    "Smoke-test card for fizzy-symphony.",
+    "",
+    "A tiny repo-safe change is enough. Report what happened on this card when finished."
+  ].join("\n");
+}
+
+function setupMaxAgents(value, setupMode) {
+  if (value === undefined || value === null || value === "") {
+    return setupMode === "create_starter" || setupMode === "adopt_starter" ? 1 : 2;
+  }
+
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new FizzySymphonyError("INVALID_MAX_AGENTS", "Setup max agents must be a positive integer.", {
+      value
+    });
+  }
+
+  return number;
 }
 
 async function detectRunner(runner) {

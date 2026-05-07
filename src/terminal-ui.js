@@ -46,6 +46,8 @@ export function formatSetupSuccess(result = {}, options = {}) {
   const tags = golden?.tags?.length
     ? golden.tags.map((tag) => `#${normalizeTagLabel(tag)}`).join(" ")
     : "#agent-instructions #codex #move-to-done";
+  const model = result.default_model ?? route.model ?? "";
+  const maxAgents = result.max_agents ?? "";
   const startCommand = `fizzy-symphony start --config ${configPath}`;
 
   return [
@@ -57,7 +59,11 @@ export function formatSetupSuccess(result = {}, options = {}) {
     `  ${label(options, "Board")} ${boardName} (${boardId})`,
     `  ${label(options, "Route")} ${routeLabel}`,
     `  ${label(options, "Golden")} ${golden ? goldenTitle(golden) : "Repo Agent"} ${muted(options, tags)}`,
+    `  ${label(options, "Model")} ${model || "Codex default"}`,
+    `  ${label(options, "Max agents")} ${maxAgents || "1"}`,
     `  ${label(options, "Runner")} ${runner}`,
+    "",
+    formatBoardSnapshot(result.boards, result.routes, options),
     "",
     `${label(options, "Start watching")}`,
     `  ${startCommand}`,
@@ -104,7 +110,42 @@ export function formatDaemonStartSummary(daemon, options = {}) {
     }
   }
 
+  const liveBoardSnapshot = formatBoardSnapshot(options.boardSnapshots, routes, options);
+  if (liveBoardSnapshot) {
+    lines.push("", liveBoardSnapshot);
+  }
+
   return `${lines.join("\n")}\n`;
+}
+
+export function formatBoardSnapshot(boards = [], routes = [], options = {}) {
+  const snapshots = (boards ?? []).filter(Boolean);
+  if (snapshots.length === 0) return "";
+
+  const lines = [`${label(options, "Live board")}`];
+  const maxBoards = options.maxBoards ?? 3;
+  const maxCardsPerColumn = options.maxCardsPerColumn ?? 5;
+
+  for (const board of snapshots.slice(0, maxBoards)) {
+    const boardRoutes = (routes ?? []).filter((route) => route.board_id === board.id);
+    lines.push(`  ${mark(options, "accent")} ${board.name ?? board.label ?? board.id}`);
+    for (const column of orderedColumns(board, boardRoutes)) {
+      const cards = cardsForColumn(board, column);
+      lines.push(`    ${column.name ?? column.title ?? column.id} ${muted(options, cardCount(cards.length))}`);
+      for (const card of cards.slice(0, maxCardsPerColumn)) {
+        lines.push(`      ${formatLiveCard(card)}`);
+      }
+      if (cards.length > maxCardsPerColumn) {
+        lines.push(`      ${muted(options, `... ${cards.length - maxCardsPerColumn} more`)}`);
+      }
+    }
+  }
+
+  if (snapshots.length > maxBoards) {
+    lines.push(`  ${muted(options, `... ${snapshots.length - maxBoards} more boards`)}`);
+  }
+
+  return lines.join("\n");
 }
 
 export function createHumanDaemonLogger(io, options = {}) {
@@ -259,6 +300,42 @@ function normalizeTagLabel(tag) {
 function goldenTitle(card) {
   const number = card.number ?? card.card_number;
   return `${number ? `#${number} ` : ""}${card.title ?? "Repo Agent"}`;
+}
+
+function orderedColumns(board = {}, routes = []) {
+  const columns = [...(board.columns ?? [])];
+  const byId = new Map(columns.map((column) => [column.id, column]));
+  const preferredIds = unique([
+    ...routes.map((route) => route.source_column_id),
+    ...routes.map((route) => route.completion?.target_column_id)
+  ].filter(Boolean));
+  const preferred = preferredIds.map((id) => byId.get(id)).filter(Boolean);
+  const rest = columns.filter((column) => !preferredIds.includes(column.id));
+
+  if (preferred.length > 0 || rest.length > 0) return [...preferred, ...rest];
+
+  return unique((board.cards ?? []).map((card) => card.column_id).filter(Boolean))
+    .map((id) => ({ id, name: id }));
+}
+
+function cardsForColumn(board = {}, column = {}) {
+  return (board.cards ?? []).filter((card) => {
+    const cardColumn = card.column_id ?? card.column?.id ?? card.column;
+    return cardColumn === column.id || cardColumn === column.name;
+  });
+}
+
+function formatLiveCard(card = {}) {
+  const marker = card.golden ? "★ " : "";
+  return `${marker}${goldenTitle(card)}`;
+}
+
+function cardCount(count) {
+  return `${count} ${count === 1 ? "card" : "cards"}`;
+}
+
+function unique(values = []) {
+  return [...new Set(values)];
 }
 
 function cancelToEmpty(prompts, value) {

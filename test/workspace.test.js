@@ -360,6 +360,29 @@ test("preflightWorkspaceSource rejects dirty source repositories when policy req
   );
 });
 
+test("preflightWorkspaceSource ignores setup-owned config dirt while still protecting user work", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-setup-dirt-"));
+  const source = await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  config.safety.ignored_dirty_paths = [".fizzy-symphony/"];
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  await mkdir(join(source, ".fizzy-symphony"), { recursive: true });
+  await writeFile(join(source, ".fizzy-symphony", "config.yml"), "generated\n", "utf8");
+
+  const clean = await preflightWorkspaceSource({ config, identity });
+  assert.equal(clean.clean, true);
+  assert.deepEqual(clean.dirty_paths, []);
+
+  await writeFile(join(source, "README.md"), "real user change\n", "utf8");
+  await assert.rejects(
+    () => preflightWorkspaceSource({ config, identity }),
+    (error) => error.code === "WORKSPACE_SOURCE_DIRTY" &&
+      error.details.dirty_paths.includes("README.md") &&
+      !error.details.dirty_paths.includes(".fizzy-symphony/config.yml")
+  );
+});
+
 test("preflightWorkspaceSource treats nonzero injected git results as failed commands", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-injected-git-failure-"));
   const config = baseConfig(dir);

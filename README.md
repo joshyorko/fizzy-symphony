@@ -11,7 +11,7 @@ New here? Start with the beginner runbook: [docs/user-guide.md](docs/user-guide.
 ## Current Status
 
 The first MVP selects Node.js ESM with Terminal Kit for interactive terminal surfaces. As of
-2026-05-06, the current local baseline is 302/302 passing via `npm test` on Node v25.9.0.
+2026-05-07, the current local baseline is 318/318 passing via `npm test` on Node v25.9.0.
 `package.json` intentionally declares Node `>=25` until the project verifies a lower supported
 runtime.
 
@@ -48,20 +48,33 @@ node bin/fizzy-symphony.js status
 npm test
 ```
 
-`setup` is the primary first-run command. In guided mode it asks for missing Fizzy URL/token
-values, asks what to do with `WORKFLOW.md`, previews mutating actions, and waits for confirmation
-before remote starter board, managed webhook, or config writes. `WORKFLOW.md` is changed only when
-you choose create/append at the prompt or pass an explicit flag such as
-`--create-starter-workflow` or `--augment-workflow`; use `--no-workflow-change` to skip it in
-scripted runs. A missing `WORKFLOW.md` is not silently created by pressing Enter. `init` remains as
-a deprecated compatibility alias for `setup`.
+`setup` is the primary first-run command. Plain guided setup asks for missing Fizzy URL/token
+values, creates a starter board by default, previews mutating actions, and writes the compact
+operator config to `.fizzy-symphony/config.yml`. Use `--mode existing --board BOARD_ID` to wire an
+existing board, or `--adopt-starter --board BOARD_ID` when the board already has the starter route.
+`init` remains as a deprecated compatibility alias for `setup`.
+
+The board is the workflow surface: the golden card defines the route and normal cards are work.
+`WORKFLOW.md` is optional repo policy that gets added to agent context when present. Setup leaves it
+alone unless you explicitly choose create/append in the prompt or pass `--create-starter-workflow`
+or `--augment-workflow`; use `--no-workflow-change` to keep scripted runs from touching it.
+
+Use `--model` or `--codex-model` during setup to set the Codex model in the generated config and
+starter route. Use `--max-agents` during setup, or edit `agent.max_concurrent` in
+`.fizzy-symphony/config.yml`, to control the maximum number of active agents. Starter-board setup
+defaults it to `1`.
+
+Source protection ignores setup-owned `.fizzy-symphony/` dirt so generated config, status, and
+workspace metadata do not block dispatch. Real changes in the source repo still block when the
+clean-source policy is enabled; commit, stash, or change the policy deliberately before retrying.
 
 `dashboard` observes the daemon's existing `/status` truth. Interactive TTY output refreshes by
 default, `--once` prints a static snapshot, and non-TTY, CI, or dumb terminals use the same text
 fallback. It does not define a separate workflow model.
 
-Config loading supports JSON and the generated YAML format from `config.example.yml`; setup,
-validate, status, dashboard, and daemon commands default to `.fizzy-symphony/config.yml`.
+Config loading supports JSON and generated YAML. Normal setup writes the compact operator config;
+`setup --template-only` writes the fully annotated template. Setup, validate, status, dashboard, and
+daemon commands default to `.fizzy-symphony/config.yml`.
 
 For a step-by-step smoke test with a real Fizzy board, see [docs/user-guide.md](docs/user-guide.md).
 

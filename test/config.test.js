@@ -7,9 +7,11 @@ import { tmpdir } from "node:os";
 import { main as cliMain } from "../bin/fizzy-symphony.js";
 import {
   generateAnnotatedConfig,
+  generateOperatorConfig,
   loadConfig,
   parseConfig,
-  writeAnnotatedConfig
+  writeAnnotatedConfig,
+  writeOperatorConfig
 } from "../src/config.js";
 
 function minimalConfig() {
@@ -223,6 +225,51 @@ test("generateAnnotatedConfig never writes raw webhook secrets and keeps webhook
   assert.doesNotMatch(generated, /do-not-write-me/);
   assert.match(generated, /secret: ""/);
   assert.match(generated, /callback_url: https:\/\/example.test\/fizzy/);
+});
+
+test("generateOperatorConfig writes a compact user-facing config with the Codex model visible", async () => {
+  const generated = generateOperatorConfig({
+    account: "team",
+    apiUrl: "https://fizzy.example.test",
+    boards: [{ id: "board_ready", label: "Ready Board" }],
+    runnerPreferred: "cli_app_server",
+    defaultModel: "gpt-5.4",
+    workspaceRepo: "."
+  });
+
+  assert.match(generated, /# fizzy-symphony/u);
+  assert.match(generated, /account: team/u);
+  assert.match(generated, /api_url: https:\/\/fizzy\.example\.test/u);
+  assert.match(generated, /id: board_ready/u);
+  assert.match(generated, /default_model: gpt-5\.4/u);
+  assert.match(generated, /fallback_enabled: true/u);
+  assert.match(generated, /allowed_roots:/u);
+  assert.match(generated, /ignored_dirty_paths:/u);
+  assert.match(generated, /\.fizzy-symphony\//u);
+  assert.doesNotMatch(generated, /heartbeat_interval_ms/u);
+  assert.doesNotMatch(generated, /terminate_timeout_ms/u);
+
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-compact-config-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  await writeOperatorConfig(configPath, {
+    account: "team",
+    apiUrl: "https://fizzy.example.test",
+    boards: [{ id: "board_ready", label: "Ready Board" }],
+    runnerPreferred: "cli_app_server",
+    defaultModel: "gpt-5.4",
+    workspaceRepo: dir
+  });
+
+  const loaded = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "x" } });
+  assert.equal(loaded.agent.default_model, "gpt-5.4");
+  assert.equal(loaded.boards.entries[0].defaults.model, "gpt-5.4");
+  assert.equal(loaded.workflow.fallback_enabled, true);
+  assert.deepEqual(loaded.safety.ignored_dirty_paths, [".fizzy-symphony/"]);
+  assert.equal(loaded.safety.allowed_roots.includes(dir), true);
+  assert.equal(loaded.observability.state_dir, join(dir, ".fizzy-symphony", "run"));
+  assert.equal(loaded.server.registry_dir, join(dir, ".fizzy-symphony", "run", "instances"));
+  assert.equal(loaded.runner.preferred, "cli_app_server");
+  assert.equal(loaded.server.base_port, 4567);
 });
 
 test("writeAnnotatedConfig creates parent directories and writes the generated template", async () => {

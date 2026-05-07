@@ -18,7 +18,11 @@ test("setup success renders the board-native golden route and protected-work hin
   assert.match(rendered, /Setup wrote the route into Fizzy/u);
   assert.match(rendered, /Board\s+Agent Playground: repo \(board_1\)/u);
   assert.match(rendered, /Route\s+Ready for Agents -> Done/u);
+  assert.match(rendered, /Live board/u);
+  assert.match(rendered, /Ready for Agents\s+2 cards/u);
+  assert.match(rendered, /#101 Install Rancher/u);
   assert.match(rendered, /#agent-instructions #codex #move-to-done/u);
+  assert.match(rendered, /Max agents\s+2/u);
   assert.match(rendered, /Create a normal Fizzy card in Ready for Agents/u);
   assert.match(rendered, /Dirty repos are protected and reported before dispatch/u);
 });
@@ -41,13 +45,18 @@ test("mutation review is readable as plain text and does not expose token-shaped
 });
 
 test("daemon start summary explains routes and dirty-repo protection up front", () => {
-  const rendered = formatDaemonStartSummary(daemonFixture(), { color: false });
+  const rendered = formatDaemonStartSummary(daemonFixture(), {
+    color: false,
+    boardSnapshots: [boardSnapshotFixture()]
+  });
 
   assert.match(rendered, /fizzy-symphony watching boards/u);
   assert.match(rendered, /Endpoint\s+http:\/\/127\.0\.0\.1:4567/u);
   assert.match(rendered, /Safety\s+protecting your work/u);
   assert.match(rendered, /Agents/u);
   assert.match(rendered, /Ready -> Done \(codex\)/u);
+  assert.match(rendered, /Live board/u);
+  assert.match(rendered, /#42 Fix terminal output/u);
 });
 
 test("human daemon logger renders dirty-source protection without JSON", () => {
@@ -94,12 +103,23 @@ function setupResultFixture() {
     boards: [{
       id: "board_1",
       name: "Agent Playground: repo",
+      columns: [
+        { id: "col_ready", name: "Ready for Agents" },
+        { id: "col_done", name: "Done" }
+      ],
       cards: [{
         id: "golden_1",
         number: 100,
         title: "Repo Agent",
         golden: true,
+        column_id: "col_ready",
         tags: ["agent-instructions", "codex", "move-to-done"]
+      }, {
+        id: "card_101",
+        number: 101,
+        title: "Install Rancher",
+        column_id: "col_ready",
+        tags: ["codex"]
       }]
     }],
     routes: [{
@@ -109,7 +129,36 @@ function setupResultFixture() {
       backend: "codex",
       completion: { policy: "move_to_column", target_column_name: "Done" }
     }],
+    max_agents: 2,
     runner: { kind: "cli_app_server" }
+  };
+}
+
+function boardSnapshotFixture() {
+  return {
+    id: "board_1",
+    name: "Agents",
+    columns: [
+      { id: "col_ready", name: "Ready" },
+      { id: "col_done", name: "Done" }
+    ],
+    cards: [
+      {
+        id: "golden_1",
+        number: 100,
+        title: "Repo Agent",
+        golden: true,
+        column_id: "col_ready",
+        tags: ["agent-instructions", "codex", "move-to-done"]
+      },
+      {
+        id: "card_42",
+        number: 42,
+        title: "Fix terminal output",
+        column_id: "col_ready",
+        tags: ["codex"]
+      }
+    ]
   };
 }
 

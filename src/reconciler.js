@@ -153,6 +153,7 @@ export async function runReconciliationTick(options = {}) {
         decision,
         claim: claimResult.claim,
         workspaceIdentity,
+        logger,
         now: startedAt
       });
 
@@ -695,6 +696,7 @@ async function runCard({
   decision,
   claim,
   workspaceIdentity,
+  logger,
   now
 }) {
   const runId = claim.run_id ?? claim.runId ?? `run_${card.id}`;
@@ -723,6 +725,7 @@ async function runCard({
   let failureKind = "dispatch";
 
   try {
+    logCardProgress(logger, "card.dispatch_started", { card, route });
     failureKind = "workspace";
     workspace = await workspaceManager.prepare({
       config,
@@ -734,6 +737,7 @@ async function runCard({
       workspace: workspaceIdentity,
       now
     });
+    logCardProgress(logger, "card.workspace_prepared", { card, route, workspace });
     failureKind = "workflow";
     workflow = await workflowLoader.load({ config, card, route, claim, workspace, decision });
     run = status?.startRun?.({
@@ -764,6 +768,7 @@ async function runCard({
     const turn = await runner.startTurn(session, prompt, { run_id: runId, card_id: card.id, route_id: route?.id });
     run = status?.startRun?.({ ...run, turn }) ?? { ...run, turn };
     await writeRunAttempt(status, run, "running");
+    logCardProgress(logger, "card.runner_started", { card, route, workspace, run });
     orchestratorState?.startRun?.({
       run_id: runId,
       attempt_id: attemptId,
@@ -786,6 +791,7 @@ async function runCard({
     if (streamResult?.status !== "completed") {
       throw runnerFailure(streamResult);
     }
+    logCardProgress(logger, "card.runner_completed", { card, route, workspace, run });
 
     failureKind = "completion";
     await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "runner_completed", now });
@@ -846,6 +852,7 @@ async function runCard({
       }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      logCardProgress(logger, "card.dispatch_failed", { card: refreshedCard, route, workspace, run: failed ?? run, error });
       return { status: "failed", run: failed ?? run, error };
     }
 
@@ -887,6 +894,7 @@ async function runCard({
       }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
       await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      logCardProgress(logger, "card.dispatch_failed", { card: refreshedCard, route, workspace, run: failed ?? run, error });
       return { status: "failed", run: failed ?? run, error };
     }
 
@@ -979,6 +987,7 @@ async function runCard({
     });
     await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: completed ?? run, workspace, phase: "handoff", proof, resultComment, now });
     await writeRunAttempt(status, { ...(completed ?? run), cleanup_state: cleanupStatus }, "completed");
+    logCardProgress(logger, "card.dispatch_completed", { card: refreshedCard, route, workspace, run: completed ?? run });
     return { status: "completed", run: completed ?? run };
   } catch (error) {
     const failureMarker = failureKind === "runner"
@@ -1005,8 +1014,56 @@ async function runCard({
       error,
       completion_marker: failureMarker ?? undefined
     });
+    logCardProgress(logger, "card.dispatch_failed", { card, route, workspace, run: failed ?? run, error });
     return { status: "failed", run: failed ?? run, error };
   }
+}
+
+function logCardProgress(logger, event, { card = {}, route = {}, workspace, run, error } = {}) {
+  if (!logger) return;
+  const fields = {
+    message: progressMessage(event, { card, route, workspace, error }),
+    card_id: card.id,
+    card_number: card.number ?? card.card_number,
+    card_title: card.title,
+    board_id: card.board_id ?? route.board_id,
+    route_id: route.id,
+    source_column_name: route.source_column_name,
+    completion: route.completion,
+    workspace_path: workspace?.path,
+    run_id: run?.id
+  };
+  if (error) fields.error = normalizeError(error);
+  const level = event === "card.dispatch_failed" ? "error" : "info";
+  logger[level]?.(event, omitUndefined(fields));
+}
+
+function progressMessage(event, { card = {}, route = {}, workspace, error } = {}) {
+  const cardLabel = formatCardLabel(card);
+  if (event === "card.dispatch_started") {
+    return `Dispatching ${cardLabel} from ${route.source_column_name ?? route.source_column_id ?? "routed column"}.`;
+  }
+  if (event === "card.workspace_prepared") {
+    return `Workspace ready for ${cardLabel}${workspace?.path ? ` at ${workspace.path}` : ""}.`;
+  }
+  if (event === "card.runner_started") return `Runner started for ${cardLabel}.`;
+  if (event === "card.runner_completed") return `Runner finished for ${cardLabel}; applying Fizzy completion.`;
+  if (event === "card.dispatch_completed") return `Completed ${cardLabel} -> ${completionLabel(route)}.`;
+  if (event === "card.dispatch_failed") return `Failed ${cardLabel}: ${error?.message ?? "unknown error"}`;
+  return cardLabel;
+}
+
+function formatCardLabel(card = {}) {
+  const number = card.number ?? card.card_number;
+  const title = card.title ?? card.name ?? card.id ?? "card";
+  return `${number ? `#${number} ` : ""}${title}`;
+}
+
+function completionLabel(route = {}) {
+  const completion = route.completion ?? {};
+  if (completion.policy === "move_to_column") return completion.target_column_name ?? completion.target_column_id ?? "target column";
+  if (completion.policy === "comment_once") return "result comment";
+  return completion.policy ?? "complete";
 }
 
 async function consumeRerunSignal({ status, fizzy, card, route, decision, now }) {

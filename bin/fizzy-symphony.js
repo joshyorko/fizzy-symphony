@@ -11,7 +11,7 @@ import { writeOpener } from "../src/cli-opener.js";
 import { loadConfig, writeAnnotatedConfig } from "../src/config.js";
 import { runDashboardCommand } from "../src/dashboard.js";
 import { startDaemon } from "../src/daemon.js";
-import { isFizzySymphonyError } from "../src/errors.js";
+import { FizzySymphonyError, isFizzySymphonyError } from "../src/errors.js";
 import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
@@ -151,6 +151,8 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     account: optionValue(args, "--account") ?? undefined,
     selectedBoardIds: boardValues(args),
     setupMode: setupModeForArgs(args, commandOptions.defaultSetupMode),
+    defaultModel: defaultModelForArgs(args, env),
+    maxAgents: maxAgentsForArgs(args, env),
     workspaceRepo: optionValue(args, "--workspace-repo") ?? ".",
     starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
     workflowPolicy: await workflowPolicyForArgs(args, prompts, optionValue(args, "--workspace-repo") ?? "."),
@@ -244,8 +246,10 @@ async function daemonCommand(args, io, options = {}) {
   });
 
   if (isInteractiveStderr(io)) {
+    const boardSnapshots = await readDaemonBoardSnapshots(daemon);
     io.stderr.write(formatDaemonStartSummary(daemon, {
-      color: supportsColor(io.env ?? process.env, io.stderr)
+      color: supportsColor(io.env ?? process.env, io.stderr),
+      boardSnapshots
     }));
   }
   io.stdout.write(`${JSON.stringify({
@@ -258,6 +262,23 @@ async function daemonCommand(args, io, options = {}) {
 
   await io.daemonStarted?.(daemon);
   await daemon.stopped;
+}
+
+async function readDaemonBoardSnapshots(daemon) {
+  const boards = daemon.status.status().watched_boards ?? [];
+  const account = daemon.config.fizzy?.account;
+  const snapshots = [];
+
+  for (const board of boards) {
+    try {
+      const snapshot = await daemon.fizzy?.getBoard?.(board.id, { account });
+      if (snapshot) snapshots.push(snapshot);
+    } catch {
+      // Startup should not fail because the optional terminal snapshot failed.
+    }
+  }
+
+  return snapshots;
 }
 
 function createDaemonLogger(io) {
@@ -293,6 +314,30 @@ function setupModeForArgs(args, defaultMode) {
   if (args.includes("--starter") || args.includes("--new-board")) return "create_starter";
   if (args.includes("--adopt-starter")) return "adopt_starter";
   return normalizeSetupMode(optionValue(args, "--mode") ?? defaultMode);
+}
+
+function defaultModelForArgs(args, env = process.env) {
+  return optionValue(args, "--model") ??
+    optionValue(args, "--codex-model") ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_CODEX_MODEL, env.CODEX_MODEL) ??
+    "";
+}
+
+function maxAgentsForArgs(args, env = process.env) {
+  const raw = optionValue(args, "--max-agents") ??
+    optionValue(args, "--max-concurrent") ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_MAX_AGENTS);
+  if (!nonEmpty(raw)) return undefined;
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new FizzySymphonyError("INVALID_MAX_AGENTS", "--max-agents must be a positive integer.", {
+      value: raw,
+      remediation: "Use a value like `--max-agents 1` for a starter board or a small positive integer for parallel agents."
+    });
+  }
+
+  return value;
 }
 
 function setupCommandOptionsForArgs(args) {
@@ -628,7 +673,7 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
-    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--create-starter-workflow]",
+    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--model model] [--max-agents n] [--create-starter-workflow]",
     "  fizzy-symphony setup --template-only [--config path]",
     "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",

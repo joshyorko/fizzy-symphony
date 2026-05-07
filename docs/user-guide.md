@@ -23,15 +23,27 @@ That is the normal path.
 
 `setup` is the normal first-run path. `init` still works, but it is only a deprecated compatibility alias for `setup`.
 
-Interactive `setup` launches the opener, asks for any missing Fizzy URL/token values, checks Fizzy and Codex, then shows the mutating actions before it applies them. In guided mode you should see the starter board/card route, managed webhook changes when requested, the config path, and the `WORKFLOW.md` action before confirming. Non-interactive runs stay scriptable when you pass explicit flags.
+Interactive `setup` launches the opener, asks for any missing Fizzy URL/token values, checks Fizzy and Codex, then shows the mutating actions before it applies them. Plain guided setup creates a starter board by default and writes a compact `.fizzy-symphony/config.yml`. Non-interactive runs stay scriptable when you pass explicit flags.
 
-`WORKFLOW.md` changes are explicit:
+`WORKFLOW.md` is optional repo policy, not the workflow source of truth. The golden card and each work card are the visible workflow. When `WORKFLOW.md` exists, fizzy-symphony adds it to agent context; when it is absent, the built-in fallback keeps setup usable.
+
+`WORKFLOW.md` file changes are explicit:
 
 - use `--create-starter-workflow` to create a starter file when none exists
 - use `--augment-workflow` to append the fizzy-symphony section to an existing file
-- use `--no-workflow-change` to leave the file alone and fail validation until one exists
+- use `--no-workflow-change` to leave the file alone
 
 If the repo does not have `WORKFLOW.md`, pressing Enter at the setup prompt is not consent to create one silently. Choose create/append/skip in the prompt, or use the matching flag.
+
+Use `--model` or `--codex-model` to choose the Codex model written into the generated config and starter route. Use `--max-agents` to set the initial active-agent limit:
+
+```sh
+fizzy-symphony setup --model <codex-model> --max-agents 1
+```
+
+You can also edit `agent.max_concurrent` in `.fizzy-symphony/config.yml` later. Starter-board setup defaults it to `1`.
+
+Generated setup state under `.fizzy-symphony/` is ignored by source protection, so config/status/workspace metadata dirt does not block dispatch. Real user edits elsewhere in the repo still block when the clean-source policy is enabled.
 
 `start` runs the local daemon.
 
@@ -39,12 +51,12 @@ If the repo does not have `WORKFLOW.md`, pressing Enter at the setup prompt is n
 
 ## What You Do In Fizzy
 
-After `setup`, open the created board.
+After `setup`, open the starter board it created or adopted.
 
 You will see:
 
+- Fizzy's system columns, such as `Not Now`, `Maybe?`, and `Done`
 - `Ready for Agents`
-- `Done`
 - one golden card named `Repo Agent`
 
 Do not edit the golden card for the first smoke test. It is the route.
@@ -65,7 +77,7 @@ That is the whole workflow.
 
 The board is the UI.
 
-The golden card says what agents should do for that column. Normal cards are work requests. `WORKFLOW.md` is only repo policy that gets added to the agent context.
+The golden card says what agents should do for that column. Normal cards are work requests. `WORKFLOW.md` is only optional repo policy that gets added to the agent context.
 
 The dashboard is an observer for daemon status. It helps you see readiness, routes, active runs, claims, failures, webhook errors, and cleanup state, but Fizzy remains the visible workflow layer.
 
@@ -79,10 +91,10 @@ node bin/fizzy-symphony.js validate
 node bin/fizzy-symphony.js start
 ```
 
-If you want to use a different env file:
+If you want to use a different env file or Codex model:
 
 ```sh
-fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --create-starter-workflow
+fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model>
 ```
 
 If you already built a Fizzy board route yourself:
@@ -90,6 +102,12 @@ If you already built a Fizzy board route yourself:
 ```sh
 fizzy-symphony setup --mode existing --board BOARD_ID --workspace-repo .
 fizzy-symphony start
+```
+
+If the board already has the starter route and you want setup to use starter defaults:
+
+```sh
+fizzy-symphony setup --adopt-starter --board BOARD_ID --workspace-repo .
 ```
 
 Existing routes still use the same board-native contract: a native golden card tagged `agent-instructions`, `codex`, and one completion tag like `move-to-done`, `close-on-complete`, or `comment-once`.

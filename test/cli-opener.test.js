@@ -27,6 +27,14 @@ test("plain opener renders the Fizzy Symphony board without ANSI", () => {
   });
 });
 
+test("opener schematic does not include fake card state", () => {
+  const rendered = renderPlainOpener();
+
+  assert.doesNotMatch(rendered, /#\d+/u);
+  assert.doesNotMatch(rendered, /setup polish|docs cleanup|verified|shipped/u);
+  assert.doesNotMatch(rendered, /completed cards land|setup checks/u);
+});
+
 test("colored opener keeps stable dimensions while emitting ANSI", () => {
   const plain = renderPlainOpener();
   const colored = renderColorOpener();

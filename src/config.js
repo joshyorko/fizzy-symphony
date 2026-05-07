@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
 
 const TEMPLATE_PATH = new URL("../config.example.yml", import.meta.url);
 const DEFAULT_FIZZY_API_URL = "https://app.fizzy.do";
+const DEFAULT_SETUP_IGNORED_DIRTY_PATHS = [".fizzy-symphony/"];
 
 const allowedCardOverridesSchema = {
   backend: true,
@@ -191,6 +192,7 @@ const schema = {
   },
   safety: {
     allowed_roots: [true],
+    ignored_dirty_paths: [true],
     dirty_source_repo_policy: true,
     cleanup: {
       policy: true,
@@ -269,9 +271,90 @@ export function generateAnnotatedConfig(options = {}) {
   return template;
 }
 
+export function generateOperatorConfig(options = {}) {
+  const {
+    account = "my-account",
+    board = { id: "board_123", label: "Agent Playground" },
+    boards,
+    agentMaxConcurrent = 1,
+    boardMaxConcurrent = agentMaxConcurrent,
+    runnerPreferred = "cli_app_server",
+    apiUrl = DEFAULT_FIZZY_API_URL,
+    botUserId = "",
+    defaultModel = "",
+    webhook = {},
+    managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
+    configDir = ".",
+    workspaceRepo = ".",
+    ignoredDirtyPaths = DEFAULT_SETUP_IGNORED_DIRTY_PATHS
+  } = options;
+
+  const boardEntries = boards?.length ? boards : [board];
+  const workspaceRepoPath = relativePathForConfig(configDir, workspaceRepo);
+
+  const lines = [
+    "# fizzy-symphony",
+    "# Golden-ticket cards define the workflow. This file only tells the watcher where to run.",
+    "",
+    "fizzy:",
+    "  token: $FIZZY_API_TOKEN",
+    `  account: ${yamlScalar(account)}`,
+    `  api_url: ${yamlScalar(apiUrl)}`,
+    ...(botUserId ? [`  bot_user_id: ${yamlScalar(botUserId)}`] : []),
+    "",
+    "boards:",
+    "  entries:",
+    renderCompactBoardEntries(boardEntries, { maxConcurrent: boardMaxConcurrent, defaultModel }),
+    "",
+    "agent:",
+    `  max_concurrent: ${agentMaxConcurrent}`,
+    "  # Codex model. Leave empty to use the Codex CLI default.",
+    `  default_model: ${yamlScalar(defaultModel)}`,
+    "",
+    "runner:",
+    `  preferred: ${yamlScalar(runnerPreferred)}`,
+    ...compactWebhookLines(webhook, managedWebhookIdsByBoard),
+    "",
+    "polling:",
+    "  interval_ms: 30000",
+    "",
+    "workspaces:",
+    `  default_repo: ${yamlScalar(workspaceRepoPath)}`,
+    "  registry:",
+    "    app:",
+    `      repo: ${yamlScalar(workspaceRepoPath)}`,
+    "      base_ref: HEAD",
+    "      workflow_path: WORKFLOW.md",
+    "      require_clean_source: true",
+    "",
+    "workflow:",
+    "  # No repo WORKFLOW.md is required; the built-in fallback keeps the golden ticket primary.",
+    "  fallback_enabled: true",
+    "",
+    "safety:",
+    "  allowed_roots:",
+    renderStringList(uniqueStrings([workspaceRepoPath, "."]), 4),
+    "  dirty_source_repo_policy: fail",
+    "  ignored_dirty_paths:",
+    renderStringList(ignoredDirtyPaths, 4)
+  ];
+
+  return `${lines.join("\n")}\n`;
+}
+
 export async function writeAnnotatedConfig(configPath, options = {}) {
   await mkdir(dirname(configPath), { recursive: true });
   const generated = generateAnnotatedConfig({
+    ...options,
+    configDir: options.configDir ?? dirname(configPath)
+  });
+  await writeFile(configPath, generated, "utf8");
+  return { path: configPath, bytes: Buffer.byteLength(generated) };
+}
+
+export async function writeOperatorConfig(configPath, options = {}) {
+  await mkdir(dirname(configPath), { recursive: true });
+  const generated = generateOperatorConfig({
     ...options,
     configDir: options.configDir ?? dirname(configPath)
   });
@@ -307,7 +390,7 @@ export function parseConfig(input, options = {}) {
   const configPath = options.configPath ?? join(process.cwd(), "config.json");
   validateKnownKeys(input, schema);
 
-  const resolved = resolveEnvironmentReferences(clone(input), options.env ?? process.env);
+  const resolved = resolveEnvironmentReferences(applyConfigDefaults(input, { configDir: dirname(configPath) }), options.env ?? process.env);
   validateConfigValues(resolved);
   resolveRelativePaths(resolved, dirname(configPath));
   return resolved;
@@ -517,6 +600,46 @@ function renderBoardEntries(boards, maxConcurrent) {
   ].join("\n")).join("\n");
 }
 
+function renderCompactBoardEntries(boards, options = {}) {
+  return boards.map((board) => [
+    `    - id: ${yamlScalar(board.id)}`,
+    `      label: ${yamlScalar(board.label ?? board.name ?? board.id)}`,
+    "      defaults:",
+    "        backend: codex",
+    `        model: ${yamlScalar(options.defaultModel ?? "")}`,
+    "        workspace: app",
+    "        concurrency:",
+    `          max_concurrent: ${options.maxConcurrent ?? 1}`
+  ].join("\n")).join("\n");
+}
+
+function compactWebhookLines(webhook = {}, managedWebhookIdsByBoard = {}) {
+  const managedIds = managedWebhookIdsByBoard ?? {};
+  const includeWebhook = Object.hasOwn(webhook, "manage") ||
+    Boolean(webhook.callback_url) ||
+    Object.keys(managedIds).length > 0 ||
+    Array.isArray(webhook.subscribed_actions);
+
+  if (!includeWebhook) return [];
+
+  const lines = [
+    "",
+    "webhook:",
+    `  manage: ${Boolean(webhook.manage)}`
+  ];
+
+  if (webhook.callback_url) lines.push(`  callback_url: ${yamlScalar(webhook.callback_url)}`);
+  if (webhook.secret_env) lines.push(`  secret: ${yamlScalar(`$${webhook.secret_env}`)}`);
+  if (webhook.subscribed_actions?.length) {
+    lines.push("  subscribed_actions:", renderStringList(webhook.subscribed_actions, 4));
+  }
+  if (Object.keys(managedIds).length > 0) {
+    lines.push("  managed_webhook_ids_by_board:", renderStringMap(managedIds, 4));
+  }
+
+  return lines;
+}
+
 function renderStringMap(map, indent) {
   const padding = " ".repeat(indent);
   return Object.entries(map)
@@ -590,6 +713,263 @@ function uniqueStrings(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function applyConfigDefaults(input = {}, options = {}) {
+  const original = clone(input ?? {});
+  const config = deepMerge(defaultConfig(options), original);
+  const defaultModel = config.agent?.default_model ?? "";
+
+  const inputBoardEntries = Array.isArray(original.boards?.entries) ? original.boards.entries : [];
+  config.boards.entries = inputBoardEntries.map((entry) => deepMerge(defaultBoardEntry(defaultModel), entry));
+
+  const defaultRepo = config.workspaces?.default_repo ?? ".";
+  const inputRegistry = original.workspaces?.registry;
+  const registryEntries = isPlainObject(inputRegistry) && Object.keys(inputRegistry).length > 0
+    ? inputRegistry
+    : { app: {} };
+  config.workspaces.registry = Object.fromEntries(
+    Object.entries(registryEntries).map(([name, workspace]) => [
+      name,
+      deepMerge(defaultWorkspaceEntry(defaultRepo, options), workspace)
+    ])
+  );
+  if (config.workspaces.registry.app && !original.workspaces?.registry?.app?.repo) {
+    config.workspaces.registry.app.repo = defaultRepo;
+  }
+
+  if (!Array.isArray(config.safety.ignored_dirty_paths)) {
+    config.safety.ignored_dirty_paths = [...DEFAULT_SETUP_IGNORED_DIRTY_PATHS];
+  }
+
+  return config;
+}
+
+function defaultConfig(options = {}) {
+  const local = (path) => defaultLocalPathForConfig(path, options.configDir);
+
+  return {
+    instance: { id: "auto", label: "auto" },
+    fizzy: {
+      token: "$FIZZY_API_TOKEN",
+      account: "",
+      api_url: DEFAULT_FIZZY_API_URL,
+      bot_user_id: ""
+    },
+    boards: { entries: [] },
+    server: {
+      host: "127.0.0.1",
+      port: "auto",
+      port_allocation: "next_available",
+      base_port: 4567,
+      registry_dir: local(".fizzy-symphony/run/instances"),
+      heartbeat_interval_ms: 5000
+    },
+    webhook: {
+      enabled: true,
+      path: "/webhook",
+      secret: "$FIZZY_WEBHOOK_SECRET",
+      max_event_age_seconds: 300,
+      manage: false,
+      managed_webhook_ids_by_board: {},
+      callback_url: "",
+      subscribed_actions: [
+        "card_assigned",
+        "card_closed",
+        "card_postponed",
+        "card_auto_postponed",
+        "card_board_changed",
+        "card_published",
+        "card_reopened",
+        "card_sent_back_to_triage",
+        "card_triaged",
+        "card_unassigned",
+        "comment_created"
+      ]
+    },
+    polling: {
+      interval_ms: 30000,
+      use_etags: true,
+      use_api_filters: true,
+      api_filters: {
+        board_ids: [],
+        column_ids: [],
+        tag_ids: [],
+        assignee_ids: [],
+        assignment_status: "",
+        indexed_by: "",
+        sorted_by: "",
+        terms: []
+      }
+    },
+    agent: {
+      max_concurrent: 1,
+      max_concurrent_per_card: 1,
+      turn_timeout_ms: 3600000,
+      stall_timeout_ms: 300000,
+      max_turns: 1,
+      max_retry_backoff_ms: 300000,
+      default_backend: "codex",
+      default_model: "",
+      default_persona: "repo-agent"
+    },
+    runner: {
+      preferred: "cli_app_server",
+      fallback: "cli_app_server",
+      allow_fallback: true,
+      sdk: { package: "", contract: "", smoke_test: false },
+      cli_app_server: { command: "codex", args: ["app-server"] },
+      initialize_timeout_ms: 10000,
+      request_timeout_ms: 60000,
+      cancel_timeout_ms: 10000,
+      stop_session_timeout_ms: 10000,
+      terminate_timeout_ms: 5000,
+      kill_timeout_ms: 2000,
+      stream_timeout_ms: 3600000,
+      max_stderr_bytes: 65536,
+      health: { enabled: true, interval_ms: 60000 },
+      codex: {
+        approval_policy: {
+          mode: "reject",
+          sandbox_approval: "reject",
+          command_approval: "reject",
+          tool_approval: "reject",
+          mcp_elicitation: "reject"
+        },
+        interactive: false,
+        thread_sandbox: "workspace-write",
+        turn_sandbox_policy: { type: "workspaceWrite" }
+      }
+    },
+    workspaces: {
+      root: local(".fizzy-symphony/workspaces"),
+      metadata_root: local(".fizzy-symphony/run/workspaces"),
+      default_isolation: "git_worktree",
+      default_repo: ".",
+      registry: {},
+      retry: { workspace_policy: "reuse" }
+    },
+    workflow: {
+      create_starter_on_setup: false,
+      fallback_enabled: false,
+      fallback_path: ""
+    },
+    routing: {
+      allow_postponed_cards: false,
+      rerun: {
+        mode: "explicit_tag_only",
+        agent_rerun_consumption: "remove_when_supported"
+      }
+    },
+    diagnostics: { no_dispatch: false },
+    claims: {
+      mode: "structured_comment",
+      tag_visibility: false,
+      tag: "agent-claimed",
+      assign_on_claim: false,
+      watch_on_claim: false,
+      lease_ms: 900000,
+      renew_interval_ms: 300000,
+      steal_grace_ms: 30000,
+      max_clock_skew_ms: 30000
+    },
+    completion: {
+      allow_card_completion_override: false,
+      markers: {
+        mode: "structured_comment_and_tag",
+        success_tag_prefix: "agent-completed",
+        failure_tag_prefix: "agent-completion-failed"
+      }
+    },
+    workpad: {
+      enabled: true,
+      mode: "single_comment",
+      update_interval_ms: 30000
+    },
+    safety: {
+      allowed_roots: defaultAllowedRootsForConfig(options.configDir),
+      ignored_dirty_paths: [...DEFAULT_SETUP_IGNORED_DIRTY_PATHS],
+      dirty_source_repo_policy: "fail",
+      cleanup: {
+        policy: "preserve",
+        require_proof_before_cleanup: true,
+        require_handoff_before_cleanup: true,
+        forbid_force_remove: true,
+        retention_ms: 604800000
+      }
+    },
+    observability: {
+      state_dir: local(".fizzy-symphony/run"),
+      log_dir: local(".fizzy-symphony/logs"),
+      status_snapshot_path: local(".fizzy-symphony/run/status/latest.json"),
+      status_retention_ms: 604800000,
+      log_format: "json"
+    }
+  };
+}
+
+function defaultBoardEntry(defaultModel = "") {
+  return {
+    id: "",
+    label: "",
+    enabled: true,
+    routing_mode: "column_scoped",
+    defaults: {
+      backend: "codex",
+      model: defaultModel,
+      workspace: "app",
+      persona: "repo-agent",
+      unknown_managed_tag_policy: "fail",
+      allowed_card_overrides: {
+        backend: false,
+        model: false,
+        workspace: false,
+        persona: false,
+        priority: true,
+        completion: false
+      },
+      concurrency: { max_concurrent: 1 }
+    }
+  };
+}
+
+function defaultWorkspaceEntry(defaultRepo = ".", options = {}) {
+  return {
+    repo: defaultRepo,
+    isolation: "git_worktree",
+    base_ref: "HEAD",
+    worktree_root: defaultLocalPathForConfig(".fizzy-symphony/worktrees", options.configDir),
+    branch_prefix: "fizzy",
+    workflow_path: "WORKFLOW.md",
+    require_clean_source: true
+  };
+}
+
+function defaultLocalPathForConfig(path, configDir) {
+  if (typeof configDir === "string" && basename(resolve(configDir)) === ".fizzy-symphony") {
+    return path.replace(/^\.fizzy-symphony\//u, "");
+  }
+  return path;
+}
+
+function defaultAllowedRootsForConfig(configDir) {
+  if (typeof configDir === "string" && basename(resolve(configDir)) === ".fizzy-symphony") {
+    return ["..", "."];
+  }
+  return [".", ".fizzy-symphony"];
+}
+
+function deepMerge(base, override) {
+  if (!isPlainObject(base) || !isPlainObject(override)) return clone(override ?? base);
+  const merged = clone(base);
+  for (const [key, value] of Object.entries(override)) {
+    if (isPlainObject(value) && isPlainObject(merged[key])) {
+      merged[key] = deepMerge(merged[key], value);
+    } else {
+      merged[key] = clone(value);
+    }
+  }
+  return merged;
+}
+
 function yamlScalar(value) {
   if (value === "") return "\"\"";
   if (typeof value === "boolean") return String(value);
@@ -606,6 +986,7 @@ function isPlainObject(value) {
 }
 
 function clone(value) {
+  if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
 }
 

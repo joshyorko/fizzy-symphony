@@ -165,7 +165,11 @@ export async function preflightWorkspaceSource({ config, identity, fs = nodeFs, 
   await assertGitRef(sourceRepositoryPath, identity.source_ref, exec);
 
   const workspace = workspaceConfig(config, identity.workspace_name);
-  const sourceStatus = await gitStatus({ cwd: sourceRepositoryPath, exec, ignoredPaths: [] });
+  const sourceStatus = await gitStatus({
+    cwd: sourceRepositoryPath,
+    exec,
+    ignoredPaths: config?.safety?.ignored_dirty_paths ?? []
+  });
   const snapshotPolicy = config?.safety?.dirty_source_repo_policy === "snapshot";
   const policyRequiresClean = !snapshotPolicy && (
     workspace?.require_clean_source === true ||
@@ -644,12 +648,26 @@ async function gitCommit(sourceRepositoryPath, sourceRef, exec) {
 
 async function gitStatus({ cwd, exec, ignoredPaths = [GUARD_FILE_NAME] }) {
   const result = await runGit(["status", "--porcelain=v1", "--untracked-files=all"], { cwd, exec });
-  const entries = parsePorcelainStatus(result.stdout).filter((entry) => !ignoredPaths.includes(entry.path));
+  const entries = parsePorcelainStatus(result.stdout).filter((entry) => !matchesIgnoredPath(entry.path, ignoredPaths));
   return {
     clean: entries.length === 0,
     paths: entries.map((entry) => entry.path),
     entries
   };
+}
+
+function matchesIgnoredPath(path, ignoredPaths = []) {
+  const normalizedPath = normalizeStatusPath(path);
+  return (ignoredPaths ?? []).some((ignoredPath) => {
+    const pattern = normalizeStatusPath(ignoredPath);
+    if (!pattern) return false;
+    if (pattern.endsWith("/")) return normalizedPath.startsWith(pattern);
+    return normalizedPath === pattern;
+  });
+}
+
+function normalizeStatusPath(path) {
+  return String(path ?? "").replace(/\\/gu, "/").replace(/^\.\//u, "");
 }
 
 function parsePorcelainStatus(stdout) {

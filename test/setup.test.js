@@ -108,9 +108,14 @@ function fakeStarterFizzy() {
   const board = {
     id: "starter_board",
     name: "Agent Playground: repo",
-    columns: [],
+    columns: [
+      { id: "not_now", name: "Not Now" },
+      { id: "maybe", name: "Maybe?" },
+      { id: "starter_done", name: "Done" }
+    ],
     cards: []
   };
+  let nextCardNumber = 100;
 
   return {
     calls,
@@ -135,6 +140,7 @@ function fakeStarterFizzy() {
     },
     async createBoard(request) {
       calls.push(["createBoard", request]);
+      board.name = request.name;
       return { id: board.id, name: request.name };
     },
     async createColumn(request) {
@@ -146,9 +152,10 @@ function fakeStarterFizzy() {
     },
     async createCard(request) {
       calls.push(["createCard", request]);
+      const number = nextCardNumber++;
       const card = {
-        id: "starter_golden",
-        number: 100,
+        id: number === 100 ? "starter_golden" : `starter_card_${number}`,
+        number,
         title: request.title,
         golden: false,
         column_id: "maybe",
@@ -202,7 +209,7 @@ function fakeRunner(overrides = {}) {
   };
 }
 
-test("runSetup validates Fizzy identity, lists setup inputs, validates board routes, and writes annotated config", async () => {
+test("runSetup validates Fizzy identity, lists setup inputs, validates board routes, and writes compact config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-setup-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
@@ -233,10 +240,11 @@ test("runSetup validates Fizzy identity, lists setup inputs, validates board rou
   assert.deepEqual(fizzy.calls.find((call) => call[0] === "getBoard"), ["getBoard", "board_1", "acct_1"]);
 
   const written = await readFile(configPath, "utf8");
-  assert.match(written, /# fizzy-symphony config/);
+  assert.match(written, /# fizzy-symphony/);
   assert.match(written, /account: acct_1/);
   assert.match(written, /id: board_1/);
   assert.match(written, /preferred: cli_app_server/);
+  assert.doesNotMatch(written, /terminate_timeout_ms/);
 });
 
 test("runSetup prefers live Fizzy account slugs for generated API config", async () => {
@@ -294,7 +302,7 @@ test("runSetup creates a starter board with native golden route defaults and wri
   assert.equal(result.ok, true);
   assert.equal(result.starter.created, true);
   assert.equal(result.boards[0].id, "starter_board");
-  assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Ready for Agents", "Done"]);
+  assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Not Now", "Maybe?", "Done", "Ready for Agents"]);
   assert.deepEqual(result.boards[0].cards[0], {
     id: "starter_golden",
     number: 100,
@@ -309,7 +317,6 @@ test("runSetup creates a starter board with native golden route defaults and wri
       "listTags",
       "createBoard",
       "createColumn",
-      "createColumn",
       "createCard",
       "toggleTag",
       "toggleTag",
@@ -319,10 +326,61 @@ test("runSetup creates a starter board with native golden route defaults and wri
       "listTags"
     ]
   );
+  assert.deepEqual(
+    fizzy.calls.filter((call) => call[0] === "createColumn").map((call) => call[1].name),
+    ["Ready for Agents"]
+  );
 
   const written = await readFile(configPath, "utf8");
   assert.match(written, /id: starter_board/);
   assert.match(written, /max_concurrent: 1/);
+});
+
+test("runSetup lets setup choose the Codex model and maximum active agents", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-model-agents-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeStarterFizzy();
+
+  const result = await runSetup({
+    configPath,
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    starterBoardName: "Agent Playground: repo",
+    workspaceRepo: dir,
+    defaultModel: "gpt-5.4",
+    maxAgents: 3,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.default_model, "gpt-5.4");
+  assert.equal(result.max_agents, 3);
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /default_model: gpt-5\.4/u);
+  assert.match(written, /model: gpt-5\.4/u);
+  assert.match(written, /max_concurrent: 3/u);
+});
+
+test("runSetup rejects invalid max agents before creating remote starter resources", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-invalid-max-agents-"));
+  const fizzy = fakeStarterFizzy();
+
+  await assert.rejects(
+    () => runSetup({
+      configPath: join(dir, ".fizzy-symphony", "config.yml"),
+      fizzy,
+      runner: fakeRunner(),
+      account: "acct_1",
+      setupMode: "create_starter",
+      workspaceRepo: dir,
+      maxAgents: 0,
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "INVALID_MAX_AGENTS"
+  );
+
+  assert.equal(fizzy.calls.some((call) => call[0] === "createBoard"), false);
 });
 
 test("runSetup creates starter WORKFLOW.md only when workflow policy says create", async () => {
@@ -342,31 +400,55 @@ test("runSetup creates starter WORKFLOW.md only when workflow policy says create
   });
 
   assert.equal(result.workflow.action, "created");
-  assert.match(await readFile(join(dir, "WORKFLOW.md"), "utf8"), /fizzy-symphony starter workflow/u);
+  const workflow = await readFile(join(dir, "WORKFLOW.md"), "utf8");
+  assert.match(workflow, /Repository workflow/u);
+  assert.match(workflow, /Fizzy card and golden-ticket instructions/u);
+  assert.doesNotMatch(workflow, /npm test/u);
 });
 
-test("runSetup fails missing WORKFLOW.md when workflow policy says skip", async () => {
+test("runSetup skips missing WORKFLOW.md and still writes config when workflow policy says skip", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-skip-"));
   const fizzy = fakeStarterFizzy();
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
 
-  await assert.rejects(
-    () => runSetup({
-      configPath: join(dir, ".fizzy-symphony", "config.yml"),
-      fizzy,
-      runner: fakeRunner(),
-      account: "acct_1",
-      setupMode: "create_starter",
-      workspaceRepo: dir,
-      workflowPolicy: { action: "skip" },
-      env: { FIZZY_API_TOKEN: "token" }
-    }),
-    (error) => error.code === "MISSING_WORKFLOW"
-  );
-  assert.deepEqual(
-    fizzy.calls.filter((call) => ["createBoard", "createColumn", "createCard", "markGolden"].includes(call[0])),
-    []
-  );
-  await assert.rejects(() => readFile(join(dir, ".fizzy-symphony", "config.yml"), "utf8"));
+  const result = await runSetup({
+    configPath,
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    workspaceRepo: dir,
+    workflowPolicy: { action: "skip" },
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.workflow.action, "missing_skipped");
+  assert.equal(result.starter.created, true);
+  assert.equal(fizzy.calls.some((call) => call[0] === "createBoard"), true);
+  await assert.rejects(() => readFile(join(dir, "WORKFLOW.md"), "utf8"));
+  assert.match(await readFile(configPath, "utf8"), /fallback_enabled: true/u);
+});
+
+test("runSetup can add an optional normal smoke-test card to a starter board", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-smoke-card-"));
+  const fizzy = fakeStarterFizzy();
+
+  const result = await runSetup({
+    configPath: join(dir, ".fizzy-symphony", "config.yml"),
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    workspaceRepo: dir,
+    createSmokeTestCard: true,
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.boards[0].cards.length, 2);
+  assert.deepEqual(result.boards[0].cards.map((card) => [card.title, card.golden, card.column_id]), [
+    ["Repo Agent", true, "starter_ready"],
+    ["Smoke test fizzy-symphony", false, "starter_ready"]
+  ]);
 });
 
 test("runSetup appends a fizzy-symphony section to existing WORKFLOW.md only when requested", async () => {
@@ -632,8 +714,8 @@ test("runSetup falls back from arbitrary SDK package and contract because no SDK
   assert.equal(result.runner.fallback_from, "sdk");
   const written = await readFile(join(dir, "config.yml"), "utf8");
   assert.match(written, /preferred: cli_app_server/);
-  assert.match(written, /package: ""/);
-  assert.match(written, /contract: ""/);
+  assert.doesNotMatch(written, /package:/);
+  assert.doesNotMatch(written, /contract:/);
 });
 
 test("runSetup fails existing-board validation when required managed tags cannot be resolved", async () => {

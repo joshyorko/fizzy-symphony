@@ -15,25 +15,25 @@ const DEFAULT_FRAME_DELAY_MS = 20;
 const FULL_ART = [
   divider("┌", "┬", "┐", FULL_COLUMN_WIDTHS),
   boardRow([" Backlog        ♫", " Ready for Agents   ★", " Done            ♪"], FULL_COLUMN_WIDTHS),
-  boardRow([" normal work waits", " golden route lives here", " completed cards land"], FULL_COLUMN_WIDTHS),
+  boardRow([" work cards enter", " golden route lives here", " result lands here"], FULL_COLUMN_WIDTHS),
   divider("├", "┼", "┤", FULL_COLUMN_WIDTHS),
-  boardRow([" #42 setup polish", "  ╔════════════════╗", " #31 verified"], FULL_COLUMN_WIDTHS),
-  boardRow([" #43 docs cleanup", "  ║ GOLDEN TICKET  ║ ★", " #32 shipped"], FULL_COLUMN_WIDTHS),
-  boardRow([" ♫ card queue", "  ║ #agent-instr.  ║", " ♪ result notes"], FULL_COLUMN_WIDTHS),
-  boardRow(["", "  ╚═ ready -> done╝", ""], FULL_COLUMN_WIDTHS),
-  boardRow([" work cards move in", " protected dispatch", " proof moves out"], FULL_COLUMN_WIDTHS),
+  boardRow([" work card", "  ╔════════════════╗", " result card"], FULL_COLUMN_WIDTHS),
+  boardRow([" repo request", "  ║ GOLDEN TICKET  ║ ★", " proof + summary"], FULL_COLUMN_WIDTHS),
+  boardRow([" card context", "  ║ agent-instr.   ║", " completion tag"], FULL_COLUMN_WIDTHS),
+  boardRow(["", "  ╚═ route policy ╝", ""], FULL_COLUMN_WIDTHS),
+  boardRow([" real state appears", " after setup/start", " never invented"], FULL_COLUMN_WIDTHS),
   divider("├", "┼", "┤", FULL_COLUMN_WIDTHS),
   boardRow([" FIZZY SYMPHONY", " board-first agents", " safe local runs"], FULL_COLUMN_WIDTHS),
   divider("└", "┴", "┘", FULL_COLUMN_WIDTHS),
-  fitLine("      setup checks: Fizzy  •  WORKFLOW.md  •  config  •  safe start", OPENER_WIDTH)
+  fitLine("      setup path: connect Fizzy  •  create route  •  config  •  start", OPENER_WIDTH)
 ];
 
 const COMPACT_ART = [
   divider("┌", "┬", "┐", COMPACT_COLUMN_WIDTHS),
   boardRow([" ♫ Backlog", " ★ Ready", " ♪ Done"], COMPACT_COLUMN_WIDTHS),
-  boardRow([" work cards", " ╔════════╗", " completed"], COMPACT_COLUMN_WIDTHS),
-  boardRow([" queue in", " ║ GOLDEN ║", " proof out"], COMPACT_COLUMN_WIDTHS),
-  boardRow(["", " ready->done", ""], COMPACT_COLUMN_WIDTHS),
+  boardRow([" work", " ╔════════╗", " result"], COMPACT_COLUMN_WIDTHS),
+  boardRow([" request", " ║ GOLDEN ║", " proof"], COMPACT_COLUMN_WIDTHS),
+  boardRow(["", " route tag", ""], COMPACT_COLUMN_WIDTHS),
   divider("└", "┴", "┘", COMPACT_COLUMN_WIDTHS),
   fitLine("FIZZY SYMPHONY        ♪   ♫   ♬", COMPACT_WIDTH)
 ];
