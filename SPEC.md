@@ -65,7 +65,7 @@ plane behavior. The spec MUST keep those layers explicit:
 | Area | Upstream Symphony baseline | Fizzy-specific extension in this spec |
 | --- | --- | --- |
 | Tracker writes | The daemon schedules, reconciles, and reads tracker state. Task-specific tracker writes normally live in the workflow prompt and agent tools. | The daemon writes board-native claim, completion, completion-failure, and status comments because Fizzy comments/tags are the local coordination store. |
-| `WORKFLOW.md` | Repository-owned runtime policy and prompt contract. | Local config owns Fizzy auth, boards, ports, instance identity, claim storage, status storage, and local safety defaults. Any runtime policy kept local is a deliberate divergence and MUST be documented. |
+| `WORKFLOW.md` | Repository-owned runtime policy and prompt contract. | Golden tickets own board-level routing and are sufficient for first-run dispatch when the built-in fallback is enabled. `WORKFLOW.md` is optional repo policy that is loaded when present; local config owns Fizzy auth, boards, ports, instance identity, claim storage, status storage, and local safety defaults. |
 | Workspaces | Deterministic isolated workspace per task under a workspace root. | Deterministic git worktrees, branch/proof metadata, conservative cleanup, and cleanup guards are required hardening for multi-card Fizzy operation. |
 | Observability | Structured logs are the minimum. Status surfaces are implementation-defined. | `/health`, `/ready`, `/status`, status snapshots, and instance discovery are MVP requirements for local multi-instance operation. |
 | Codex execution | Codex app-server protocol is the upstream execution model. | A single SDK-shaped runner abstraction wraps either the preferred SDK implementation or the app-server fallback. |
@@ -77,7 +77,7 @@ The service MUST combine these patterns:
   - tracker-driven reconciliation
   - one task maps to one isolated workspace
   - bounded concurrency
-  - repository-owned `WORKFLOW.md`
+  - optional repository-owned `WORKFLOW.md` policy loaded when present
   - Codex SDK/app-server execution model
   - clear observability
 - Fizzy-style control plane:
@@ -90,9 +90,9 @@ The service MUST combine these patterns:
 
 Key design sentence:
 
-> Fizzy owns visible work state; golden tickets own board-level routing; `WORKFLOW.md` owns
-> repository execution policy; the daemon owns reconciliation, claims, workspaces, runner lifecycle,
-> and safety.
+> Fizzy owns visible work state; golden tickets own board-level routing; optional `WORKFLOW.md`
+> owns repository-specific execution policy when present; the daemon owns reconciliation, claims,
+> workspaces, runner lifecycle, and safety.
 
 ## What we are no longer leaving on the table
 
@@ -137,7 +137,7 @@ Fizzy API capabilities intentionally deferred from the MVP:
 
 OpenAI Symphony concepts adopted by this design:
 
-- Repository-owned `WORKFLOW.md` with YAML front matter and prompt body.
+- Optional repository-owned `WORKFLOW.md` with YAML front matter and prompt body.
 - Deterministic per-card workspace isolation and preservation across retries.
 - One authoritative orchestrator state for claims, running sessions, retries, cancellation, and
   reconciliation.
@@ -180,14 +180,16 @@ The major problems to eliminate are:
 
 - Watch configured Fizzy boards and dispatch eligible work cards.
 - Treat Fizzy as the visible control plane for humans.
-- Use `WORKFLOW.md` as the repository policy contract for how work is executed.
+- Treat golden tickets and work cards as the board-native workflow contract, and load
+  `WORKFLOW.md` as optional repository policy when present.
 - Use one deterministic isolated workspace or worktree per Fizzy card.
 - Enforce one active run per card and bounded global concurrency.
 - Coordinate local instances so two daemons do not work the same card.
 - Support webhook ingestion and polling reconciliation.
 - Fail startup on unsafe golden tickets, missing completion policy, duplicate routing, or invalid
   runner configuration.
-- Generate a complete annotated config file during setup.
+- Generate a compact operator config during normal setup and a complete annotated config from
+  `setup --template-only`.
 - Validate Fizzy access during setup and startup.
 - Validate Codex runner availability as far as the selected runtime allows.
 - Surface every dispatch, claim, runner, completion, and cleanup state through logs and status
@@ -243,8 +245,8 @@ At a high level:
 5. The workspace manager resolves deterministic workspace identity without mutating the filesystem.
 6. The claim store acquires a board-native lease for the card.
 7. The workspace manager prepares the isolated workspace/worktree.
-8. The workflow loader reads the repository's `WORKFLOW.md` from the source repo or prepared
-   workspace.
+8. The workflow loader reads `WORKFLOW.md` from the source repo or prepared workspace when present,
+   otherwise it uses the configured board-first fallback.
 9. The supervisor starts Codex through the runner abstraction and monitors continuation turns.
 10. The daemon records status, comments back to Fizzy, applies completion policy, and preserves or
    cleans the workspace according to safety rules.
@@ -254,7 +256,8 @@ Required target flow:
 1. User runs setup.
 2. Setup validates Fizzy access.
 3. Setup validates Codex runtime as much as possible.
-4. Setup writes full annotated config.
+4. Setup writes the compact operator config, or the full annotated config when `--template-only` is
+   requested.
 5. Setup creates or validates board/golden-ticket structure.
 6. User starts daemon.
 7. Daemon validates config and golden tickets.
@@ -263,7 +266,8 @@ Required target flow:
 10. Daemon resolves route fingerprint and workspace identity.
 11. Daemon acquires a board-native claim.
 12. Daemon prepares isolated card workspace/worktree.
-13. Daemon loads `WORKFLOW.md` from the resolved repo/workspace.
+13. Daemon loads `WORKFLOW.md` from the resolved repo/workspace when present, otherwise it loads the
+    explicit fallback.
 14. Daemon starts Codex through the SDK-shaped runner.
 15. Daemon monitors turns, continuation, cancellation, stall, and failure.
 16. Daemon records local status/proof.
@@ -279,14 +283,16 @@ Required target flow:
 
 - MUST collect and validate Fizzy API settings.
 - MUST detect supported Codex runner options.
-- MUST generate a complete annotated config file.
+- MUST generate a compact operator config for normal setup and a complete annotated config for
+  template generation.
 - MUST create or validate starter board/golden-ticket structure.
 
 `Config Layer`
 
 - MUST parse, validate, and expose typed configuration.
-- MUST generate config from a complete annotated template. Implementations MAY round-trip comments,
-  but preserving comments after arbitrary edits is not required for conformance.
+- MUST generate config from the same typed model as the complete annotated template.
+  Implementations MAY round-trip comments, but preserving comments after arbitrary edits is not
+  required for conformance.
 - MUST support environment indirection for secrets.
 
 `Fizzy Client`
@@ -352,9 +358,10 @@ Required target flow:
 
 `Workflow Loader`
 
-- MUST load repository-owned `WORKFLOW.md`.
+- MUST load repository-owned `WORKFLOW.md` when present, otherwise load the configured fallback.
 - MUST expose front matter and prompt body.
-- MUST fail dispatch if the file is missing or invalid for the resolved workspace.
+- MUST fail dispatch if the workflow file/fallback is invalid, or if no file exists and fallback is
+  disabled.
 
 `Codex Runner`
 
@@ -519,9 +526,12 @@ The following boundary is REQUIRED:
 The generated config SHOULD live at `.fizzy-symphony/config.yml` by default. A CLI flag MAY select a
 different config path.
 
-The generated file MUST be complete and annotated like a Helm `values.yaml`: every major option
-MUST appear with default, explanation, required status, environment override, and example where
-useful.
+Normal setup MUST write a compact operator config that keeps the active board, model, reasoning,
+concurrency, workspace, and safety choices visible without dumping every advanced option.
+
+`setup --template-only` MUST write the complete annotated template like a Helm `values.yaml`: every
+major option MUST appear with default, explanation, required status, environment override, and
+example where useful.
 
 The complete annotated example generated config lives in `config.example.yml`. The example file is
 illustrative, but the requirements in this section are normative.
@@ -559,7 +569,7 @@ Setup MUST:
     update, and reactivate flows.
 13. Validate every selected existing board/golden-ticket structure before writing a dispatch-ready
     config.
-14. Generate a complete annotated config.
+14. Generate a compact operator config, or the complete annotated template for `--template-only`.
 15. Fail loudly if selected board routes are unsafe.
 16. Default the runner to `cli_app_server` unless an exact SDK runner is configured.
 17. Default unattended approval/input behavior to reject, and require explicit operator selection for
@@ -896,6 +906,9 @@ unknown named workspace to the default workspace.
 Supported isolation strategies:
 
 - `git_worktree`: create a per-card git worktree from a configured source repository and base ref.
+
+Deferred isolation strategies:
+
 - `git_clone`: create a per-card clone for repositories where worktrees are not suitable.
 - `copy`: copy a prepared source tree when VCS metadata is unavailable.
 
@@ -943,14 +956,16 @@ For git worktrees:
   forbidden for normal cleanup. They MAY exist only as a separate operator command that requires
   explicit card/workspace identity and prints the proof and guard checks it is bypassing.
 
-Workspace lifecycle hooks MAY exist, but they MUST run inside the card workspace and MUST be
-declared in `WORKFLOW.md`, not hidden in the daemon.
+Workspace lifecycle hooks MAY exist. Config-declared hooks are local operator policy; `WORKFLOW.md`
+may add repository-specific hook guidance when present. Hooks MUST run inside the resolved card
+workspace unless the hook is explicitly a source-repository preflight.
 
 ## 15. WORKFLOW.md policy model
 
-Each configured repository MUST contain `WORKFLOW.md` for dispatch unless local config explicitly
-enables an operator-created fallback workflow for MVP testing. The daemon MUST NOT invent repository
-policy silently.
+`WORKFLOW.md` is optional repository policy. Golden tickets and work cards are the required
+board-native workflow contract. When `WORKFLOW.md` exists, the daemon MUST load it and include it in
+the prompt contract. When it is absent, dispatch MAY continue only through an explicit configured
+fallback, including the built-in board-first fallback used by normal setup.
 
 Discovery order:
 
@@ -958,9 +973,9 @@ Discovery order:
 2. `WORKFLOW.md` at the root of the resolved source repository.
 3. `WORKFLOW.md` at the root of the prepared card workspace.
 
-If no workflow file exists, dispatch MUST fail unless local config explicitly points to a fallback
-workflow file. Setup SHOULD offer to create a starter `WORKFLOW.md`, but the daemon MUST not create
-one without operator confirmation.
+If no workflow file exists and fallback is disabled, dispatch MUST fail. Setup SHOULD offer to
+create or append a starter `WORKFLOW.md`, but the daemon MUST not create one without operator
+confirmation.
 
 File format:
 
@@ -969,9 +984,11 @@ File format:
 - Front matter MUST parse as a map/object.
 - The body is the repo-specific policy prompt.
 
-`WORKFLOW.md` is the authoritative execution policy for the repository. Golden-ticket text and work
-card text are task inputs rendered into that policy; they MUST NOT override `WORKFLOW.md` rules for
-validation, branch/PR behavior, rework, merge handling, filesystem boundaries, or cleanup safety.
+When present, `WORKFLOW.md` is the authoritative repository-specific execution policy. Golden-ticket
+text and work card text are task inputs rendered with that policy; they MUST NOT override
+`WORKFLOW.md` rules for validation, branch/PR behavior, rework, merge handling, filesystem
+boundaries, or cleanup safety. When `WORKFLOW.md` is absent and fallback is enabled, the golden
+ticket and work card become the complete prompt contract plus daemon safety rules.
 
 Free-form Markdown conflicts are not mechanically knowable and MUST NOT be treated as a daemon
 startup blocker. The daemon may only fail a workflow/card conflict before Codex starts when the
@@ -1007,12 +1024,14 @@ Workflow loading order MUST be deterministic:
 1. Resolve route and workspace identity without filesystem mutation.
 2. Acquire the board-native claim.
 3. Prepare or reuse the workspace.
-4. Load `WORKFLOW.md` from the explicit path, source repo, or prepared workspace.
+4. Load `WORKFLOW.md` from the explicit path, source repo, or prepared workspace, or load the
+   configured fallback.
 5. Render the prompt and start the runner.
 
-The daemon SHOULD watch or poll `WORKFLOW.md` for changes. Reload behavior MUST keep the last known
-good workflow for active and future runs when a new version fails parsing or validation, and MUST
-surface the reload error in `/status`. If no last known good workflow exists, dispatch MUST fail.
+The daemon SHOULD watch or poll `WORKFLOW.md` or the configured fallback for changes. Reload
+behavior MUST keep the last known good workflow for active and future runs when a new version fails
+parsing or validation, and MUST surface the reload error in `/status`. If no last known good workflow
+exists and fallback is disabled, dispatch MUST fail.
 
 ## 16. Codex runner model
 
@@ -1653,7 +1672,7 @@ Validation MUST check:
 - managed tag normalization and unknown managed tag policy are valid
 - configured workspace roots are inside allowed paths
 - source repositories exist
-- `WORKFLOW.md` exists or explicit fallback is configured
+- `WORKFLOW.md` exists, or explicit/built-in fallback is configured
 - status/server port can bind or auto-allocation is enabled
 - instance registry can be written
 - claim mode is supported
@@ -1754,7 +1773,7 @@ function setup():
     watched_boards = select_boards(boards)
     validate_existing_board_shape(watched_boards)
 
-  config = build_complete_annotated_config(fizzy, account, watched_boards, runner_report)
+  config = build_compact_operator_config(fizzy, account, watched_boards, runner_report)
   if config.webhook.manage:
     manage_board_webhooks(config.webhook, watched_boards)
   validation = run_startup_validation(config, setup_mode=true)
@@ -2046,10 +2065,8 @@ function prepare_workspace(workspace):
       fail_preserve("branch identity collision")
     create_or_reuse_branch_from_base_ref(branch, workspace.base_ref)
     create_git_worktree(workspace.path, branch)
-  else if workspace.isolation == "git_clone":
-    clone_repo_at_ref(workspace.source_repo, workspace.path, workspace.base_ref)
-  else if workspace.isolation == "copy":
-    copy_source_tree(workspace.source_repo, workspace.path)
+  else:
+    fail("unsupported isolation strategy")
 
   write_guard_file(workspace.path)
   write_workspace_metadata(workspace.metadata_root, workspace.metadata)
@@ -2306,9 +2323,9 @@ ready to run against real boards.
 
 Required test groups:
 
-- Config generation: full annotated template, environment indirection, relative path resolution,
-  server/status fields, webhook management fields, ETag polling fields, workpad fields, safety
-  fields, runner fields, and board route defaults.
+- Config generation: compact operator config, full annotated template, environment indirection,
+  relative path resolution, server/status fields, webhook management fields, ETag polling fields,
+  workpad fields, safety fields, runner fields, and board route defaults.
 - Startup validation: missing secrets, invalid Fizzy access, invalid bot user, duplicate golden
   tickets, tag-only instruction cards, missing completion policy, board-level tickets, managed
   webhook misconfiguration, entropy warning surfacing, missing `WORKFLOW.md`, unsafe cleanup policy,

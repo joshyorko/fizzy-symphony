@@ -26,6 +26,13 @@ decision-bearing for the MVP.
 - Whether a future implementation should prefer SDK mode over App Server mode for non-TypeScript
   runtimes.
 - Whether generated JSON Schema bindings are sufficient for the selected runtime.
+- Broader Codex approval/sandbox policy modes beyond the currently honored unattended-safe
+  app-server behavior.
+
+## Deferred Workspace Isolation Strategies
+
+- `git_clone` isolation for repositories where worktrees are not suitable.
+- `copy` isolation for source trees without usable VCS metadata.
 
 ## Deferred Setup Enhancements
 

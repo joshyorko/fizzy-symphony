@@ -47,13 +47,15 @@ export function createDashboardModel(snapshot = {}, source = {}) {
     boards: snapshot.watched_boards ?? [],
     routes: snapshot.routes ?? [],
     activeRuns: snapshot.active_runs ?? [],
+    workspacePaths: snapshot.workspace_paths ?? workspacePaths(snapshot.active_runs),
     failures: snapshot.recent_failures ?? [],
-    completions: snapshot.recent_completions ?? []
+    completions: snapshot.recent_completions ?? [],
+    capacityRefusals: snapshot.capacity_refusals ?? []
   };
 }
 
 export function renderDashboardText(model) {
-  return [
+  const lines = [
     model.title,
     "",
     `Instance: ${model.instance.id}${model.instance.label ? ` (${model.instance.label})` : ""}`,
@@ -74,9 +76,69 @@ export function renderDashboardText(model) {
     `Validation warnings: ${model.counts.validationWarnings}`,
     `Validation errors: ${model.counts.validationErrors}`,
     `Cleanup: ${model.cleanup.status}`
-  ].join("\n");
+  ];
+
+  appendSection(lines, "Blockers", model.readiness.blockers.map(formatBlocker));
+  appendSection(lines, "Active", model.activeRuns.map(formatRun));
+  appendSection(lines, "Worktrees", model.workspacePaths);
+  appendSection(lines, "Recent failures", model.failures.map(formatFailure));
+  appendSection(lines, "Capacity refusals", model.capacityRefusals.map(formatCapacityRefusal));
+
+  return lines.join("\n");
 }
 
 function count(value) {
   return Array.isArray(value) ? value.length : 0;
+}
+
+function appendSection(lines, title, rows = []) {
+  const visible = rows.filter(Boolean).slice(0, 5);
+  if (visible.length === 0) return;
+  lines.push("", title);
+  for (const row of visible) lines.push(`- ${row}`);
+  if (rows.length > visible.length) lines.push(`- ... ${rows.length - visible.length} more`);
+}
+
+function workspacePaths(runs = []) {
+  return unique((runs ?? [])
+    .map((run) => run.workspace_path ?? run.workspace?.path)
+    .filter(Boolean));
+}
+
+function formatBlocker(blocker = {}) {
+  return `${blocker.code ?? "BLOCKED"}${blocker.message ? `: ${blocker.message}` : ""}`;
+}
+
+function formatRun(run = {}) {
+  const id = run.id ?? run.run_id ?? "run";
+  const cardNumber = run.card_number ?? run.card?.number;
+  const title = run.card_title ?? run.card?.title;
+  const workspacePath = run.workspace_path ?? run.workspace?.path;
+  return [
+    id,
+    cardNumber ? `#${cardNumber}` : "",
+    title ?? "",
+    run.status ? `(${run.status})` : "",
+    workspacePath ? `-> ${workspacePath}` : ""
+  ].filter(Boolean).join(" ");
+}
+
+function formatFailure(failure = {}) {
+  const code = failure.error?.code ?? failure.code ?? "FAILED";
+  const id = failure.run_id ?? failure.id ?? failure.card_id ?? "run";
+  return `${id}: ${code}`;
+}
+
+function formatCapacityRefusal(refusal = {}) {
+  const card = refusal.card?.number ? `#${refusal.card.number}` : refusal.card_id ?? refusal.card?.id ?? "card";
+  const reason = refusal.reason ?? "capacity";
+  const scope = refusal.scope ? `${refusal.scope} ` : "";
+  const counts = Number.isFinite(refusal.active_count) && Number.isFinite(refusal.limit)
+    ? ` (${refusal.active_count}/${refusal.limit})`
+    : "";
+  return `${card}: ${scope}${reason}${counts}`;
+}
+
+function unique(values = []) {
+  return [...new Set(values)];
 }

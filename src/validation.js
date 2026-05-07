@@ -271,6 +271,7 @@ export async function validateStartup({ config, fizzy, runner }) {
   }
 
   validateManagedWebhook(config, errors, warnings);
+  const managedWebhooks = await inspectManagedWebhookDeliveries({ config, fizzy, warnings });
 
   await validateWorkspaceRoots(config, errors);
   await validateWorkflowFiles(config, errors);
@@ -294,6 +295,7 @@ export async function validateStartup({ config, fizzy, runner }) {
     warnings,
     routes,
     resolvedTags,
+    managed_webhooks: managedWebhooks,
     runnerHealth
   };
 }
@@ -437,6 +439,146 @@ function validateManagedWebhook(config, errors, warnings) {
       { callback_url: callback }
     ));
   }
+}
+
+async function inspectManagedWebhookDeliveries({ config, fizzy, warnings }) {
+  const configured = config.webhook?.managed_webhook_ids_by_board ?? {};
+  const byBoard = Object.fromEntries(
+    Object.entries(configured).map(([boardId, webhook]) => {
+      const webhookId = webhookIdFromConfig(webhook);
+      return [boardId, omitUndefined({
+        id: webhookId,
+        status: webhook?.status,
+        delivery_inspection: webhookId ? { supported: false, reason: "not_inspected" } : undefined
+      })];
+    })
+  );
+  const report = {
+    enabled: Boolean(config.webhook?.manage),
+    by_board: byBoard,
+    recent_delivery_errors: []
+  };
+
+  if (!config.webhook?.manage) return report;
+  if (Object.keys(configured).length === 0) return report;
+
+  for (const [boardId, configuredWebhook] of Object.entries(configured)) {
+    const webhookId = webhookIdFromConfig(configuredWebhook);
+    if (!webhookId) continue;
+
+    if (typeof fizzy?.inspectWebhookDeliveries !== "function") {
+      const inspection = { supported: false, reason: "delivery_listing_unsupported" };
+      report.by_board[boardId] = { ...(report.by_board[boardId] ?? {}), id: webhookId, delivery_inspection: inspection };
+      warnings.push(issue("MANAGED_WEBHOOK_DELIVERY_INSPECTION_UNSUPPORTED", "Managed webhook delivery inspection is not supported by this Fizzy client.", {
+        board_id: boardId,
+        webhook_id: webhookId
+      }));
+      continue;
+    }
+
+    try {
+      const inspection = await fizzy.inspectWebhookDeliveries({
+        account: config.fizzy?.account,
+        board_id: boardId,
+        webhook_id: webhookId,
+        secrets: [config.fizzy?.token, config.webhook?.secret].filter(Boolean)
+      });
+      report.by_board[boardId] = {
+        ...(report.by_board[boardId] ?? {}),
+        id: webhookId,
+        delivery_inspection: deliveryInspectionSummary(inspection)
+      };
+
+      if (inspection?.supported === false) {
+        warnings.push(issue("MANAGED_WEBHOOK_DELIVERY_INSPECTION_UNSUPPORTED", "Managed webhook delivery inspection is not supported by this Fizzy API.", {
+          board_id: boardId,
+          webhook_id: webhookId,
+          reason: inspection.reason ?? "delivery_listing_unsupported"
+        }));
+        continue;
+      }
+
+      for (const deliveryError of inspection?.recent_delivery_errors ?? []) {
+        const safeError = safeDeliveryError(deliveryError, {
+          board_id: boardId,
+          webhook_id: webhookId,
+          secrets: [config.fizzy?.token, config.webhook?.secret].filter(Boolean)
+        });
+        report.recent_delivery_errors.push(safeError);
+        warnings.push(issue("MANAGED_WEBHOOK_DELIVERY_FAILURE", "Managed webhook delivery failed.", safeError));
+      }
+    } catch (error) {
+      report.by_board[boardId] = {
+        ...(report.by_board[boardId] ?? {}),
+        id: webhookId,
+        delivery_inspection: {
+          supported: false,
+          reason: "inspection_failed"
+        }
+      };
+      warnings.push(issue("MANAGED_WEBHOOK_DELIVERY_INSPECTION_FAILED", "Managed webhook delivery inspection failed.", {
+        board_id: boardId,
+        webhook_id: webhookId,
+        ...safeFizzyAccessFailureDetails(error, config)
+      }));
+    }
+  }
+
+  return report;
+}
+
+function webhookIdFromConfig(value) {
+  if (typeof value === "string") return value;
+  return value?.id ?? value?.webhook_id ?? value?.webhookId;
+}
+
+function deliveryInspectionSummary(inspection = {}) {
+  return omitUndefined({
+    supported: inspection.supported !== false,
+    reason: inspection.reason,
+    inspected_at: inspection.inspected_at,
+    delivery_count: Array.isArray(inspection.deliveries) ? inspection.deliveries.length : undefined,
+    recent_error_count: Array.isArray(inspection.recent_delivery_errors) ? inspection.recent_delivery_errors.length : undefined
+  });
+}
+
+function safeDeliveryError(error = {}, fallback = {}) {
+  const secrets = fallback.secrets ?? [];
+  return omitUndefined({
+    code: redactSecrets(error.code ?? "WEBHOOK_DELIVERY_FAILED", secrets),
+    message: redactSecrets(error.message ?? "Managed webhook delivery failed.", secrets),
+    board_id: redactSecrets(error.board_id ?? fallback.board_id, secrets),
+    webhook_id: redactSecrets(error.webhook_id ?? fallback.webhook_id, secrets),
+    delivery_id: redactSecrets(error.delivery_id ?? error.id, secrets),
+    action: redactSecrets(error.action, secrets),
+    event_id: redactSecrets(error.event_id, secrets),
+    card_id: redactSecrets(error.card_id, secrets),
+    card_number: error.card_number,
+    response_status: error.response_status,
+    status: redactSecrets(error.status, secrets),
+    attempted_at: redactSecrets(error.attempted_at, secrets),
+    delivered_at: redactSecrets(error.delivered_at, secrets),
+    created_at: redactSecrets(error.created_at, secrets)
+  });
+}
+
+function safeFizzyAccessFailureDetails(error, config = {}) {
+  const details = fizzyAccessFailureDetails(error);
+  const secrets = [config.fizzy?.token, config.webhook?.secret].filter(Boolean);
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [key, typeof value === "string" ? redactSecrets(value, secrets) : value])
+  );
+}
+
+function redactSecrets(value, secrets = []) {
+  if (value === undefined || value === null) return value;
+  let text = String(value ?? "");
+  for (const secret of secrets) {
+    text = text.split(secret).join("[REDACTED]");
+  }
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
+    .replace(/(token|secret|signature|api[_-]?key)=([^&\s]+)/giu, "$1=[REDACTED]");
 }
 
 async function validateWorkspaceRoots(config, errors) {

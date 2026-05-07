@@ -11,7 +11,8 @@ New here? Start with the beginner runbook: [docs/user-guide.md](docs/user-guide.
 ## Current Status
 
 The first MVP selects Node.js ESM with Terminal Kit for interactive terminal surfaces. As of
-2026-05-07, the current local baseline is 318/318 passing via `npm test` on Node v25.9.0.
+2026-05-07, the current local baseline is 335 passing and 1 live-gated skip via `npm test` on
+Node v25.9.0.
 `package.json` intentionally declares Node `>=25` until the project verifies a lower supported
 runtime.
 
@@ -42,6 +43,7 @@ Run these from the repository root:
 ```sh
 npm install
 node bin/fizzy-symphony.js setup
+node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js start
 node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js status
@@ -53,6 +55,10 @@ values, creates a starter board by default, previews mutating actions, and write
 operator config to `.fizzy-symphony/config.yml`. Use `--mode existing --board BOARD_ID` to wire an
 existing board, or `--adopt-starter --board BOARD_ID` when the board already has the starter route.
 `init` remains as a deprecated compatibility alias for `setup`.
+
+Use `fizzy-symphony boards` before `setup --mode existing` when you already have a Fizzy board. It
+prints the real boards, columns, and golden cards the token can see, without constructing a runner or
+starting agents.
 
 The board is the workflow surface: the golden card defines the route and normal cards are work.
 `WORKFLOW.md` is optional repo policy that gets added to agent context when present. Setup leaves it
@@ -66,7 +72,7 @@ keeps both choices visible:
 
 ```yaml
 agent:
-  default_model: gpt-5.4
+  default_model: gpt-5.5
   reasoning_effort: medium
   max_concurrent: 1
 ```

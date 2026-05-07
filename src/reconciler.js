@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import { buildCandidateQuery, discoverPollingCandidates, refreshGoldenTicketRegistry } from "./polling.js";
 import {
   applyCompletionPolicy,
@@ -9,10 +12,13 @@ import {
   writeDurableProof
 } from "./completion.js";
 import { cardDigest } from "./domain.js";
+import { FizzySymphonyError } from "./errors.js";
 import { cardBoardId, cardColumnId, cardStatus } from "./fizzy-normalize.js";
+import { sortDispatchCandidates } from "./router.js";
 import { renderPrompt } from "./workflow.js";
 
 const MAX_LOGGED_DIRTY_PATHS = 10;
+const execFileAsync = promisify(execFile);
 
 export async function runReconciliationTick(options = {}) {
   const {
@@ -77,7 +83,10 @@ export async function runReconciliationTick(options = {}) {
     const candidatesResult = typeof fizzy.discoverCandidates === "function"
       ? await fizzy.discoverCandidates({ config, hints, routes: knownRoutes, query })
       : await discoverPollingCandidates({ config, routes: knownRoutes, fizzy });
-    const candidates = normalizeCandidates(candidatesResult);
+    const candidates = mergeRetryCandidates(
+      normalizeCandidates(candidatesResult),
+      orchestratorState?.readyRetries?.({ now: startedAt }) ?? []
+    );
     result.discovered = candidates.length;
     recordEtagStats(status, candidatesResult, fizzy);
 
@@ -89,20 +98,27 @@ export async function runReconciliationTick(options = {}) {
     }
 
     const capacity = createCapacityTracker({ config, status, orchestratorState });
+    const dispatchDecisions = [];
 
-    for (const candidateCard of candidates) {
+    for (const candidate of candidates) {
+      const { card: candidateCard, retry } = splitCandidate(candidate);
       const card = await hydrateCardForRouting({ fizzy, card: candidateCard });
       if (reconciled.card_ids.has(card.id)) {
         result.ignored += 1;
         continue;
       }
 
-      const decision = await router.validateCandidate({ config, card, status });
+      const decision = await router.validateCandidate({ config, card, status, retry });
       if (decision?.action !== "spawn" && decision?.spawn !== true) {
         result.ignored += 1;
         continue;
       }
 
+      dispatchDecisions.push({ ...decision, retry: decision.retry ?? retry, card: decision.card ?? card });
+    }
+
+    for (const decision of sortDispatchCandidates(dispatchDecisions)) {
+      const card = decision.card;
       const capacityRefusal = capacity.refusalFor({ card, route: decision.route, at: startedAt });
       if (capacityRefusal) {
         status?.recordCapacityRefusal?.(capacityRefusal);
@@ -131,6 +147,13 @@ export async function runReconciliationTick(options = {}) {
       if (!claimResult?.acquired) {
         result.claim_blocked += 1;
         continue;
+      }
+
+      if (decision.retry) {
+        orchestratorState?.consumeRetry?.(decision.retry, {
+          replacement_run_id: claimResult.claim?.run_id ?? claimResult.claim?.runId,
+          replacement_attempt_id: claimResult.claim?.attempt_id ?? claimResult.claim?.attemptId
+        });
       }
 
       if (decision.rerun_requested) {
@@ -545,6 +568,23 @@ function normalizeCandidates(result) {
   return [];
 }
 
+function mergeRetryCandidates(candidates = [], retries = []) {
+  if (!retries.length) return candidates;
+  const retryCandidates = retries
+    .filter((retry) => retry?.card?.id)
+    .map((retry) => ({ ...retry.card, retry }));
+  const retryCardIds = new Set(retryCandidates.map((candidate) => candidate.id));
+  return [
+    ...retryCandidates,
+    ...candidates.filter((candidate) => !retryCardIds.has(candidate?.id))
+  ];
+}
+
+function splitCandidate(candidate = {}) {
+  const { retry, ...card } = candidate;
+  return { card, retry };
+}
+
 function recordEtagStats(status, candidatesResult, fizzy) {
   const etagCache = candidatesResult?.etag_cache ?? fizzy?.etagStats?.();
   if (etagCache) {
@@ -765,33 +805,47 @@ async function runCard({
       config,
       attempt: claim.attempt_number ?? claim.attemptNumber ?? 1
     });
-    const turn = await runner.startTurn(session, prompt, { run_id: runId, card_id: card.id, route_id: route?.id });
-    run = status?.startRun?.({ ...run, turn }) ?? { ...run, turn };
-    await writeRunAttempt(status, run, "running");
-    logCardProgress(logger, "card.runner_started", { card, route, workspace, run });
-    orchestratorState?.startRun?.({
-      run_id: runId,
-      attempt_id: attemptId,
-      attempt_number: claim.attempt_number ?? claim.attemptNumber ?? 1,
+    const turnExecution = await runSameThreadTurns({
+      config,
+      status,
+      runner,
+      orchestratorState,
+      run,
+      runId,
+      attemptId,
       card,
       route,
       claim,
       workspace,
       session,
-      turn,
-      runner: { kind: config.runner?.preferred ?? route?.backend }
+      prompt,
+      logger
     });
-    recordLifecycle(status, orchestratorState);
-
-    const streamResult = await runner.stream(turn, (event) => {
-      status?.recordRunnerEvent?.(runId, event);
-      orchestratorState?.recordRunnerActivity?.(runId, event);
-    });
-
+    run = turnExecution.run;
+    const streamResult = turnExecution.result;
     if (streamResult?.status !== "completed") {
       throw runnerFailure(streamResult);
     }
     logCardProgress(logger, "card.runner_completed", { card, route, workspace, run });
+
+    failureKind = "after_run";
+    const afterRunHook = await runAfterRunHook({
+      workspaceManager,
+      config,
+      run,
+      card,
+      route,
+      claim,
+      workspace,
+      workflow,
+      result: streamResult,
+      turn_results: streamResult.turn_results ?? [streamResult],
+      now
+    });
+    if (afterRunHook) {
+      run = status?.startRun?.({ ...run, after_run_hook: afterRunHook }) ?? { ...run, after_run_hook: afterRunHook };
+      await writeRunAttempt(status, run, "running");
+    }
 
     failureKind = "completion";
     await upsertWorkpad({ config, status, fizzy, card, route, run, workspace, phase: "runner_completed", now });
@@ -1017,6 +1071,225 @@ async function runCard({
     logCardProgress(logger, "card.dispatch_failed", { card, route, workspace, run: failed ?? run, error });
     return { status: "failed", run: failed ?? run, error };
   }
+}
+
+async function runSameThreadTurns({
+  config,
+  status,
+  runner,
+  orchestratorState,
+  run,
+  runId,
+  attemptId,
+  card,
+  route,
+  claim,
+  workspace,
+  session,
+  prompt,
+  logger
+}) {
+  const maxTurns = Math.max(1, Math.trunc(Number(config.agent?.max_turns ?? 1)) || 1);
+  const turnResults = [];
+  let currentPrompt = prompt;
+  let currentRun = run;
+  let lastResult = null;
+
+  for (let turnNumber = 1; turnNumber <= maxTurns; turnNumber += 1) {
+    const turn = await runner.startTurn(session, currentPrompt, {
+      run_id: runId,
+      card_id: card.id,
+      route_id: route?.id,
+      turn_number: turnNumber,
+      max_turns: maxTurns
+    });
+    currentRun = status?.startRun?.({ ...currentRun, turn }) ?? { ...currentRun, turn };
+    await writeRunAttempt(status, currentRun, "running");
+    if (turnNumber === 1) {
+      logCardProgress(logger, "card.runner_started", { card, route, workspace, run: currentRun });
+    }
+    orchestratorState?.startRun?.({
+      run_id: runId,
+      attempt_id: attemptId,
+      attempt_number: claim.attempt_number ?? claim.attemptNumber ?? 1,
+      card,
+      route,
+      claim,
+      workspace,
+      session,
+      turn,
+      runner: { kind: config.runner?.preferred ?? route?.backend }
+    });
+    recordLifecycle(status, orchestratorState);
+
+    lastResult = await runner.stream(turn, (event) => {
+      status?.recordRunnerEvent?.(runId, event);
+      orchestratorState?.recordRunnerActivity?.(runId, event);
+    });
+    turnResults.push(lastResult);
+
+    if (lastResult?.status !== "completed") break;
+    if (!runnerRequestedContinuation(lastResult)) break;
+    if (turnNumber >= maxTurns) {
+      throw runnerMaxTurnsReached(lastResult, { turnNumber, maxTurns });
+    }
+
+    currentPrompt = continuationPrompt(lastResult);
+    if (!currentPrompt) {
+      throw runnerContinuationFailure(lastResult);
+    }
+  }
+
+  return {
+    run: currentRun,
+    result: aggregateTurnResults(turnResults, lastResult)
+  };
+}
+
+function runnerRequestedContinuation(result = {}) {
+  return result.continue === true ||
+    result.continue_requested === true ||
+    typeof result.next_prompt === "string" ||
+    typeof result.continuation_prompt === "string" ||
+    typeof result.followup_prompt === "string";
+}
+
+function continuationPrompt(result = {}) {
+  return result.next_prompt ?? result.continuation_prompt ?? result.followup_prompt;
+}
+
+function runnerContinuationFailure(result = {}) {
+  const error = new Error("Runner requested same-thread continuation without a continuation prompt.");
+  error.code = "RUNNER_CONTINUATION_PROMPT_MISSING";
+  error.details = { result };
+  return error;
+}
+
+function runnerMaxTurnsReached(result = {}, details = {}) {
+  const error = new Error("Runner requested same-thread continuation after agent.max_turns was reached.");
+  error.code = "RUNNER_MAX_TURNS_REACHED";
+  error.details = { result, ...details };
+  return error;
+}
+
+function aggregateTurnResults(turnResults = [], lastResult = null) {
+  const result = lastResult ?? turnResults.at(-1) ?? { status: "completed" };
+  return {
+    ...result,
+    turn_results: turnResults
+  };
+}
+
+async function runAfterRunHook(context = {}) {
+  const { workspaceManager } = context;
+  const hookContext = omitUndefined({
+    config: context.config,
+    run: context.run,
+    card: context.card,
+    route: context.route,
+    claim: context.claim,
+    workspace: context.workspace,
+    workflow: context.workflow,
+    result: context.result,
+    turn_results: context.turn_results,
+    now: context.now
+  });
+
+  if (typeof workspaceManager?.afterRun === "function") {
+    return workspaceManager.afterRun(hookContext);
+  }
+  if (typeof workspaceManager?.runHook === "function") {
+    return workspaceManager.runHook("after_run", hookContext);
+  }
+  return runWorkflowAfterRunHook({ workflow: context.workflow, workspace: context.workspace });
+}
+
+async function runWorkflowAfterRunHook({ workflow, workspace } = {}) {
+  const spec = (workflow?.frontMatter?.hooks ?? workflow?.front_matter?.hooks ?? {}).after_run;
+  if (!spec) return null;
+  const cwd = workspace?.path ?? workspace?.workspace_path;
+  if (!cwd) {
+    throw new FizzySymphonyError("WORKSPACE_HOOK_FAILED", "Workspace lifecycle hook failed.", {
+      hook: "after_run",
+      cause: "workspace_path_missing"
+    });
+  }
+
+  const commands = normalizeHookCommands(spec);
+  const results = [];
+  for (const argv of commands) {
+    const result = await runHookCommand(argv, { cwd });
+    results.push({ argv, ...result });
+  }
+  return { hook: "after_run", commands: results };
+}
+
+function normalizeHookCommands(spec) {
+  if (typeof spec === "string") return [singleStringCommand(spec)];
+  if (Array.isArray(spec)) {
+    if (spec.every((entry) => typeof entry === "string")) return [spec];
+    return spec.flatMap(normalizeHookCommands);
+  }
+  if (spec && typeof spec === "object") {
+    if (Array.isArray(spec.commands)) return spec.commands.flatMap(normalizeHookCommands);
+    if (typeof spec.command === "string") {
+      const args = spec.args === undefined ? [] : spec.args;
+      if (!Array.isArray(args) || !args.every((entry) => typeof entry === "string")) {
+        throw new FizzySymphonyError("WORKSPACE_HOOK_INVALID", "Workspace hook args must be a list of strings.", { spec });
+      }
+      return [[spec.command, ...args]];
+    }
+  }
+  throw new FizzySymphonyError("WORKSPACE_HOOK_INVALID", "Workspace hook must be a command string, argv list, or command object.", { spec });
+}
+
+function singleStringCommand(value) {
+  const command = String(value).trim();
+  if (!command || /\s/u.test(command)) {
+    throw new FizzySymphonyError("WORKSPACE_HOOK_INVALID", "String workspace hooks must name one executable without shell syntax.", {
+      hook: value
+    });
+  }
+  return [command];
+}
+
+async function runHookCommand(argv, { cwd } = {}) {
+  const [file, ...args] = argv;
+  try {
+    const raw = await execFileAsync(file, args, { cwd });
+    return normalizeCommandResult(raw);
+  } catch (error) {
+    const result = normalizeCommandError(error);
+    throw new FizzySymphonyError("WORKSPACE_HOOK_FAILED", "Workspace lifecycle hook failed.", {
+      cwd,
+      argv,
+      exit_code: result.exit_code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      cause: error.message
+    });
+  }
+}
+
+function normalizeCommandResult(result = {}) {
+  if (typeof result === "string") return { stdout: result, stderr: "", exit_code: 0 };
+  const normalized = {
+    stdout: String(result.stdout ?? ""),
+    stderr: String(result.stderr ?? ""),
+    exit_code: Number(result.exit_code ?? result.code ?? 0)
+  };
+  if (normalized.exit_code !== 0) {
+    throw new FizzySymphonyError("WORKSPACE_HOOK_FAILED", "Workspace lifecycle hook failed.", normalized);
+  }
+  return normalized;
+}
+
+function normalizeCommandError(error = {}) {
+  return {
+    stdout: String(error.stdout ?? ""),
+    stderr: String(error.stderr ?? error.message ?? ""),
+    exit_code: Number(error.exit_code ?? error.code ?? 1)
+  };
 }
 
 function logCardProgress(logger, event, { card = {}, route = {}, workspace, run, error } = {}) {

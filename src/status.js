@@ -243,6 +243,9 @@ export function createStatusStore(options = {}) {
       warnings: clone(report.warnings ?? []),
       errors: clone(report.errors ?? [])
     };
+    if (report.managed_webhooks) {
+      recordManagedWebhookStatus(report.managed_webhooks);
+    }
     touch();
   }
 

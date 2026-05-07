@@ -428,14 +428,6 @@ function validateConfigValues(config) {
 
   validateServerPort(config.server ?? {});
 
-  if (Number(config.agent?.max_turns ?? 1) > 1) {
-    throw new FizzySymphonyError(
-      "CONFIG_UNIMPLEMENTED_FEATURE",
-      "agent.max_turns > 1 requires same-thread continuation, which is not implemented yet.",
-      { path: "agent.max_turns", value: config.agent?.max_turns }
-    );
-  }
-
   for (const path of durationPaths()) {
     const value = getPath(config, path);
     if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {

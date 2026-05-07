@@ -342,6 +342,34 @@ test("SDK adapter discovers candidates through SDK-backed card listing", async (
   );
 });
 
+test("SDK adapter gracefully reports unsupported managed webhook delivery listing", async () => {
+  const client = createFizzyClient({
+    config: configFixture(),
+    sdkFactory({ baseUrl }) {
+      if (baseUrl === "https://app.fizzy.test/api") {
+        return { identity: { async me() { return { user: { id: "user_1" } }; } } };
+      }
+      return {
+        webhooks: {}
+      };
+    }
+  });
+
+  const report = await client.inspectWebhookDeliveries({
+    board_id: "board_1",
+    webhook_id: "webhook_1"
+  });
+
+  assert.deepEqual(report, {
+    supported: false,
+    reason: "delivery_listing_unsupported",
+    board_id: "board_1",
+    webhook_id: "webhook_1",
+    deliveries: [],
+    recent_delivery_errors: []
+  });
+});
+
 test("SDK adapter completion helpers stay on SDK-backed comments and tags", async () => {
   const sdk = createSdkFixture();
   const client = createFizzyClient({

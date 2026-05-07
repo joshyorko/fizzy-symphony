@@ -141,7 +141,11 @@ function fakeStarterFizzy() {
     async createBoard(request) {
       calls.push(["createBoard", request]);
       board.name = request.name;
-      return { id: board.id, name: request.name };
+      return {
+        id: board.id,
+        name: request.name,
+        columns: [{ id: "partial_ready", name: "Ready for Agents" }]
+      };
     },
     async createColumn(request) {
       calls.push(["createColumn", request]);
@@ -303,6 +307,10 @@ test("runSetup creates a starter board with native golden route defaults and wri
   assert.equal(result.starter.created, true);
   assert.equal(result.boards[0].id, "starter_board");
   assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Not Now", "Maybe?", "Done", "Ready for Agents"]);
+  assert.deepEqual(
+    fizzy.calls.filter((call) => call[0] === "createColumn").map((call) => call[1].name),
+    ["Ready for Agents"]
+  );
   assert.deepEqual(result.boards[0].cards[0], {
     id: "starter_golden",
     number: 100,

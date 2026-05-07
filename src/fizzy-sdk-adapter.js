@@ -6,11 +6,14 @@ import {
   accountPathSegment,
   cardNumberFrom,
   createLegacyFizzyClient,
+  deliveryInspectionUnsupported,
+  managedWebhookDeliveryReport,
   normalizeActions,
   normalizeTagTitle,
   omitKeys,
   omitUndefined,
   resultCommentBody,
+  unsupportedDeliveryInspectionReport,
   webhookNeedsUpdate,
   webhookUrl
 } from "./fizzy-http-client.js";
@@ -246,10 +249,36 @@ export function createSdkBackedFizzyClient(options = {}) {
   }
 
   async function listWebhookDeliveries(input = {}) {
-    return plainList(await callSdk(() => accountClient(input.account).webhooks.listWebhookDeliveries(
+    const webhooks = accountClient(input.account).webhooks;
+    if (typeof webhooks?.listWebhookDeliveries !== "function") {
+      throw new FizzyApiError("Fizzy SDK does not support managed webhook delivery listing.", {
+        code: "WEBHOOK_DELIVERY_LISTING_UNSUPPORTED"
+      });
+    }
+    return plainList(await callSdk(() => webhooks.listWebhookDeliveries(
       input.board_id ?? input.boardId,
       input.webhook_id ?? input.webhookId ?? input.id
     )));
+  }
+
+  async function inspectWebhookDeliveries(input = {}) {
+    const boardId = input.board_id ?? input.boardId;
+    const webhookId = input.webhook_id ?? input.webhookId ?? input.id;
+
+    try {
+      const deliveries = await listWebhookDeliveries(input);
+      return managedWebhookDeliveryReport({
+        board_id: boardId,
+        webhook_id: webhookId,
+        deliveries,
+        secrets: [config.fizzy?.token, config.webhook?.secret].filter(Boolean)
+      });
+    } catch (error) {
+      if (deliveryInspectionUnsupported(error)) {
+        return unsupportedDeliveryInspectionReport({ board_id: boardId, webhook_id: webhookId });
+      }
+      throw error;
+    }
   }
 
   async function ensureWebhook(input = {}) {
@@ -472,6 +501,7 @@ export function createSdkBackedFizzyClient(options = {}) {
     updateWebhook,
     reactivateWebhook,
     listWebhookDeliveries,
+    inspectWebhookDeliveries,
     ensureWebhook,
     getAccountSettings,
     getEntropy,

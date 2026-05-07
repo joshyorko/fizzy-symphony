@@ -522,6 +522,26 @@ export function createLegacyFizzyClient(options = {}) {
     );
   }
 
+  async function inspectWebhookDeliveries(input = {}) {
+    const boardId = input.board_id ?? input.boardId;
+    const webhookId = input.webhook_id ?? input.webhookId ?? input.id;
+
+    try {
+      const deliveries = await listWebhookDeliveries(input);
+      return managedWebhookDeliveryReport({
+        board_id: boardId,
+        webhook_id: webhookId,
+        deliveries,
+        secrets: deliverySecrets(input, config)
+      });
+    } catch (error) {
+      if (deliveryInspectionUnsupported(error)) {
+        return unsupportedDeliveryInspectionReport({ board_id: boardId, webhook_id: webhookId });
+      }
+      throw error;
+    }
+  }
+
   async function ensureWebhook(input = {}) {
     const boardId = input.board_id ?? input.boardId;
     const callbackUrl = input.callback_url ?? input.url;
@@ -846,6 +866,7 @@ export function createLegacyFizzyClient(options = {}) {
     updateWebhook,
     reactivateWebhook,
     listWebhookDeliveries,
+    inspectWebhookDeliveries,
     ensureWebhook,
     getAccountSettings,
     getEntropy,
@@ -1092,6 +1113,135 @@ function responseDataWithLocation(result) {
 function responseEtag(response) {
   const headers = response?.headers ?? {};
   return response?.etag ?? headerValue(headers, "etag");
+}
+
+export function managedWebhookDeliveryReport({ board_id, webhook_id, deliveries, secrets = [] } = {}) {
+  const normalizedDeliveries = deliveryList(deliveries)
+    .map((delivery) => normalizeWebhookDelivery(delivery, { board_id, webhook_id, secrets }));
+  const recentDeliveryErrors = normalizedDeliveries
+    .filter((delivery) => delivery.ok === false)
+    .map((delivery) => webhookDeliveryError(delivery, { board_id, webhook_id }));
+
+  return {
+    supported: true,
+    board_id,
+    webhook_id,
+    deliveries: normalizedDeliveries,
+    recent_delivery_errors: recentDeliveryErrors
+  };
+}
+
+export function unsupportedDeliveryInspectionReport({ board_id, webhook_id } = {}) {
+  return {
+    supported: false,
+    reason: "delivery_listing_unsupported",
+    board_id,
+    webhook_id,
+    deliveries: [],
+    recent_delivery_errors: []
+  };
+}
+
+export function deliveryInspectionUnsupported(error) {
+  const status = Number(error?.status ?? error?.metadata?.status);
+  return status === 404 ||
+    status === 405 ||
+    status === 501 ||
+    error?.code === "WEBHOOK_DELIVERY_LISTING_UNSUPPORTED" ||
+    error?.metadata?.code === "WEBHOOK_DELIVERY_LISTING_UNSUPPORTED";
+}
+
+function deliveryList(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.deliveries)) return value.deliveries;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+}
+
+function normalizeWebhookDelivery(delivery = {}, { board_id, webhook_id, secrets = [] } = {}) {
+  const status = safeText(delivery.status ?? delivery.state ?? delivery.result, secrets);
+  const responseStatus = numberOrUndefined(
+    delivery.response_status ?? delivery.responseStatus ?? delivery.status_code ?? delivery.statusCode
+  );
+  const error = typeof delivery.error === "object" ? delivery.error : {};
+  const errorCode = safeText(delivery.error_code ?? delivery.errorCode ?? error.code ?? delivery.code, secrets);
+  const message = safeText(error.message ?? delivery.error_message ?? delivery.errorMessage ?? delivery.message, secrets);
+  const ok = deliveryOk(delivery, { status, responseStatus, errorCode, message });
+
+  return omitUndefined({
+    id: delivery.id ?? delivery.delivery_id ?? delivery.deliveryId,
+    board_id: delivery.board_id ?? delivery.boardId,
+    webhook_id: delivery.webhook_id ?? delivery.webhookId,
+    status,
+    action: safeText(delivery.action ?? delivery.event_action ?? delivery.eventAction, secrets),
+    event_id: delivery.event_id ?? delivery.eventId,
+    card_id: delivery.card_id ?? delivery.cardId,
+    card_number: delivery.card_number ?? delivery.cardNumber,
+    response_status: responseStatus,
+    attempted_at: delivery.attempted_at ?? delivery.attemptedAt,
+    delivered_at: delivery.delivered_at ?? delivery.deliveredAt,
+    created_at: delivery.created_at ?? delivery.createdAt,
+    ok,
+    error_code: errorCode,
+    message
+  });
+}
+
+function webhookDeliveryError(delivery = {}, { board_id, webhook_id } = {}) {
+  return omitUndefined({
+    code: "WEBHOOK_DELIVERY_FAILED",
+    message: delivery.message ?? delivery.error_code ?? "Managed webhook delivery failed.",
+    board_id: delivery.board_id ?? board_id,
+    webhook_id: delivery.webhook_id ?? webhook_id,
+    delivery_id: delivery.id,
+    action: delivery.action,
+    event_id: delivery.event_id,
+    card_id: delivery.card_id,
+    card_number: delivery.card_number,
+    response_status: delivery.response_status,
+    status: delivery.status,
+    attempted_at: delivery.attempted_at,
+    delivered_at: delivery.delivered_at,
+    created_at: delivery.created_at
+  });
+}
+
+function deliveryOk(delivery = {}, { status, responseStatus, errorCode, message } = {}) {
+  if (typeof delivery.ok === "boolean") return delivery.ok;
+  if (typeof delivery.success === "boolean") return delivery.success;
+  if (typeof delivery.failed === "boolean") return !delivery.failed;
+  if (typeof responseStatus === "number") return responseStatus >= 200 && responseStatus < 400;
+  if (status && /^(failed|failure|error|errored|undelivered)$/iu.test(status)) return false;
+  if (status && /^(delivered|succeeded|success|successful|ok)$/iu.test(status)) return true;
+  if (errorCode || message) return false;
+  return undefined;
+}
+
+function numberOrUndefined(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function deliverySecrets(input = {}, config = {}) {
+  return [
+    input.secret,
+    input.webhook_secret,
+    input.webhookSecret,
+    config.fizzy?.token,
+    config.webhook?.secret
+  ].filter((value) => typeof value === "string" && value.length > 0);
+}
+
+function safeText(value, secrets = []) {
+  if (value === undefined || value === null || value === "") return undefined;
+  let text = truncate(value);
+  for (const secret of secrets) {
+    text = text.split(secret).join("[REDACTED]");
+  }
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
+    .replace(/(token|secret|signature|api[_-]?key)=([^&\s]+)/giu, "$1=[REDACTED]");
 }
 
 function headersObject(headers = {}) {

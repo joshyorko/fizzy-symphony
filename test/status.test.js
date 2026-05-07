@@ -284,6 +284,51 @@ test("status defaults token/rate metadata and webhook warnings to unavailable or
   assert.equal(snapshot.token_rate_limit.reason, "not_recorded");
 });
 
+test("startup validation webhook delivery reports are surfaced in status and readiness warnings", () => {
+  const store = createStore();
+
+  store.recordStartupValidation({
+    warnings: [
+      {
+        code: "MANAGED_WEBHOOK_DELIVERY_FAILURE",
+        message: "Managed webhook delivery failed.",
+        board_id: "board_1",
+        webhook_id: "webhook_1",
+        delivery_id: "delivery_1"
+      }
+    ],
+    errors: [],
+    managed_webhooks: {
+      enabled: true,
+      by_board: {
+        board_1: {
+          id: "webhook_1",
+          status: "active",
+          delivery_inspection: { supported: true }
+        }
+      },
+      recent_delivery_errors: [
+        {
+          code: "WEBHOOK_DELIVERY_FAILED",
+          message: "callback failed with [REDACTED]",
+          board_id: "board_1",
+          webhook_id: "webhook_1",
+          delivery_id: "delivery_1"
+        }
+      ]
+    }
+  });
+  store.updateRunnerHealth({ status: "ready", kind: "cli_app_server" });
+
+  const snapshot = store.status();
+
+  assert.equal(snapshot.readiness.ready, true);
+  assert.equal(snapshot.readiness.validation.warnings[0].code, "MANAGED_WEBHOOK_DELIVERY_FAILURE");
+  assert.equal(snapshot.managed_webhooks.by_board.board_1.delivery_inspection.supported, true);
+  assert.equal(snapshot.managed_webhooks.recent_delivery_errors[0].message, "callback failed with [REDACTED]");
+  assert.deepEqual(snapshot.webhook.recent_delivery_errors, snapshot.managed_webhooks.recent_delivery_errors);
+});
+
 test("status exposes webhook intake, management, and signature state without leaking secrets", () => {
   const signed = createStatusStore({
     instance: { id: "instance-signed" },

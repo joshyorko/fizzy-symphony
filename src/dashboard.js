@@ -102,7 +102,26 @@ function renderTerminalKitDashboard(terminal, model, options = {}) {
   terminal(`Claims: ${model.counts.claims}  Workpads: ${model.counts.workpads}  Failures: ${model.counts.failures}\n`);
   terminal(`Webhook errors: ${model.counts.webhookErrors}  Capacity refusals: ${model.counts.capacityRefusals}\n`);
   terminal(`Cleanup: ${model.cleanup.status}\n`);
+  writeTerminalRows(terminal, "Blockers", model.readiness.blockers.map((blocker) => blocker.code ?? "BLOCKED"));
+  writeTerminalRows(terminal, "Active", model.activeRuns.map((run) => {
+    const cardNumber = run.card_number ?? run.card?.number;
+    const workspacePath = run.workspace_path ?? run.workspace?.path;
+    return `${run.id ?? run.run_id ?? "run"}${cardNumber ? ` #${cardNumber}` : ""}${workspacePath ? ` -> ${workspacePath}` : ""}`;
+  }));
+  writeTerminalRows(terminal, "Worktrees", model.workspacePaths);
+  writeTerminalRows(terminal, "Recent failures", model.failures.map((failure) => {
+    const code = failure.error?.code ?? failure.code ?? "FAILED";
+    return `${failure.run_id ?? failure.id ?? failure.card_id ?? "run"}: ${code}`;
+  }));
   terminal(`\nRefresh: ${options.refreshMs}ms. Press q to exit.\n`);
+}
+
+function writeTerminalRows(terminal, title, rows = []) {
+  const visible = rows.filter(Boolean).slice(0, 3);
+  if (visible.length === 0) return;
+  terminal(`\n${title}:\n`);
+  for (const row of visible) terminal(`- ${row}\n`);
+  if (rows.length > visible.length) terminal(`- ... ${rows.length - visible.length} more\n`);
 }
 
 function waitForTerminalInput(terminal, refreshMs) {

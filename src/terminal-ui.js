@@ -18,7 +18,7 @@ export function formatSetupMutationReview(plan = {}, options = {}) {
   ];
 
   if (options.includeInstruction !== false) {
-    lines.push("  Type yes to apply, or press Enter to keep the repo untouched.");
+    lines.push("  Press Enter to apply, or type no to keep the repo untouched.");
   }
 
   return lines.join("\n");
@@ -86,14 +86,32 @@ export function formatDaemonStartSummary(daemon, options = {}) {
   const snapshot = daemon.status.status();
   const seconds = Math.round((daemon.config.polling?.interval_ms ?? 30000) / 1000);
   const endpoint = daemon.endpoint?.base_url ?? snapshot.endpoint?.base_url ?? "unknown";
+  const configPath = options.configPath ?? snapshot.config_path ?? daemon.instance?.record?.config_path;
+  const workspace = defaultWorkspace(daemon.config);
+  const sourceRepo = daemon.config.workspaces?.default_repo ?? workspace?.repo;
+  const worktreeRoot = workspace?.worktree_root ?? daemon.config.workspaces?.root;
+  const dashboardCommand = endpoint === "unknown"
+    ? "fizzy-symphony dashboard"
+    : `fizzy-symphony dashboard --endpoint ${endpoint}`;
+  const statusCommand = endpoint === "unknown"
+    ? "fizzy-symphony status"
+    : `fizzy-symphony status --endpoint ${endpoint}`;
   const lines = [
     "",
     `${mark(options, "primary")} fizzy-symphony watching boards`,
     "",
     `  ${label(options, "Instance")} ${snapshot.instance?.id ?? "unknown"}`,
     `  ${label(options, "Endpoint")} ${endpoint}`,
+    ...(configPath ? [`  ${label(options, "Config")} ${configPath}`] : []),
+    ...(sourceRepo ? [`  ${label(options, "Source repo")} ${sourceRepo}`] : []),
+    ...(worktreeRoot ? [`  ${label(options, "Worktrees")} ${worktreeRoot}`] : []),
     `  ${label(options, "Polling")} ${seconds}s`,
     `  ${label(options, "Safety")} protecting your work: dirty source repos are skipped, not overwritten`,
+    ...(daemon.config.diagnostics?.no_dispatch
+      ? [`  ${label(options, "Mode")} watch only: dispatch is disabled in config`]
+      : []),
+    `  ${label(options, "Inspect")} ${dashboardCommand}`,
+    `  ${label(options, "Status")} ${statusCommand}`,
     ""
   ];
 
@@ -122,6 +140,14 @@ export function formatDaemonStartSummary(daemon, options = {}) {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function defaultWorkspace(config = {}) {
+  const registry = config.workspaces?.registry ?? {};
+  if (config.workspaces?.default && registry[config.workspaces.default]) {
+    return registry[config.workspaces.default];
+  }
+  return Object.values(registry)[0];
 }
 
 export function formatBoardSnapshot(boards = [], routes = [], options = {}) {
@@ -290,7 +316,7 @@ export async function createClackPromptProvider(io, env = process.env) {
       prompts.note(formatSetupMutationReview(plan, { includeInstruction: false }), "Setup plan");
       const value = await prompts.confirm({
         message: "Apply these setup changes?",
-        initialValue: false
+        initialValue: true
       });
       return cancelToEmpty(prompts, value);
     }

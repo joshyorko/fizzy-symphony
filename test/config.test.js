@@ -408,10 +408,6 @@ test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross
     },
     {
       code: "CONFIG_UNIMPLEMENTED_FEATURE",
-      mutate: (config) => { config.agent.max_turns = 2; }
-    },
-    {
-      code: "CONFIG_UNIMPLEMENTED_FEATURE",
       mutate: (config) => { config.workspaces.default_isolation = "git_clone"; }
     },
     {
@@ -436,6 +432,15 @@ test("parseConfig rejects Task 1 enum, duration, port, and managed webhook cross
       (error) => error.code === code
     );
   }
+});
+
+test("parseConfig accepts max_turns above one for explicit same-thread continuation", () => {
+  const config = minimalConfig();
+  config.agent.max_turns = 3;
+
+  const parsed = parseConfig(config, { configPath: "/tmp/config.json", env: { FIZZY_API_TOKEN: "x" } });
+
+  assert.equal(parsed.agent.max_turns, 3);
 });
 
 test("loadConfig reads JSON and generated YAML config files for the CLI", async () => {

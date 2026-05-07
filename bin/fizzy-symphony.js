@@ -10,8 +10,6 @@ import { DEFAULT_FIZZY_API_URL, createCliFizzyClient, createCliRunner, resolveFi
 import { writeOpener } from "../src/cli-opener.js";
 import {
   ALLOWED_CODEX_REASONING_EFFORTS,
-  DEFAULT_CODEX_MODEL,
-  DEFAULT_CODEX_REASONING_EFFORT,
   loadConfig,
   writeAnnotatedConfig
 } from "../src/config.js";
@@ -47,6 +45,8 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
       return await setupCommand(commandArgs, io);
     } else if (command === "validate") {
       return await validateCommand(commandArgs, io);
+    } else if (command === "boards") {
+      return await boardsCommand(commandArgs, io);
     } else if (command === "daemon" || command === "start") {
       await daemonCommand(commandArgs, io, { commandName: command });
     } else if (command === "status") {
@@ -213,6 +213,35 @@ async function validateCommand(args, io) {
   return report.ok ? 0 : 2;
 }
 
+async function boardsCommand(args, io) {
+  const env = await envWithCliOverrides(io.env ?? process.env, args, {
+    dotenvBasePath: optionValue(args, "--workspace-repo") ?? "."
+  });
+  const dependencyConfig = resolveFizzyClientConfig({
+    config: {
+      fizzy: { account: optionValue(args, "--account") ?? "" },
+      runner: { preferred: "cli_app_server" }
+    },
+    env
+  });
+  const fizzy = await createFizzyDependency({ io, config: dependencyConfig, env });
+  const identity = await fizzy.getIdentity?.();
+  const account = optionValue(args, "--account") ?? firstAccountValue(identity) ?? dependencyConfig.fizzy.account;
+  const boards = await fizzy.listBoards(account);
+  const hydrated = [];
+
+  for (const board of boards) {
+    try {
+      hydrated.push(await fizzy.getBoard(board.id, { account }));
+    } catch {
+      hydrated.push(board);
+    }
+  }
+
+  io.stdout.write(formatBoardsList(hydrated, account));
+  return 0;
+}
+
 async function createFizzyDependency({ io, config, env }) {
   if (io.fizzy) return io.fizzy;
   const factory = io.clientFactories?.createFizzyClient ?? ((options) => createCliFizzyClient({
@@ -223,6 +252,37 @@ async function createFizzyDependency({ io, config, env }) {
     etagCache: io.fizzyEtagCache
   }));
   return factory({ config, env });
+}
+
+function firstAccountValue(identity = {}) {
+  const account = identity.accounts?.[0];
+  if (!account) return "";
+  return normalizeAccountValue(account);
+}
+
+function normalizeAccountValue(account = {}) {
+  const slug = String(account.slug ?? account.path ?? "").trim().replace(/^\/+|\/+$/gu, "");
+  return slug || account.id || account.name || "";
+}
+
+function formatBoardsList(boards = [], account = "") {
+  const lines = [`Fizzy boards${account ? ` for ${account}` : ""}`];
+  for (const board of boards) {
+    lines.push(`- ${board.name ?? board.label ?? board.id} (${board.id})`);
+    const columns = board.columns ?? [];
+    if (columns.length > 0) {
+      lines.push("  columns:");
+      for (const column of columns) {
+        lines.push(`    - ${column.name ?? column.title ?? column.id} (${column.id})`);
+      }
+    }
+    const goldenCards = (board.cards ?? []).filter((card) => card.golden);
+    if (goldenCards.length > 0) {
+      lines.push(`  golden: ${goldenCards.map((card) => `#${card.title ?? card.name ?? card.id}`).join(", ")}`);
+    }
+  }
+  if (boards.length === 0) lines.push("- no boards found");
+  return `${lines.join("\n")}\n`;
 }
 
 async function createRunnerDependency({ io, config, env }) {
@@ -257,6 +317,7 @@ async function daemonCommand(args, io, options = {}) {
     const boardSnapshots = await readDaemonBoardSnapshots(daemon);
     io.stderr.write(formatDaemonStartSummary(daemon, {
       color: supportsColor(io.env ?? process.env, io.stderr),
+      configPath,
       boardSnapshots
     }));
   }
@@ -711,6 +772,7 @@ function usage(exitCode, io) {
     "  fizzy-symphony validate [--parse-only] [--config path]",
     "  fizzy-symphony start [--config path]",
     "  fizzy-symphony daemon [--config path]",
+    "  fizzy-symphony boards [--api-url url] [--token token] [--account id]",
     "  fizzy-symphony dashboard [--config path] [--endpoint url] [--registry-dir path] [--refresh-ms n]",
     "  fizzy-symphony status [--config path] [--instance id]",
     "  fizzy-symphony status [--registry-dir path] [--endpoint url]"

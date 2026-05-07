@@ -341,6 +341,84 @@ test("Fizzy client creates a managed webhook when no matching callback exists", 
   }));
 });
 
+test("Fizzy client inspects managed webhook delivery failures with safe metadata only", async () => {
+  const { client, calls } = await fetchClientFixture([
+    {
+      status: 200,
+      body: [
+        {
+          id: "delivery_failed",
+          status: "failed",
+          action: "comment_created",
+          event_id: "event_1",
+          response_status: 500,
+          response_body: "server exploded secret-token",
+          request_headers: { authorization: "Bearer secret-token" },
+          error: { code: "HTTP_500", message: "callback failed with webhook-secret" },
+          attempted_at: "2026-05-07T12:00:00.000Z"
+        },
+        {
+          id: "delivery_ok",
+          status: "delivered",
+          action: "card_closed",
+          response_status: 200
+        }
+      ]
+    }
+  ]);
+
+  const report = await client.inspectWebhookDeliveries({
+    board_id: "board_uuid",
+    webhook_id: "webhook_uuid"
+  });
+
+  assert.equal(report.supported, true);
+  assert.equal(report.board_id, "board_uuid");
+  assert.equal(report.webhook_id, "webhook_uuid");
+  assert.deepEqual(
+    calls.map((call) => `${call.init.method ?? "GET"} ${new URL(call.url).pathname}`),
+    ["GET /api/acct/boards/board_uuid/webhooks/webhook_uuid/deliveries"]
+  );
+  assert.deepEqual(report.deliveries, [
+    {
+      id: "delivery_failed",
+      status: "failed",
+      action: "comment_created",
+      event_id: "event_1",
+      response_status: 500,
+      attempted_at: "2026-05-07T12:00:00.000Z",
+      ok: false,
+      error_code: "HTTP_500",
+      message: "callback failed with [REDACTED]"
+    },
+    {
+      id: "delivery_ok",
+      status: "delivered",
+      action: "card_closed",
+      response_status: 200,
+      ok: true
+    }
+  ]);
+  assert.deepEqual(report.recent_delivery_errors, [
+    {
+      code: "WEBHOOK_DELIVERY_FAILED",
+      message: "callback failed with [REDACTED]",
+      board_id: "board_uuid",
+      webhook_id: "webhook_uuid",
+      delivery_id: "delivery_failed",
+      action: "comment_created",
+      event_id: "event_1",
+      response_status: 500,
+      status: "failed",
+      attempted_at: "2026-05-07T12:00:00.000Z"
+    }
+  ]);
+  assert.equal(JSON.stringify(report).includes("secret-token"), false);
+  assert.equal(JSON.stringify(report).includes("webhook-secret"), false);
+  assert.equal(JSON.stringify(report).includes("authorization"), false);
+  assert.equal(JSON.stringify(report).includes("response_body"), false);
+});
+
 test("Fizzy API errors expose safe status and rate-limit metadata without credentials", async () => {
   const { client } = await fetchClientFixture([
     {

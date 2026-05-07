@@ -109,7 +109,8 @@ function fakeFizzy({
     { id: "tag_workspace", name: "workspace-app" },
     { id: "tag_model", name: "model-gpt-5" },
     { id: "tag_persona", name: "persona-repo-agent" }
-  ]
+  ],
+  deliveryReports = {}
 } = {}) {
   const calls = [];
   return {
@@ -136,6 +137,17 @@ function fakeFizzy({
     async getEntropy() {
       calls.push(["getEntropy"]);
       return { warnings: [{ code: "ENTROPY_UNKNOWN", message: "Entropy settings not visible" }] };
+    },
+    async inspectWebhookDeliveries(input = {}) {
+      calls.push(["inspectWebhookDeliveries", input.board_id, input.webhook_id]);
+      return deliveryReports[`${input.board_id}:${input.webhook_id}`] ?? {
+        supported: false,
+        reason: "delivery_listing_unsupported",
+        board_id: input.board_id,
+        webhook_id: input.webhook_id,
+        deliveries: [],
+        recent_delivery_errors: []
+      };
     }
   };
 }
@@ -540,6 +552,80 @@ test("validateStartup allows managed webhooks without an optional signing secret
 
   assert.equal(report.ok, true);
   assert.ok(report.warnings.some((warning) => warning.code === "WEBHOOK_SECRET_NOT_CONFIGURED"));
+});
+
+test("validateStartup inspects configured managed webhook deliveries and reports recent failures safely", async () => {
+  const { config } = await parsedConfig();
+  config.webhook.manage = true;
+  config.webhook.callback_url = "https://example.test/fizzy";
+  config.webhook.secret = "webhook-secret";
+  config.webhook.managed_webhook_ids_by_board = { board_1: "webhook_1" };
+  config.fizzy.token = "secret-token";
+  const fizzy = fakeFizzy({
+    deliveryReports: {
+      "board_1:webhook_1": {
+        supported: true,
+        board_id: "board_1",
+        webhook_id: "webhook_1",
+        deliveries: [
+          {
+            id: "delivery_1",
+            status: "failed",
+            response_status: 500,
+            ok: false,
+            message: "callback failed with [REDACTED]"
+          }
+        ],
+        recent_delivery_errors: [
+          {
+            code: "WEBHOOK_DELIVERY_FAILED",
+            message: "callback failed with secret-token and webhook-secret",
+            board_id: "board_1",
+            webhook_id: "webhook_1",
+            delivery_id: "delivery_1",
+            response_status: 500,
+            status: "failed"
+          }
+        ]
+      }
+    }
+  });
+
+  const report = await validateStartup({
+    config,
+    fizzy,
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(
+    fizzy.calls.filter((call) => call[0] === "inspectWebhookDeliveries"),
+    [["inspectWebhookDeliveries", "board_1", "webhook_1"]]
+  );
+  assert.equal(report.managed_webhooks.by_board.board_1.id, "webhook_1");
+  assert.equal(report.managed_webhooks.by_board.board_1.delivery_inspection.supported, true);
+  assert.equal(report.managed_webhooks.recent_delivery_errors[0].delivery_id, "delivery_1");
+  assert.ok(report.warnings.some((warning) => warning.code === "MANAGED_WEBHOOK_DELIVERY_FAILURE"));
+  assert.equal(JSON.stringify(report).includes("secret-token"), false);
+  assert.equal(JSON.stringify(report).includes("webhook-secret"), false);
+});
+
+test("validateStartup treats unsupported managed webhook delivery inspection as a warning only", async () => {
+  const { config } = await parsedConfig();
+  config.webhook.manage = true;
+  config.webhook.callback_url = "https://example.test/fizzy";
+  config.webhook.secret = "webhook-secret";
+  config.webhook.managed_webhook_ids_by_board = { board_1: "webhook_1" };
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(report.managed_webhooks.by_board.board_1.delivery_inspection.supported, false);
+  assert.ok(report.warnings.some((warning) => warning.code === "MANAGED_WEBHOOK_DELIVERY_INSPECTION_UNSUPPORTED"));
 });
 
 test("validateStartup detects missing secrets, invalid Fizzy access, invalid bot user, managed webhook issues, bad server port, bad claim mode, and unsafe cleanup", async () => {

@@ -171,6 +171,37 @@ export function createOrchestratorState(options = {}) {
     };
   }
 
+  function readyRetries(options = {}) {
+    const at = Date.parse(options.now ?? nowIso(clock));
+    return retryQueue
+      .filter((retry) => retry.status !== "consumed" && retry.status !== "stale")
+      .filter((retry) => Date.parse(retry.next_retry_at) <= at)
+      .filter((retry) => {
+        const replacement = [...activeRuns.values()].find((active) => active.card_id === retry.card_id);
+        if (replacement && replacement.attempt_id !== retry.attempt_id) {
+          retry.status = "stale";
+          retry.stale_at = new Date(at).toISOString();
+          return false;
+        }
+        retry.status = "ready";
+        return true;
+      })
+      .map(clone);
+  }
+
+  function consumeRetry(retryInput = {}, details = {}) {
+    const retry = retryQueue.find((entry) =>
+      entry.run_id === retryInput.run_id &&
+      entry.attempt_id === retryInput.attempt_id &&
+      entry.attempt_number === retryInput.attempt_number
+    );
+    if (!retry || retry.status === "consumed") return null;
+    retry.status = "consumed";
+    retry.consumed_at = nowIso(clock);
+    Object.assign(retry, clone(details));
+    return clone(retry);
+  }
+
   async function cancelRun(run, reason, options = {}) {
     await runner?.cancel?.(run.turn ?? {}, reason);
     activeRuns.delete(run.run_id);
@@ -200,6 +231,14 @@ export function createOrchestratorState(options = {}) {
       run_id: run.run_id,
       attempt_id: run.attempt_id,
       attempt_number: attemptNumber,
+      card_id: run.card_id,
+      board_id: run.board_id,
+      route_id: run.route_id,
+      route_fingerprint: run.route_fingerprint,
+      card: clone(run.card),
+      route: clone(run.route),
+      claim: clone(run.claim),
+      workspace: clone(run.workspace),
       reason,
       status: "scheduled",
       backoff_ms: backoffMs,
@@ -259,6 +298,8 @@ export function createOrchestratorState(options = {}) {
     renewClaimNow,
     reconcileActiveCards,
     cancelRun,
+    readyRetries,
+    consumeRetry,
     recoverStartup,
     snapshot
   };

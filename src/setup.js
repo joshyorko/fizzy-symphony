@@ -307,7 +307,7 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
   }
 
   const board = await fizzy.createBoard({ account, name });
-  const initialBoard = Array.isArray(board.columns) ? board : await fizzy.getBoard(board.id, { account });
+  const initialBoard = await fizzy.getBoard(board.id, { account });
   const ready = await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Ready for Agents" });
   await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Done" });
   const golden = await fizzy.createCard({
@@ -443,7 +443,7 @@ async function confirmSetupMutationReview(prompts, plan) {
     : await prompts.input({
       name: "setup_mutation_review",
       message: formatSetupMutationReview(plan),
-      defaultValue: "no"
+      defaultValue: "yes"
     });
 
   if (setupMutationConfirmed(answer)) return;

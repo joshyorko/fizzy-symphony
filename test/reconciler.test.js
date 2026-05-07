@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -375,6 +375,116 @@ test("runReconciliationTick renders full Fizzy card context for normal dispatch 
   assert.match(prompts[0], /"policy": "comment_once"/u);
 });
 
+test("runReconciliationTick continues on the same runner session when a completed turn requests another turn", async () => {
+  const calls = [];
+  const prompts = [];
+  const sessions = [];
+  const config = {
+    ...configFixture(1),
+    agent: { ...configFixture(1).agent, max_turns: 3 },
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-continuation-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps,
+    runner: {
+      async startSession(workspacePath) {
+        calls.push("startSession");
+        return { session_id: "session_1", workspace: workspacePath };
+      },
+      async startTurn(session, prompt) {
+        calls.push("startTurn");
+        sessions.push(session.session_id);
+        prompts.push(prompt);
+        return { turn_id: `turn_${prompts.length}`, session_id: session.session_id, prompt };
+      },
+      async stream(turn) {
+        calls.push("stream");
+        if (turn.turn_id === "turn_1") {
+          return {
+            type: "TurnResult",
+            status: "completed",
+            session_id: turn.session_id,
+            turn_id: turn.turn_id,
+            continue: true,
+            next_prompt: "Continue this same Fizzy card."
+          };
+        }
+        return {
+          type: "TurnResult",
+          status: "completed",
+          session_id: turn.session_id,
+          turn_id: turn.turn_id,
+          output_summary: "done",
+          no_code_change: true
+        };
+      },
+      async stopSession(session) {
+        calls.push("stopSession");
+        return { status: "stopped", success: true, session_id: session.session_id };
+      }
+    }
+  });
+
+  assert.equal(result.completed, 1);
+  assert.deepEqual(calls.filter((call) => call === "startSession"), ["startSession"]);
+  assert.deepEqual(calls.filter((call) => call === "startTurn"), ["startTurn", "startTurn"]);
+  assert.deepEqual(sessions, ["session_1", "session_1"]);
+  assert.equal(prompts[1], "Continue this same Fizzy card.");
+  assert.equal(status.status().runs.completed[0].runner_result.turn_results.length, 2);
+});
+
+test("runReconciliationTick fails instead of completing when max_turns is exhausted with continuation pending", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    agent: { ...configFixture(1).agent, max_turns: 1 },
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-max-turns-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  deps.claims.release = async ({ status }) => {
+    calls.push("releaseClaim");
+    assert.equal(status, "failed");
+    return { released: true };
+  };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps,
+    runner: {
+      ...deps.runner,
+      async stream(turn) {
+        calls.push("stream");
+        return {
+          type: "TurnResult",
+          status: "completed",
+          session_id: turn.session_id,
+          turn_id: turn.turn_id,
+          continue: true,
+          next_prompt: "Still needs more work."
+        };
+      }
+    }
+  });
+
+  assert.equal(result.completed, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(status.status().runs.failed[0].last_error.code, "RUNNER_MAX_TURNS_REACHED");
+  assert.equal(calls.includes("postResult"), false);
+});
+
 test("runReconciliationTick terminates owned app-server process when successful stop does not close", async () => {
   const calls = [];
   const config = {
@@ -411,6 +521,100 @@ test("runReconciliationTick terminates owned app-server process when successful 
   const completed = status.status().runs.completed[0];
   assert.equal(completed.runner_session_finalization.states.session_stopped.status, "failed");
   assert.equal(completed.runner_session_finalization.states.process_terminated.status, "succeeded");
+});
+
+test("runReconciliationTick runs after_run workspace hook before completion side effects", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-after-run-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps,
+    fizzy: {
+      ...deps.fizzy,
+      async postResultComment(context) {
+        assert.ok(calls.includes("afterRun"));
+        return deps.fizzy.postResultComment(context);
+      }
+    },
+    workspaceManager: {
+      ...deps.workspaceManager,
+      async afterRun({ result, turn_results }) {
+        calls.push("afterRun");
+        assert.equal(result.status, "completed");
+        assert.equal(turn_results.length, 1);
+        return { status: "ok" };
+      }
+    }
+  });
+
+  assert.equal(result.completed, 1);
+  assert.ok(calls.indexOf("afterRun") < calls.indexOf("postResult"));
+});
+
+test("runReconciliationTick runs workflow hooks.after_run when no workspace manager hook is injected", async () => {
+  const calls = [];
+  const workspacePath = await mkdtemp(join(tmpdir(), "fizzy-symphony-after-run-workflow-"));
+  await writeFile(
+    join(workspacePath, "hook.js"),
+    "import { appendFileSync } from 'node:fs';\nappendFileSync('hook.log', `${process.argv[2]}\\n`);\n",
+    "utf8"
+  );
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-after-run-workflow-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps,
+    fizzy: {
+      ...deps.fizzy,
+      async postResultComment(context) {
+        assert.equal(await readFile(join(workspacePath, "hook.log"), "utf8"), "after_run\n");
+        return deps.fizzy.postResultComment(context);
+      }
+    },
+    workspaceManager: {
+      async prepare() {
+        calls.push("prepareWorkspace");
+        return { key: "workspace_card_1", path: workspacePath, identity_digest: "sha256:workspace" };
+      }
+    },
+    workflowLoader: {
+      async load() {
+        calls.push("loadWorkflow");
+        return {
+          body: "Workflow with after_run.",
+          front_matter: {
+            hooks: {
+              after_run: {
+                command: "node",
+                args: ["hook.js", "after_run"]
+              }
+            }
+          }
+        };
+      }
+    }
+  });
+
+  assert.equal(result.completed, 1);
 });
 
 test("long-running streams renew active claims before another daemon can steal them", async () => {
@@ -613,6 +817,99 @@ test("runReconciliationTick runs workspace preflight before acquiring a claim", 
   );
 
   assert.deepEqual(calls, ["discover", "route", "resolveIdentity", "preflight"]);
+});
+
+test("runReconciliationTick dispatches due retry entries through routing, preflight, claims, and runner capacity", async () => {
+  const calls = [];
+  const clock = clockFixture();
+  const scheduler = schedulerFixture();
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-retry-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const orchestratorState = createOrchestratorState({ config, clock, scheduler });
+
+  orchestratorState.startRun({
+    run_id: "run_card_1_previous",
+    attempt_id: "attempt_card_1_previous",
+    attempt_number: 1,
+    card,
+    route,
+    claim: {
+      id: "claim_card_1_previous",
+      run_id: "run_card_1_previous",
+      attempt_id: "attempt_card_1_previous"
+    },
+    workspace: { key: "workspace_card_1", path: "/tmp/workspace-card-1" }
+  });
+  orchestratorState.recordFailure("run_card_1_previous", { code: "RUNNER_ERROR", message: "try again" }, {
+    retryable: true,
+    failure_kind: "runner"
+  });
+  const retryTimer = scheduler.pending().find((timer) => timer.delayMs === 1000);
+  clock.advance(1000);
+  await scheduler.fire(retryTimer.id);
+
+  const deps = successfulDependencies({ calls, cards: [], route });
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    orchestratorState,
+    fizzy: deps.fizzy,
+    router: {
+      async validateCandidate({ card: routedCard, retry }) {
+        calls.push("route");
+        assert.equal(routedCard.id, "card_1");
+        assert.equal(retry.attempt_number, 2);
+        return { action: "spawn", card: routedCard, route, prompt: "Do the safe fake turn.", retry };
+      }
+    },
+    claims: {
+      async acquire({ decision }) {
+        calls.push("claim");
+        assert.equal(decision.retry.attempt_number, 2);
+        return {
+          acquired: true,
+          claim: {
+            id: "claim_card_1_retry",
+            run_id: "run_card_1",
+            attempt_id: "attempt_card_1",
+            attempt_number: 2
+          }
+        };
+      },
+      async release({ status }) {
+        calls.push("releaseClaim");
+        assert.equal(status, "completed");
+        return { released: true };
+      }
+    },
+    workspaceManager: {
+      async resolveIdentity() {
+        calls.push("resolveIdentity");
+        return { workspace_identity_digest: "sha256:workspace", workspace_path: "/tmp/workspace-card-1" };
+      },
+      async preflight() {
+        calls.push("preflight");
+        return { status: "ok" };
+      },
+      async prepare() {
+        calls.push("prepareWorkspace");
+        return { key: "workspace_card_1", path: "/tmp/workspace-card-1", identity_digest: "sha256:workspace" };
+      }
+    },
+    workflowLoader: deps.workflowLoader,
+    runner: deps.runner
+  });
+
+  assert.equal(result.dispatched, 1);
+  assert.equal(result.completed, 1);
+  assert.deepEqual(calls.slice(0, 5), ["discover", "route", "resolveIdentity", "preflight", "claim"]);
+  assert.equal(orchestratorState.snapshot().retry_queue[0].status, "consumed");
 });
 
 test("runReconciliationTick writes local run attempt records through completion", async () => {
@@ -944,6 +1241,34 @@ test("runReconciliationTick respects max_concurrent minus already running work",
     ["claim"]
   );
   assert.deepEqual(status.status().runs.running.map((run) => run.id), ["run_already_active"]);
+  assert.deepEqual(status.status().runs.completed.map((run) => run.id), ["run_card_1"]);
+});
+
+test("runReconciliationTick sorts eligible cards before consuming dispatch capacity", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-priority-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const lowPriority = { ...cardFixture("card_2", 1), priority: 9 };
+  const highPriority = { ...cardFixture("card_1", 99), priority: 1 };
+  const deps = successfulDependencies({
+    calls,
+    cards: [lowPriority, highPriority],
+    route
+  });
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    ...deps
+  });
+
+  assert.equal(result.dispatched, 1);
+  assert.equal(result.capacity_refused, 1);
   assert.deepEqual(status.status().runs.completed.map((run) => run.id), ["run_card_1"]);
 });
 

@@ -286,7 +286,7 @@ test("guided setup prompt skips missing WORKFLOW.md by default and still creates
   assert.equal(result.exitCode, 0, result.stderr);
   assert.deepEqual(
     prompts.map((prompt) => [prompt.name, prompt.defaultValue]),
-    [["workflow_action", "skip"], ["setup_mutation_review", "no"]]
+    [["workflow_action", "skip"], ["setup_mutation_review", "yes"]]
   );
   assert.equal(createCalls.length, 1);
   await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
@@ -401,6 +401,7 @@ test("public help exits successfully", async () => {
     assert.match(result.stdout, /--reasoning-effort level/u);
     assert.doesNotMatch(result.stdout, /fizzy-symphony init/u);
     assert.match(result.stdout, /fizzy-symphony dashboard/u);
+    assert.match(result.stdout, /fizzy-symphony boards/u);
     assert.match(result.stdout, /fizzy-symphony start/u);
   }
 });
@@ -429,6 +430,37 @@ test("public dashboard delegates to status-backed dashboard command", async () =
   assert.equal(result.exitCode, 0, result.stderr);
   assert.match(result.stdout, /fizzy-symphony dashboard/u);
   assert.match(result.stdout, /Instance: instance-a/u);
+});
+
+test("public boards lists real boards and columns without constructing a runner", async () => {
+  const calls = [];
+
+  const result = await runCli([
+    "boards",
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: {},
+    clientFactories: {
+      createFizzyClient({ config }) {
+        calls.push(["createFizzyClient", config.fizzy.api_url, Boolean(config.fizzy.token)]);
+        return fakeSetupFizzy();
+      },
+      createRunner() {
+        throw new Error("boards should not construct a runner");
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(calls, [["createFizzyClient", "https://fizzy.example.test", true]]);
+  assert.match(result.stdout, /Fizzy boards for acct_1/u);
+  assert.match(result.stdout, /Agents \(board_1\)/u);
+  assert.match(result.stdout, /Ready for Agents \(col_ready\)/u);
+  assert.match(result.stdout, /Done \(col_done\)/u);
+  assert.match(result.stdout, /golden: #Repo Agent/u);
 });
 
 test("bare command opens dashboard when config exists", async () => {

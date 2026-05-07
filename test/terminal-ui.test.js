@@ -47,12 +47,17 @@ test("mutation review is readable as plain text and does not expose token-shaped
 test("daemon start summary explains routes and dirty-repo protection up front", () => {
   const rendered = formatDaemonStartSummary(daemonFixture(), {
     color: false,
+    configPath: ".fizzy-symphony/config.yml",
     boardSnapshots: [boardSnapshotFixture()]
   });
 
   assert.match(rendered, /fizzy-symphony watching boards/u);
   assert.match(rendered, /Endpoint\s+http:\/\/127\.0\.0\.1:4567/u);
+  assert.match(rendered, /Config\s+\.fizzy-symphony\/config\.yml/u);
+  assert.match(rendered, /Source repo\s+\/work\/repo/u);
+  assert.match(rendered, /Worktrees\s+\/work\/repo\/\.fizzy-symphony\/worktrees/u);
   assert.match(rendered, /Safety\s+protecting your work/u);
+  assert.match(rendered, /Inspect\s+fizzy-symphony dashboard --endpoint http:\/\/127\.0\.0\.1:4567/u);
   assert.match(rendered, /Agents/u);
   assert.match(rendered, /Ready -> Done \(codex\)/u);
   assert.match(rendered, /Live board/u);
@@ -165,7 +170,19 @@ function boardSnapshotFixture() {
 function daemonFixture() {
   return {
     endpoint: { base_url: "http://127.0.0.1:4567" },
-    config: { polling: { interval_ms: 30000 } },
+    config: {
+      polling: { interval_ms: 30000 },
+      workspaces: {
+        default: "app",
+        default_repo: "/work/repo",
+        registry: {
+          app: {
+            repo: "/work/repo",
+            worktree_root: "/work/repo/.fizzy-symphony/worktrees"
+          }
+        }
+      }
+    },
     status: {
       status() {
         return {

@@ -15,7 +15,12 @@ function statusSnapshot() {
     runner_health: { status: "unavailable", kind: "cli_app_server" },
     watched_boards: [{ id: "board_1", label: "Agents" }],
     routes: [{ id: "route_1", board_id: "board_1", source_column_id: "ready" }],
-    active_runs: [{ id: "run_1", card: { number: 42 }, status: "running" }],
+    active_runs: [{
+      id: "run_1",
+      card: { number: 42, title: "Fix terminal output" },
+      status: "running",
+      workspace_path: "/work/repo/.fizzy-symphony/worktrees/card-42"
+    }],
     claims: [{ id: "claim_1", card_id: "card_1", status: "claimed" }],
     workpads: [{ card_id: "card_1", comment_id: "comment_workpad" }],
     retry_queue: [{ run_id: "run_retry" }],
@@ -69,6 +74,7 @@ test("dashboard model summarizes status truth without inventing workflow state",
   assert.equal(model.counts.webhookErrors, 1);
   assert.equal(model.counts.capacityRefusals, 1);
   assert.equal(model.cleanup.status, "preserved");
+  assert.deepEqual(model.workspacePaths, ["/work/repo/.fizzy-symphony/worktrees/card-42"]);
 });
 
 test("dashboard text fallback renders operator sections for non-TTY output", () => {
@@ -85,6 +91,11 @@ test("dashboard text fallback renders operator sections for non-TTY output", () 
   assert.match(text, /Webhook errors: 1/u);
   assert.match(text, /Capacity refusals: 1/u);
   assert.match(text, /Cleanup: preserved/u);
+  assert.match(text, /Blockers\n- RUNNER_NOT_READY/u);
+  assert.match(text, /Active\n- run_1 #42 Fix terminal output \(running\) -> \/work\/repo\/\.fizzy-symphony\/worktrees\/card-42/u);
+  assert.match(text, /Worktrees\n- \/work\/repo\/\.fizzy-symphony\/worktrees\/card-42/u);
+  assert.match(text, /Recent failures\n- run_failed: RUNNER_ERROR/u);
+  assert.match(text, /Capacity refusals\n- card_blocked: agent capacity reached/u);
 });
 
 test("dashboard config discovery loads repo dotenv before config parsing", async () => {

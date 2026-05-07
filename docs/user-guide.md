@@ -45,7 +45,7 @@ The generated `.fizzy-symphony/config.yml` keeps these operator choices in one p
 
 ```yaml
 agent:
-  default_model: gpt-5.4
+  default_model: gpt-5.5
   reasoning_effort: medium
   max_concurrent: 1
 ```
@@ -94,6 +94,7 @@ The dashboard is an observer for daemon status. It helps you see readiness, rout
 
 ```sh
 node bin/fizzy-symphony.js status
+node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js dashboard --once
 node bin/fizzy-symphony.js validate
@@ -109,9 +110,13 @@ fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com -
 If you already built a Fizzy board route yourself:
 
 ```sh
+fizzy-symphony boards
 fizzy-symphony setup --mode existing --board BOARD_ID --workspace-repo .
 fizzy-symphony start
 ```
+
+`boards` is read-only. Use it to see the board IDs, columns, and golden cards Fizzy already has
+before you wire an existing board.
 
 If the board already has the starter route and you want setup to use starter defaults:
 
@@ -120,3 +125,24 @@ fizzy-symphony setup --adopt-starter --board BOARD_ID --workspace-repo .
 ```
 
 Existing routes still use the same board-native contract: a native golden card tagged `agent-instructions`, `codex`, and one completion tag like `move-to-done`, `close-on-complete`, or `comment-once`.
+
+## Gated Live E2E Smoke
+
+The live smoke is checked in but skipped unless explicitly enabled. It creates a disposable Fizzy starter board and smoke card, starts the real daemon against a temporary git repo, runs one reconciliation tick through Codex/worktree dispatch, and verifies a result comment, completion marker/tag, and final card column.
+
+Run it only from a Linux shell with live Fizzy credentials and Codex available:
+
+```sh
+FIZZY_SYMPHONY_LIVE_E2E=1 \
+FIZZY_SYMPHONY_LIVE_CONFIRM=real-fizzy-codex-worktree \
+FIZZY_API_TOKEN=... \
+npm run test:live:e2e
+```
+
+Optional env:
+
+- `FIZZY_API_URL` defaults to `https://app.fizzy.do`
+- `FIZZY_SYMPHONY_LIVE_ACCOUNT` selects a specific account when the token can see more than one
+- `FIZZY_SYMPHONY_LIVE_TIMEOUT_MS` defaults to `600000`
+
+The generated config stores `token: $FIZZY_API_TOKEN`; the test asserts the token value is not written.

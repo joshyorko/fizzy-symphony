@@ -135,6 +135,8 @@ test("orchestrator state schedules capped retry backoff and records terminal exh
   assert.equal(snapshot.retry_queue[0].backoff_ms, 1000);
   assert.equal(snapshot.retry_queue[0].next_retry_at, "2026-04-29T12:00:01.000Z");
   assert.equal(snapshot.retry_queue[0].workspace_preserved, true);
+  assert.equal(snapshot.retry_queue[0].card.id, "card_1");
+  assert.equal(snapshot.retry_queue[0].route.id, "route_1");
 
   const retryTimer = scheduler.pending().find((timer) => timer.delayMs === 1000);
   clock.advance(1000);
