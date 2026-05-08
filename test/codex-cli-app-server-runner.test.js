@@ -98,7 +98,11 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   });
   const config = runnerConfig();
 
-  const session = await runner.startSession("/tmp/card-workspace", { config, route: { model: "gpt-5.4" } }, { run_id: "run_1" });
+  const session = await runner.startSession(
+    "/tmp/card-workspace",
+    { config, route: { model: "gpt-5.4", model_profile: { service_tier: "default" } } },
+    { run_id: "run_1" }
+  );
   const turn = await runner.startTurn(session, "Implement the card.", { run_id: "run_1", attempt_number: 2 });
 
   assert.equal(session.session_id, "thread_1");
@@ -114,7 +118,8 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
     model: "gpt-5.4",
     provider: "openai",
     service_tier: null,
-    reasoning_effort: "medium"
+    reasoning_effort: "medium",
+    model_profile: { service_tier: "default" }
   });
   assert.equal(session.process_owned, true);
   assert.equal(session.process_id, 4321);

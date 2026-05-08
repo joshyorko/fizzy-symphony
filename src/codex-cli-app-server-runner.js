@@ -730,7 +730,7 @@ function modelSelection({ threadStart, policies, metadata }) {
     provider: threadStart.modelProvider,
     service_tier: threadStart.serviceTier,
     reasoning_effort: threadStart.reasoningEffort ?? requestedReasoningEffort,
-    profile
+    model_profile: profile
   });
 }
 
