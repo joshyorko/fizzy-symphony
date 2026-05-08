@@ -136,12 +136,12 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
   }
 
   const prompts = await promptProvider(io);
-  const workspaceRepo = workspaceRepoForArgs(args, baseEnv);
   const env = await envWithCliOverrides(baseEnv, args, {
-    dotenvBasePath: isRemoteGitUrl(workspaceRepo) ? envBaseForConfig(configPath) : workspaceRepo,
+    dotenvBasePath: setupDotenvBaseForArgs(args, baseEnv, configPath),
     promptForCredentials: commandOptions.promptForCredentials,
     prompts
   });
+  const workspaceRepo = workspaceRepoForArgs(args, env);
   const dependencyConfig = resolveFizzyClientConfig({
     config: { runner: { preferred: "cli_app_server" } },
     env
@@ -383,10 +383,20 @@ function boardValues(args) {
   return values.length > 0 ? values : undefined;
 }
 
-function workspaceRepoForArgs(args, env = process.env) {
+function setupDotenvBaseForArgs(args, env, configPath) {
+  const repo = explicitWorkspaceRepoForArgs(args) ?? firstNonEmpty(env.FIZZY_SYMPHONY_REPO);
+  if (nonEmpty(repo) && !isRemoteGitUrl(repo)) return repo;
+  return envBaseForConfig(configPath);
+}
+
+function explicitWorkspaceRepoForArgs(args) {
   return optionValue(args, "--repo") ??
     optionValue(args, "--git-repo") ??
-    optionValue(args, "--workspace-repo") ??
+    optionValue(args, "--workspace-repo");
+}
+
+function workspaceRepoForArgs(args, env = process.env) {
+  return explicitWorkspaceRepoForArgs(args) ??
     firstNonEmpty(env.FIZZY_SYMPHONY_REPO) ??
     ".";
 }

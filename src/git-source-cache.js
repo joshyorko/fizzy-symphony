@@ -31,11 +31,29 @@ export function redactGitRemoteUrl(value) {
   if (SCP_LIKE_REMOTE.test(candidate)) return candidate;
   try {
     const parsed = new URL(candidate);
-    parsed.username = "";
-    parsed.password = "";
+    if (["https:", "http:"].includes(parsed.protocol)) {
+      parsed.username = "";
+      parsed.password = "";
+    } else if (parsed.password) {
+      parsed.password = "";
+    }
     return parsed.toString();
   } catch {
     return candidate;
+  }
+}
+
+export function hasEmbeddedGitCredentials(value) {
+  const candidate = String(value ?? "").trim();
+  if (!candidate || SCP_LIKE_REMOTE.test(candidate)) return false;
+  try {
+    const parsed = new URL(candidate);
+    if (["https:", "http:"].includes(parsed.protocol)) {
+      return parsed.username !== "" || parsed.password !== "";
+    }
+    return parsed.password !== "";
+  } catch {
+    return false;
   }
 }
 
@@ -51,6 +69,13 @@ export function createGitSourceCacheManager({ fs = nodeFs, exec = defaultExec, n
         throw new FizzySymphonyError("INVALID_GIT_REMOTE_URL", "Workspace source remote_url must be a supported Git URL.", {
           source: sourceName,
           remote_url: redactGitRemoteUrl(remoteUrl)
+        });
+      }
+      if (hasEmbeddedGitCredentials(remoteUrl)) {
+        throw new FizzySymphonyError("INVALID_GIT_REMOTE_URL", "Workspace source remote_url must not embed credentials.", {
+          source: sourceName,
+          remote_url: redactGitRemoteUrl(remoteUrl),
+          remediation: "Remove credentials from the Git URL and use a Git credential helper or host authentication."
         });
       }
 

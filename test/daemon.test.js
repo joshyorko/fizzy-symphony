@@ -77,7 +77,7 @@ test("CLI start renders a real board snapshot for interactive terminals", async 
 
   const result = await runCli(["start", "--config", configPath], {
     stderrIsTTY: true,
-    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    env: { ...process.env, CI: "", FIZZY_API_TOKEN: "token" },
     daemonOptions: {
       schedulerOptions: { immediate: false },
       dependencies: {
@@ -164,7 +164,7 @@ test("CLI start renders workspace protection warnings for interactive terminals"
 
   const result = await runCli(["start", "--config", configPath], {
     stderrIsTTY: true,
-    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    env: { ...process.env, CI: "", FIZZY_API_TOKEN: "token" },
     daemonOptions: {
       schedulerOptions: { immediate: false },
       dependencies: {

@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { FizzySymphonyError } from "./errors.js";
-import { isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
+import { hasEmbeddedGitCredentials, isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
 
 const TEMPLATE_PATH = new URL("../config.example.yml", import.meta.url);
 const DEFAULT_FIZZY_API_URL = "https://app.fizzy.do";
@@ -549,6 +549,13 @@ function validateWorkspaceSource(source = {}, path) {
     throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace source remote_url must be a supported Git URL.", {
       path: `${path}.remote_url`,
       value: redactGitRemoteUrl(source.remote_url)
+    });
+  }
+  if (hasEmbeddedGitCredentials(source.remote_url)) {
+    throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace source remote_url must not embed credentials.", {
+      path: `${path}.remote_url`,
+      value: redactGitRemoteUrl(source.remote_url),
+      remediation: "Remove credentials from the Git URL and use a Git credential helper or host authentication."
     });
   }
   if (!Number.isInteger(source.fetch_depth) || source.fetch_depth < 0) {

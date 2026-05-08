@@ -8,7 +8,7 @@ import {
   writeOperatorConfig
 } from "./config.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "./errors.js";
-import { isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
+import { hasEmbeddedGitCredentials, isRemoteGitUrl, redactGitRemoteUrl } from "./git-source-cache.js";
 import { formatSetupMutationReview } from "./terminal-ui.js";
 import { discoverGoldenTicketRoutes, isSupportedSdkRunner, managedTagsUsedByBoards, resolveManagedTags } from "./validation.js";
 
@@ -39,6 +39,8 @@ export async function runSetup(options = {}) {
     webhook = {},
     prompts
   } = options;
+
+  validateWorkspaceRepoUrl(workspaceRepo);
 
   const identity = await validateIdentity(fizzy);
   const account = await selectAccount(identity, options.account, prompts);
@@ -200,6 +202,15 @@ export async function runSetup(options = {}) {
     workflow = await applyWorkflowPlan(workflowPlan);
     mutationsReviewed = true;
   }
+}
+
+function validateWorkspaceRepoUrl(workspaceRepo) {
+  if (!hasEmbeddedGitCredentials(workspaceRepo)) return;
+  throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Remote workspace source remote_url must not embed credentials.", {
+    path: "workspaces.sources.app.remote_url",
+    value: redactGitRemoteUrl(workspaceRepo),
+    remediation: "Remove credentials from the Git URL and use a Git credential helper or host authentication."
+  });
 }
 
 async function validateIdentity(fizzy) {
