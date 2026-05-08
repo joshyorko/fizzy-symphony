@@ -691,14 +691,16 @@ function threadStartParams({ path, policies, metadata, runnerConfig }) {
     metadata.reasoning_effort ??
     policies.route?.reasoning_effort ??
     policies.config?.agent?.reasoning_effort;
+  const configOverrides = omitUndefined({
+    model_reasoning_effort: reasoningEffort || undefined
+  });
   return omitUndefined({
     model: model || undefined,
-    reasoningEffort: reasoningEffort || undefined,
     cwd: path,
     approvalPolicy: approvalPolicy(runnerConfig),
     approvalsReviewer: "user",
     sandbox: runnerConfig.codex.thread_sandbox,
-    config: {},
+    config: configOverrides,
     serviceName: "fizzy-symphony",
     ephemeral: false,
     sessionStartSource: "clear",

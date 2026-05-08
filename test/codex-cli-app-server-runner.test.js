@@ -149,7 +149,7 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   });
 });
 
-test("Codex CLI app-server runner sends configured default model and reasoning effort", async () => {
+test("Codex CLI app-server runner sends configured default model and reasoning effort config", async () => {
   const transport = new FakeTransport({}, {
     "initialize": () => initializeResult(),
     "thread/start": () => threadStartResult()
@@ -169,7 +169,8 @@ test("Codex CLI app-server runner sends configured default model and reasoning e
 
   assert.equal(transport.requests[1].method, "thread/start");
   assert.equal(transport.requests[1].params.model, "gpt-5.5");
-  assert.equal(transport.requests[1].params.reasoningEffort, "high");
+  assert.equal(transport.requests[1].params.reasoningEffort, undefined);
+  assert.deepEqual(transport.requests[1].params.config, { model_reasoning_effort: "high" });
 });
 
 test("Codex CLI app-server runner streams normalized activity and final turn result", async () => {
