@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { evaluateCleanupEligibility } from "./completion.js";
 import { FizzySymphonyError } from "./errors.js";
+import { createGitSourceCacheManager } from "./git-source-cache.js";
 import { loadWorkflow } from "./workflow.js";
 
 const GUARD_FILE_VERSION = 1;
@@ -19,6 +20,10 @@ const execFileAsync = promisify(execFile);
 const nodeFs = { access, mkdir, readdir, readFile, realpath, rm, writeFile };
 
 export function resolveWorkspaceIdentity({ config, route, card, workspaceName } = {}) {
+  return resolveWorkspaceIdentityFromSource({ config, route, card, workspaceName });
+}
+
+function resolveWorkspaceIdentityFromSource({ config, route, card, workspaceName, source } = {}) {
   const name = workspaceName ?? route?.workspace;
   const registry = config?.workspaces?.registry ?? {};
   const workspace = registry[name];
@@ -39,10 +44,18 @@ export function resolveWorkspaceIdentity({ config, route, card, workspaceName } 
   requireIdentityField("route_id", route?.id);
   requireIdentityField("route_fingerprint", route?.fingerprint);
 
-  const sourceRepositoryPath = workspace.repo ?? config?.workspaces?.default_repo;
+  if (workspace.source && !source) {
+    throw new FizzySymphonyError("WORKSPACE_SOURCE_RESOLUTION_REQUIRED", "Remote workspace sources must be resolved through the workspace manager.", {
+      workspace: name,
+      source: workspace.source
+    });
+  }
+
+  const resolvedSource = source ?? resolveLocalWorkspaceSource({ config, route, workspace, workspaceName: name });
+  const sourceRepositoryPath = resolvedSource.source_repository_path;
   requireIdentityField("source_repository_path", sourceRepositoryPath);
 
-  const canonicalSourceRepositoryPath = canonicalPath(sourceRepositoryPath);
+  const canonicalSourceRepositoryPath = resolvedSource.canonical_source_repository_path ?? canonicalPath(sourceRepositoryPath);
   const isolationStrategy = workspace.isolation ?? config?.workspaces?.default_isolation ?? "git_worktree";
   if (!SUPPORTED_ISOLATION_STRATEGIES.has(isolationStrategy)) {
     throw new FizzySymphonyError("UNSUPPORTED_WORKSPACE_ISOLATION", "Workspace isolation strategy is not supported.", {
@@ -52,8 +65,8 @@ export function resolveWorkspaceIdentity({ config, route, card, workspaceName } 
     });
   }
 
-  const source = resolveSourceRef({ config, route, workspace });
-  const repoKey = shortDigest(`${canonicalSourceRepositoryPath}@${source.source_ref}`);
+  const sourceIdentity = resolvedSource.source_identity ?? canonicalSourceRepositoryPath;
+  const repoKey = shortDigest(`${sourceIdentity}@${resolvedSource.source_ref}`);
   const key = buildWorkspaceKey({
     board_id: boardId,
     card_id: cardId,
@@ -71,10 +84,18 @@ export function resolveWorkspaceIdentity({ config, route, card, workspaceName } 
     workspace_name: name,
     source_repository_path: sourceRepositoryPath,
     canonical_source_repository_path: canonicalSourceRepositoryPath,
-    base_ref: source.base_ref,
-    source_snapshot_id: source.source_snapshot_id,
-    source_ref: source.source_ref,
-    source_ref_kind: source.source_ref_kind,
+    source_identity: sourceIdentity,
+    source_kind: resolvedSource.source_kind,
+    source_name: resolvedSource.source_name,
+    source_remote_url: resolvedSource.source_remote_url,
+    source_display_url: resolvedSource.source_display_url,
+    source_cache_path: resolvedSource.source_cache_path,
+    source_fetched_commit_sha: resolvedSource.source_fetched_commit_sha,
+    source_fetched_at: resolvedSource.source_fetched_at,
+    base_ref: resolvedSource.base_ref,
+    source_snapshot_id: resolvedSource.source_snapshot_id,
+    source_ref: resolvedSource.source_ref,
+    source_ref_kind: resolvedSource.source_ref_kind,
     isolation_strategy: isolationStrategy,
     repo_key: repoKey,
     workspace_key: key
@@ -92,7 +113,8 @@ export function resolveWorkspaceIdentity({ config, route, card, workspaceName } 
 }
 
 export function workspaceKey(identity) {
-  const repoKey = identity.repo_key ?? shortDigest(`${identity.canonical_source_repository_path}@${identity.source_ref}`);
+  const sourceIdentity = identity.source_identity ?? identity.canonical_source_repository_path;
+  const repoKey = identity.repo_key ?? shortDigest(`${sourceIdentity}@${identity.source_ref}`);
   return buildWorkspaceKey({ ...identity, repo_key: repoKey });
 }
 
@@ -117,10 +139,11 @@ export function branchName(identity, options = {}) {
   return `${prefix}/${name}`;
 }
 
-export function createWorkspaceManager({ fs = nodeFs, exec = defaultExec } = {}) {
+export function createWorkspaceManager({ fs = nodeFs, exec = defaultExec, sourceCache = createGitSourceCacheManager({ fs, exec }) } = {}) {
   return {
-    resolveIdentity({ config, route, card, workspaceName } = {}) {
-      return resolveWorkspaceIdentity({ config, route, card, workspaceName });
+    async resolveIdentity({ config, route, card, workspaceName } = {}) {
+      const source = await resolveWorkspaceSource({ config, route, workspaceName, sourceCache });
+      return resolveWorkspaceIdentityFromSource({ config, route, card, workspaceName, source });
     },
     preflight({ config, identity, workspace } = {}) {
       return preflightWorkspaceSource({ config, identity: identity ?? workspace, fs, exec });
@@ -193,7 +216,10 @@ export async function preflightWorkspaceSource({ config, identity, fs = nodeFs, 
     source_repository_path: sourceRepositoryPath,
     source_ref: identity.source_ref,
     clean: sourceStatus.clean,
-    dirty_paths: sourceStatus.paths
+    dirty_paths: sourceStatus.paths,
+    source_remote_url: identity.source_remote_url,
+    source_display_url: identity.source_display_url,
+    source_cache_path: identity.source_cache_path
   };
 }
 
@@ -493,6 +519,7 @@ export function validateExistingWorkspaceMetadata(existing, identity) {
     workspace_identity_digest: identity.workspace_identity_digest,
     route_fingerprint: identity.route_fingerprint,
     canonical_source_repository_path: identity.canonical_source_repository_path,
+    source_identity: identity.source_identity,
     board_id: identity.board_id,
     card_id: identity.card_id,
     card_number: identity.card_number,
@@ -954,6 +981,14 @@ function buildWorkspaceMetadata({ config, identity, metadata, key, path }) {
     workspace_path: path,
     source_repository_path: identity.source_repository_path,
     canonical_source_repository_path: identity.canonical_source_repository_path,
+    source_identity: identity.source_identity,
+    source_kind: identity.source_kind,
+    source_name: identity.source_name,
+    source_remote_url: identity.source_remote_url,
+    source_display_url: identity.source_display_url,
+    source_cache_path: identity.source_cache_path,
+    source_fetched_commit_sha: identity.source_fetched_commit_sha,
+    source_fetched_at: identity.source_fetched_at,
     base_ref: identity.base_ref,
     source_snapshot_id: identity.source_snapshot_id,
     source_ref: identity.source_ref,
@@ -1139,6 +1174,52 @@ function resolveSourceRef({ config, route, workspace }) {
   };
 }
 
+async function resolveWorkspaceSource({ config, route, workspaceName, sourceCache } = {}) {
+  const name = workspaceName ?? route?.workspace;
+  const workspace = workspaceConfig(config, name);
+  if (workspace?.source) {
+    const sourceConfig = config?.workspaces?.sources?.[workspace.source];
+    if (!sourceConfig) {
+      throw new FizzySymphonyError("CONFIG_INVALID_WORKSPACE_SOURCE", "Workspace source must reference a declared workspaces.sources entry.", {
+        workspace: name,
+        source: workspace.source
+      });
+    }
+    const sourceRef = resolveSourceRef({
+      config,
+      route,
+      workspace: { ...workspace, base_ref: sourceConfig.base_ref ?? workspace.base_ref }
+    });
+    if (sourceConfig.type === "git_remote") {
+      return sourceCache.resolve({
+        sourceCacheRoot: config?.workspaces?.source_cache_root,
+        sourceName: workspace.source,
+        remoteUrl: sourceConfig.remote_url,
+        ref: sourceRef.source_ref,
+        fetchDepth: sourceConfig.fetch_depth,
+        auth: sourceConfig.auth
+      });
+    }
+  }
+  return resolveLocalWorkspaceSource({ config, route, workspace, workspaceName: name });
+}
+
+function resolveLocalWorkspaceSource({ config, route, workspace, workspaceName } = {}) {
+  const sourceRepositoryPath = workspace?.repo ?? config?.workspaces?.default_repo;
+  const source = resolveSourceRef({ config, route, workspace });
+  return {
+    source_kind: "local_path",
+    source_name: workspaceName,
+    source_repository_path: sourceRepositoryPath,
+    canonical_source_repository_path: canonicalPath(sourceRepositoryPath),
+    source_identity: canonicalPath(sourceRepositoryPath),
+    base_ref: source.base_ref,
+    source_snapshot_id: source.source_snapshot_id,
+    source_ref: source.source_ref,
+    source_ref_kind: source.source_ref_kind
+  };
+}
+
 function workspacePathFromRoot(root, key, allowedRoots) {
   requireIdentityField("workspace_root", root);
   const resolvedRoot = canonicalPath(root);
@@ -1201,7 +1282,7 @@ function identityDigestInput(identity) {
     card_id: identity.card_id,
     card_number: identity.card_number,
     workspace_name: identity.workspace_name,
-    canonical_source_repository_path: identity.canonical_source_repository_path,
+    source_identity: identity.source_identity ?? identity.canonical_source_repository_path,
     base_ref: identity.base_ref,
     source_snapshot_id: identity.source_snapshot_id,
     source_ref: identity.source_ref,

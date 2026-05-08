@@ -277,6 +277,44 @@ test("generateOperatorConfig writes a compact user-facing config with the Codex 
   assert.equal(loaded.server.base_port, 4567);
 });
 
+test("generateOperatorConfig writes managed remote source config for remote workspace repos", async () => {
+  const generated = generateOperatorConfig({
+    account: "team",
+    boards: [{ id: "board_ready", label: "Ready Board" }],
+    runnerPreferred: "cli_app_server",
+    workspaceRepo: "https://example.test/owner/repo.git",
+    workspaceRepoRef: "main",
+    sourceCacheRoot: "/tmp/fizzy-cache"
+  });
+
+  assert.match(generated, /source_cache_root: .*fizzy-cache/u);
+  assert.match(generated, /sources:\n    app:\n      type: git_remote/u);
+  assert.match(generated, /remote_url: https:\/\/example\.test\/owner\/repo\.git/u);
+  assert.match(generated, /base_ref: main/u);
+  assert.match(generated, /source: app/u);
+  assert.doesNotMatch(generated, /secret@/u);
+  assert.doesNotMatch(generated, /\n      repo:/u);
+
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-remote-config-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  await writeOperatorConfig(configPath, {
+    account: "team",
+    boards: [{ id: "board_ready", label: "Ready Board" }],
+    runnerPreferred: "cli_app_server",
+    workspaceRepo: "https://example.test/owner/repo.git",
+    workspaceRepoRef: "main",
+    sourceCacheRoot: join(dir, ".cache", "sources")
+  });
+
+  const loaded = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "x" } });
+  assert.equal(loaded.workspaces.registry.app.source, "app");
+  assert.equal(loaded.workspaces.registry.app.repo, undefined);
+  assert.equal(loaded.workspaces.sources.app.type, "git_remote");
+  assert.equal(loaded.workspaces.sources.app.remote_url, "https://example.test/owner/repo.git");
+  assert.equal(loaded.workspaces.sources.app.base_ref, "main");
+  assert.equal(loaded.workspaces.source_cache_root, join(dir, ".cache", "sources"));
+});
+
 test("generateOperatorConfig hard-pins the default Codex model and reasoning effort", async () => {
   const generated = generateOperatorConfig({
     account: "team",
@@ -523,6 +561,70 @@ test("CLI setup runs the live injected-client setup path", async () => {
   assert.equal(payload.account, "acct_1");
   assert.deepEqual(payload.boards, ["board_1"]);
   assert.match(await readFile(configPath, "utf8"), /id: board_1/);
+});
+
+test("CLI setup accepts --repo for managed remote source configs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-remote-setup-"));
+  const configPath = join(dir, "config.yml");
+
+  const setup = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--account",
+    "acct_1",
+    "--board",
+    "board_1",
+    "--repo",
+    "https://example.test/owner/repo.git",
+    "--ref",
+    "main"
+  ], {
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    fizzy: fakeLiveSetupFizzy(),
+    runner: fakeLiveSetupRunner()
+  });
+
+  assert.equal(setup.exitCode, 0);
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /source_cache_root:/u);
+  assert.match(written, /remote_url: https:\/\/example\.test\/owner\/repo\.git/u);
+  assert.match(written, /base_ref: main/u);
+  assert.match(written, /source: app/u);
+  assert.doesNotMatch(written, /secret@/u);
+});
+
+test("CLI setup reads remote repo fallback and ref from dotenv beside config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-remote-dotenv-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  await writeFile(join(dir, ".env"), [
+    "FIZZY_API_TOKEN=token",
+    "FIZZY_SYMPHONY_REPO=https://example.test/owner/repo.git",
+    "FIZZY_SYMPHONY_REPO_REF=feature/pr39",
+    ""
+  ].join("\n"), "utf8");
+
+  const setup = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--account",
+    "acct_1",
+    "--board",
+    "board_1"
+  ], {
+    env: {},
+    fizzy: fakeLiveSetupFizzy(),
+    runner: fakeLiveSetupRunner()
+  });
+
+  assert.equal(setup.exitCode, 0);
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /source_cache_root:/u);
+  assert.match(written, /remote_url: https:\/\/example\.test\/owner\/repo\.git/u);
+  assert.match(written, /base_ref: feature\/pr39/u);
+  assert.match(written, /source: app/u);
+  assert.doesNotMatch(written, /secret@/u);
 });
 
 async function runCli(args, options = {}) {

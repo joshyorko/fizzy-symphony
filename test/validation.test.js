@@ -204,6 +204,34 @@ test("validateStartup resolves IDs for managed tags used by golden-ticket routes
   assert.deepEqual(report.resolvedTags["move-to-done"], { id: "tag_done", name: "move-to-done" });
 });
 
+test("validateStartup does not require a pre-existing local repo for managed remote sources", async () => {
+  const { config, dir } = await parsedConfig();
+  config.workspaces.source_cache_root = join(dir, ".cache", "sources");
+  config.workspaces.sources = {
+    app: {
+      type: "git_remote",
+      remote_url: "https://example.test/owner/repo.git",
+      base_ref: "main",
+      fetch_depth: 0,
+      auth: "auto"
+    }
+  };
+  config.workspaces.registry.app = {
+    source: "app",
+    workflow_path: "WORKFLOW.md"
+  };
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(errorCodes(report).includes("SOURCE_REPO_UNAVAILABLE"), false);
+  assert.equal(errorCodes(report).includes("MISSING_WORKFLOW"), false);
+});
+
 test("validateStartup applies board-specific route defaults across multiple boards", async () => {
   const { config } = await parsedConfig();
   config.boards.entries.push({

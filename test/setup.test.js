@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -551,6 +551,131 @@ test("runSetup writes default config paths that resolve to the selected workspac
     runner: fakeRunner()
   });
   assert.equal(startup.ok, true, JSON.stringify(startup.errors));
+});
+
+test("runSetup writes managed remote source config when workspaceRepo is a Git URL", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-remote-setup-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await runSetup({
+    configPath,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner(),
+    account: "acct_1",
+    selectedBoardIds: ["board_1"],
+    workspaceRepo: "https://example.test/owner/repo.git",
+    workspaceRepoRef: "main",
+    sourceCacheRoot: join(dir, ".cache", "sources"),
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  const config = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+  assert.equal(config.workspaces.registry.app.source, "app");
+  assert.equal(config.workspaces.registry.app.repo, undefined);
+  assert.equal(config.workspaces.sources.app.type, "git_remote");
+  assert.equal(config.workspaces.sources.app.remote_url, "https://example.test/owner/repo.git");
+  assert.equal(config.workspaces.sources.app.base_ref, "main");
+  assert.equal(config.workspaces.source_cache_root, join(dir, ".cache", "sources"));
+  assert.equal(config.safety.allowed_roots.includes(join(dir, ".cache", "sources")), true);
+
+  const startup = await validateStartup({
+    config,
+    fizzy: fakeFizzy(),
+    runner: fakeRunner()
+  });
+  assert.equal(startup.ok, true, JSON.stringify(startup.errors));
+});
+
+test("runSetup preserves non-credentialed SSH and SCP remote Git URLs", async () => {
+  const remotes = [
+    "ssh://git@example.test/owner/repo.git",
+    "git@example.test:owner/repo.git"
+  ];
+
+  for (const [index, remote] of remotes.entries()) {
+    const dir = await mkdtemp(join(tmpdir(), `fizzy-symphony-remote-ssh-${index}-`));
+    const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+    await runSetup({
+      configPath,
+      fizzy: fakeFizzy(),
+      runner: fakeRunner(),
+      account: "acct_1",
+      selectedBoardIds: ["board_1"],
+      workspaceRepo: remote,
+      workspaceRepoRef: "main",
+      sourceCacheRoot: join(dir, ".cache", "sources"),
+      env: { FIZZY_API_TOKEN: "token" }
+    });
+
+    const config = await loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } });
+    assert.equal(config.workspaces.sources.app.remote_url, remote);
+  }
+});
+
+test("runSetup rejects credentialed remote Git URLs before writing config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-remote-creds-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  await assert.rejects(
+    () => runSetup({
+      configPath,
+      fizzy: fakeFizzy(),
+      runner: fakeRunner(),
+      account: "acct_1",
+      selectedBoardIds: ["board_1"],
+      workspaceRepo: "https://user:secret@example.test/owner/repo.git",
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => {
+      assert.equal(error.code, "CONFIG_INVALID_WORKSPACE_SOURCE");
+      assert.equal(error.details.value, "https://example.test/owner/repo.git");
+      assert.equal(JSON.stringify(error).includes("secret"), false);
+      return true;
+    }
+  );
+
+  await assert.rejects(() => readFile(configPath, "utf8"));
+});
+
+test("loadConfig rejects credentialed remote Git URLs with redacted details", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-config-remote-creds-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  await mkdir(join(dir, ".fizzy-symphony"));
+  await writeFile(configPath, [
+    "fizzy:",
+    "  token: $FIZZY_API_TOKEN",
+    "  account: acct_1",
+    "boards:",
+    "  entries:",
+    "    - id: board_1",
+    "workspaces:",
+    "  source_cache_root: .cache/sources",
+    "  sources:",
+    "    app:",
+    "      type: git_remote",
+    "      remote_url: https://user:secret@example.test/owner/repo.git",
+    "      base_ref: main",
+    "      fetch_depth: 0",
+    "      auth: auto",
+    "  registry:",
+    "    app:",
+    "      source: app",
+    "safety:",
+    "  allowed_roots:",
+    "    - .cache/sources",
+    ""
+  ].join("\n"), "utf8");
+
+  await assert.rejects(
+    () => loadConfig(configPath, { env: { FIZZY_API_TOKEN: "token" } }),
+    (error) => {
+      assert.equal(error.code, "CONFIG_INVALID_WORKSPACE_SOURCE");
+      assert.equal(error.details.value, "https://example.test/owner/repo.git");
+      assert.equal(JSON.stringify(error).includes("secret"), false);
+      return true;
+    }
+  );
 });
 
 test("runSetup manages webhooks by listing, creating, updating, and reactivating without requiring an optional secret", async () => {

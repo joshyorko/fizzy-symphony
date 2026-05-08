@@ -16,6 +16,7 @@ import {
 import { runDashboardCommand } from "../src/dashboard.js";
 import { startDaemon } from "../src/daemon.js";
 import { FizzySymphonyError, isFizzySymphonyError } from "../src/errors.js";
+import { isRemoteGitUrl } from "../src/git-source-cache.js";
 import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
@@ -136,10 +137,11 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
 
   const prompts = await promptProvider(io);
   const env = await envWithCliOverrides(baseEnv, args, {
-    dotenvBasePath: optionValue(args, "--workspace-repo") ?? ".",
+    dotenvBasePath: setupDotenvBaseForArgs(args, baseEnv, configPath),
     promptForCredentials: commandOptions.promptForCredentials,
     prompts
   });
+  const workspaceRepo = workspaceRepoForArgs(args, env);
   const dependencyConfig = resolveFizzyClientConfig({
     config: { runner: { preferred: "cli_app_server" } },
     env
@@ -161,9 +163,11 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     reasoningEffort: reasoningEffortForArgs(args, env),
     maxAgents: maxAgentsForArgs(args, env),
     workspaceMode: workspaceModeForArgs(args),
-    workspaceRepo: optionValue(args, "--workspace-repo") ?? ".",
+    workspaceRepo,
+    workspaceRepoRef: workspaceRepoRefForArgs(args, env),
+    sourceCacheRoot: sourceCacheRootForArgs(args, env),
     starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
-    workflowPolicy: await workflowPolicyForArgs(args, prompts, optionValue(args, "--workspace-repo") ?? "."),
+    workflowPolicy: await workflowPolicyForArgs(args, prompts, workspaceRepo),
     createSmokeTestCard: args.includes("--smoke-card"),
     botUserId: optionValue(args, "--bot-user-id") ?? undefined,
     webhook: webhookOptions(args)
@@ -379,6 +383,35 @@ function boardValues(args) {
   return values.length > 0 ? values : undefined;
 }
 
+function setupDotenvBaseForArgs(args, env, configPath) {
+  const repo = explicitWorkspaceRepoForArgs(args) ?? firstNonEmpty(env.FIZZY_SYMPHONY_REPO);
+  if (nonEmpty(repo) && !isRemoteGitUrl(repo)) return repo;
+  return envBaseForConfig(configPath);
+}
+
+function explicitWorkspaceRepoForArgs(args) {
+  return optionValue(args, "--repo") ??
+    optionValue(args, "--git-repo") ??
+    optionValue(args, "--workspace-repo");
+}
+
+function workspaceRepoForArgs(args, env = process.env) {
+  return explicitWorkspaceRepoForArgs(args) ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_REPO) ??
+    ".";
+}
+
+function workspaceRepoRefForArgs(args, env = process.env) {
+  return optionValue(args, "--ref") ??
+    optionValue(args, "--repo-ref") ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_REPO_REF);
+}
+
+function sourceCacheRootForArgs(args, env = process.env) {
+  return optionValue(args, "--source-cache") ??
+    firstNonEmpty(env.FIZZY_SYMPHONY_SOURCE_CACHE);
+}
+
 function setupModeForArgs(args, defaultMode) {
   if (args.includes("--starter") || args.includes("--new-board")) return "create_starter";
   if (args.includes("--adopt-starter")) return "adopt_starter";
@@ -443,6 +476,7 @@ function setupCommandOptionsForArgs(args) {
 }
 
 async function workflowPolicyForArgs(args, prompts, workspaceRepo) {
+  if (isRemoteGitUrl(workspaceRepo)) return { action: "skip" };
   if (args.includes("--create-starter-workflow") || args.includes("--starter-workflow")) return { action: "create" };
   if (args.includes("--augment-workflow")) return { action: "append" };
   if (args.includes("--no-workflow-change")) return { action: "skip" };
@@ -452,6 +486,7 @@ async function workflowPolicyForArgs(args, prompts, workspaceRepo) {
 }
 
 async function promptWorkflowPolicy(prompts, workspaceRepo) {
+  if (isRemoteGitUrl(workspaceRepo)) return { action: "skip" };
   const workflowPath = join(workspaceRepo, "WORKFLOW.md");
   const exists = await pathExists(workflowPath);
   if (prompts?.confirmWorkflowPolicy) {
@@ -766,9 +801,9 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
-    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--workspace-repo path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow]",
+    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow]",
     "  fizzy-symphony setup --template-only [--config path]",
-    "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--workspace-repo path] [--augment-workflow|--no-workflow-change]",
+    "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--repo url|--git-repo url|--workspace-repo path-or-url] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",
     "  fizzy-symphony start [--config path]",
     "  fizzy-symphony daemon [--config path]",
