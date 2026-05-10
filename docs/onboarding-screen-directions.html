@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fizzy-symphony Onboarding Directions</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #5b6575;
+      --line: #d9dee8;
+      --surface: #ffffff;
+      --page: #f5f7fb;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --green: #15803d;
+      --red: #d94b45;
+      --gold: #b7791f;
+      --violet: #7c3aed;
+      --shadow: 0 18px 48px rgba(23, 32, 51, 0.10);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+    }
+
+    main {
+      width: min(1720px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 44px;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand img {
+      width: 54px;
+      height: 54px;
+      object-fit: contain;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(1.6rem, 2.2vw, 2.4rem);
+      line-height: 1.05;
+    }
+
+    .page-header p {
+      color: var(--muted);
+      margin-top: 8px;
+      max-width: 760px;
+      line-height: 1.45;
+    }
+
+    .note {
+      width: min(420px, 40vw);
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 12px 14px;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.35;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(360px, 1fr));
+      gap: 18px;
+    }
+
+    .concept {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .concept-meta {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+    }
+
+    .concept-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .concept h2 {
+      font-size: 1rem;
+      line-height: 1.2;
+    }
+
+    .density {
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .tradeoff {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.35;
+    }
+
+    .screen {
+      min-height: 560px;
+      padding: 18px;
+      background: #fff;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button,
+    .button {
+      border: 0;
+      border-radius: 7px;
+      padding: 9px 12px;
+      background: var(--ink);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      line-height: 1;
+      min-height: 36px;
+    }
+
+    .secondary {
+      background: #eef2f7;
+      color: var(--ink);
+      border: 1px solid #d8dee9;
+    }
+
+    .tiny {
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+
+    .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #eef2f7;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      min-width: 0;
+    }
+
+    .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    .split-wizard {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 18px;
+      height: 100%;
+      color: #102033;
+    }
+
+    .wizard-nav {
+      border-right: 1px solid #dbe3ef;
+      padding-right: 16px;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+    }
+
+    .wizard-logo {
+      width: 42px;
+      height: 42px;
+      object-fit: contain;
+    }
+
+    .wizard-step {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 8px 0;
+    }
+
+    .step-dot {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #dbeafe;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+
+    .wizard-step strong,
+    .setup-card strong,
+    .board-row strong,
+    .console-row strong,
+    .safety-row strong {
+      display: block;
+      font-size: 0.87rem;
+      line-height: 1.25;
+    }
+
+    .wizard-step span,
+    .setup-card span,
+    .board-row span,
+    .console-row span,
+    .safety-row span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.3;
+      margin-top: 2px;
+    }
+
+    .wizard-main {
+      display: grid;
+      align-content: start;
+      gap: 18px;
+    }
+
+    .wizard-main h3,
+    .board-first h3,
+    .operator h3,
+    .safety h3,
+    .choice h3,
+    .lab h3 {
+      font-size: 1.45rem;
+      line-height: 1.08;
+    }
+
+    .setup-options {
+      display: grid;
+      gap: 10px;
+    }
+
+    .setup-card {
+      border: 1px solid #dbe3ef;
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .setup-card.selected {
+      border-color: var(--blue);
+      background: #eff6ff;
+    }
+
+    .mini-review {
+      border-top: 1px solid #dbe3ef;
+      padding-top: 12px;
+      display: grid;
+      gap: 6px;
+      font-size: 0.82rem;
+    }
+
+    .mini-review div {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .board-first {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+      height: 100%;
+    }
+
+    .board-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid #dce5e7;
+      padding-bottom: 12px;
+    }
+
+    .board-columns {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      min-height: 340px;
+    }
+
+    .column {
+      border: 1px solid #dce5e7;
+      border-radius: 8px;
+      background: #f8fbfb;
+      padding: 8px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .column h4 {
+      margin: 0;
+      font-size: 0.78rem;
+      color: #284a50;
+      line-height: 1.2;
+    }
+
+    .board-card {
+      background: #fff;
+      border: 1px solid #d6e1e3;
+      border-radius: 7px;
+      padding: 8px;
+      min-height: 58px;
+      display: grid;
+      gap: 6px;
+      font-size: 0.78rem;
+      line-height: 1.25;
+    }
+
+    .golden-card {
+      border-color: var(--gold);
+      background: #fff8e6;
+    }
+
+    .board-row {
+      border: 1px solid #cddadc;
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .operator {
+      background: #111827;
+      color: #eef4ff;
+      border-radius: 8px;
+      min-height: 524px;
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 16px;
+    }
+
+    .operator p,
+    .operator .tiny,
+    .operator span {
+      color: #aab6c6;
+    }
+
+    .terminal-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: #c5d2e1;
+      font-size: 0.78rem;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #2b3547;
+    }
+
+    .console-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .console-row {
+      border: 1px solid #2d384b;
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 76px;
+      background: #172235;
+    }
+
+    .status-ok {
+      color: #86efac;
+    }
+
+    .command-box {
+      background: #08111f;
+      border: 1px solid #263247;
+      border-radius: 8px;
+      padding: 10px;
+      color: #cfe4ff;
+      font-size: 0.82rem;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .safety {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 14px;
+      height: 100%;
+    }
+
+    .safety h3 {
+      max-width: 430px;
+    }
+
+    .review-panel {
+      border: 2px solid #f3c4bf;
+      background: #fff7f6;
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .safety-row {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border-top: 1px solid #f0d1cd;
+      padding-top: 10px;
+    }
+
+    .safety-row:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .safety-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #ffe1dc;
+      color: var(--red);
+      font-weight: 900;
+      font-size: 0.8rem;
+    }
+
+    .diff {
+      display: grid;
+      gap: 7px;
+      font-size: 0.82rem;
+    }
+
+    .diff-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      background: #fff;
+      border: 1px solid #efcfca;
+      min-width: 0;
+    }
+
+    .choice {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+      min-height: 524px;
+    }
+
+    .choice-lanes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .lane {
+      border: 1px solid #dce1e8;
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .lane.create {
+      border-top: 5px solid var(--green);
+    }
+
+    .lane.adopt {
+      border-top: 5px solid var(--violet);
+    }
+
+    .lane h4 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .lane-list {
+      display: grid;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      align-content: start;
+    }
+
+    .lane-list div {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 8px;
+    }
+
+    .mini-board {
+      border: 1px solid #dce1e8;
+      border-radius: 8px;
+      padding: 8px;
+      display: grid;
+      gap: 6px;
+      background: #fafcff;
+      min-height: 120px;
+      align-content: start;
+    }
+
+    .mini-line {
+      height: 18px;
+      border-radius: 5px;
+      background: #e7edf5;
+    }
+
+    .mini-line.short {
+      width: 64%;
+    }
+
+    .lab {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 14px;
+      height: 100%;
+    }
+
+    .lab-hero {
+      border: 1px solid #dce4f1;
+      border-radius: 8px;
+      padding: 14px;
+      background: #f8fbff;
+      display: grid;
+      gap: 10px;
+    }
+
+    .run-track {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .run-step {
+      border: 1px solid #dce4f1;
+      border-radius: 8px;
+      padding: 9px;
+      display: grid;
+      gap: 6px;
+      min-height: 94px;
+      background: #fff;
+      font-size: 0.78rem;
+      line-height: 1.25;
+      min-width: 0;
+    }
+
+    .run-step b {
+      color: var(--blue);
+    }
+
+    .evidence {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .evidence div {
+      border: 1px solid #dce4f1;
+      border-radius: 8px;
+      padding: 9px;
+      background: #fff;
+      min-height: 72px;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      text-align: center;
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 1280px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(340px, 1fr));
+      }
+    }
+
+    @media (max-width: 840px) {
+      main {
+        width: min(100% - 20px, 620px);
+        padding-top: 18px;
+      }
+
+      .page-header {
+        display: grid;
+      }
+
+      .note {
+        width: 100%;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .screen {
+        min-height: auto;
+      }
+
+      .split-wizard,
+      .choice-lanes {
+        grid-template-columns: 1fr;
+      }
+
+      .wizard-nav {
+        border-right: 0;
+        border-bottom: 1px solid #dbe3ef;
+        padding-right: 0;
+        padding-bottom: 12px;
+      }
+
+      .board-columns,
+      .console-grid,
+      .run-track,
+      .evidence {
+        grid-template-columns: 1fr;
+      }
+
+      .safety-row {
+        grid-template-columns: 28px 1fr;
+      }
+
+      .safety-row .pill {
+        grid-column: 2;
+        justify-self: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div class="brand">
+        <img src="assets/fizzy-symphony-logo.png" alt="fizzy-symphony logo">
+        <div>
+          <h1>Onboarding Screen Directions</h1>
+          <p>Six intentionally different first-run screens for fizzy-symphony. Each option keeps the visible board, golden ticket, setup review, and daemon status model in front of the user.</p>
+        </div>
+      </div>
+      <div class="note">Use this as a comparison board, not final UI. The strongest direction depends on whether onboarding should optimize for confidence, speed, operator control, or board comprehension.</div>
+    </header>
+
+    <section class="grid" aria-label="Six onboarding screen approaches">
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>1. Guided App Setup</h2>
+            <span class="density">Balanced</span>
+          </div>
+          <p class="tradeoff">Tradeoff: lowest anxiety and clearest next step, but it hides advanced setup until later.</p>
+        </div>
+        <div class="screen">
+          <div class="split-wizard">
+            <aside class="wizard-nav" aria-label="Setup steps">
+              <img class="wizard-logo" src="assets/fizzy-symphony-logo.png" alt="">
+              <div>
+                <div class="label">fizzy-symphony setup</div>
+                <h3>Make this repo agent-ready</h3>
+              </div>
+              <div class="wizard-step">
+                <div class="step-dot">1</div>
+                <div><strong>Connect Fizzy</strong><span>Use your API URL and token.</span></div>
+              </div>
+              <div class="wizard-step">
+                <div class="step-dot">2</div>
+                <div><strong>Choose board path</strong><span>Create a starter board or adopt one.</span></div>
+              </div>
+              <div class="wizard-step">
+                <div class="step-dot">3</div>
+                <div><strong>Review changes</strong><span>Nothing mutates until you approve.</span></div>
+              </div>
+              <div class="wizard-step">
+                <div class="step-dot">4</div>
+                <div><strong>Start watching</strong><span>Run the daemon and open dashboard.</span></div>
+              </div>
+            </aside>
+            <section class="wizard-main">
+              <div>
+                <span class="pill">Recommended for first run</span>
+                <h3>Start with a clean starter board.</h3>
+              </div>
+              <div class="setup-options">
+                <div class="setup-card selected">
+                  <strong>Create starter board</strong>
+                  <span>Builds Ready for Agents, Done, and one Repo Agent golden card.</span>
+                </div>
+                <div class="setup-card">
+                  <strong>Use existing board</strong>
+                  <span>Connects a board that already has a golden ticket route.</span>
+                </div>
+              </div>
+              <div class="mini-review">
+                <div><span>Model</span><strong>gpt-5.5 / medium</strong></div>
+                <div><span>Max agents</span><strong>1 active card</strong></div>
+                <div><span>Workspace</span><strong>protected git worktrees</strong></div>
+                <div><span>Config</span><strong class="mono">.fizzy-symphony/config.yml</strong></div>
+              </div>
+              <div class="button-row">
+                <button>Create starter board</button>
+                <button class="secondary">Advanced</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>2. Board-First Map</h2>
+            <span class="density">Visual</span>
+          </div>
+          <p class="tradeoff">Tradeoff: best mental model for Fizzy users, but setup feels less like a normal installer.</p>
+        </div>
+        <div class="screen">
+          <div class="board-first">
+            <div class="board-toolbar">
+              <div>
+                <div class="label">The board is the UI</div>
+                <h3>Route one card before running agents.</h3>
+              </div>
+              <span class="pill">Starter preview</span>
+            </div>
+            <div class="board-columns">
+              <div class="column">
+                <h4>Not Now</h4>
+                <div class="board-card">Parking lot cards stay untouched.</div>
+              </div>
+              <div class="column">
+                <h4>Maybe?</h4>
+                <div class="board-card">Ideas wait here until promoted.</div>
+              </div>
+              <div class="column">
+                <h4>Ready for Agents</h4>
+                <div class="board-card golden-card">
+                  <strong>Repo Agent</strong>
+                  <span class="tiny">#agent-instructions #codex #move-to-done</span>
+                </div>
+                <div class="board-card">Normal task cards go here.</div>
+              </div>
+              <div class="column">
+                <h4>Done</h4>
+                <div class="board-card">Completed cards land here after proof.</div>
+              </div>
+            </div>
+            <div class="board-row">
+              <div>
+                <strong>Golden card defines the route.</strong>
+                <span>Normal cards are work requests. WORKFLOW.md is optional repo policy.</span>
+              </div>
+              <button>Use this board</button>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>3. Operator Console</h2>
+            <span class="density">Dense</span>
+          </div>
+          <p class="tradeoff">Tradeoff: most transparent for power users, but too technical for a first-time happy path.</p>
+        </div>
+        <div class="screen">
+          <div class="operator">
+            <div class="terminal-bar">
+              <strong>fizzy-symphony setup</strong>
+              <span class="mono">repo: ./fizzy-symphony</span>
+            </div>
+            <div>
+              <div class="label">Preflight</div>
+              <h3>Ready to write operator config.</h3>
+            </div>
+            <div class="console-grid">
+              <div class="console-row"><strong class="status-ok">Fizzy identity</strong><span>Account visible, API reachable.</span></div>
+              <div class="console-row"><strong class="status-ok">Codex runner</strong><span>CLI app-server runner available.</span></div>
+              <div class="console-row"><strong>Boards</strong><span>3 boards found, starter board selected.</span></div>
+              <div class="console-row"><strong>Routes</strong><span>Ready for Agents -> Done via codex.</span></div>
+              <div class="console-row"><strong>Source safety</strong><span>Dirty source repos are skipped.</span></div>
+              <div class="console-row"><strong>Daemon status</strong><span>Dashboard will read /status only.</span></div>
+            </div>
+            <div class="command-box mono">
+              Write .fizzy-symphony/config.yml<br>
+              Create starter board "Agent Playground: fizzy-symphony"<br>
+              Leave WORKFLOW.md unchanged<br>
+              Start with: fizzy-symphony start --config .fizzy-symphony/config.yml
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>4. Trust Review</h2>
+            <span class="density">Cautious</span>
+          </div>
+          <p class="tradeoff">Tradeoff: strongest safety story, but slows down users who just want the default path.</p>
+        </div>
+        <div class="screen">
+          <div class="safety">
+            <div>
+              <span class="pill">No silent changes</span>
+              <h3>Approve exactly what setup is about to change.</h3>
+            </div>
+            <p class="tiny">This direction makes trust the product: every mutation is named before anything is created or written.</p>
+            <div class="review-panel">
+              <div class="safety-row">
+                <div class="safety-icon">1</div>
+                <div><strong>Create starter board</strong><span>Agent Playground: fizzy-symphony</span></div>
+                <span class="pill">Fizzy</span>
+              </div>
+              <div class="safety-row">
+                <div class="safety-icon">2</div>
+                <div><strong>Create Repo Agent golden card</strong><span>Tags: agent-instructions, codex, move-to-done</span></div>
+                <span class="pill">Fizzy</span>
+              </div>
+              <div class="safety-row">
+                <div class="safety-icon">3</div>
+                <div><strong>Write compact config</strong><span class="mono">.fizzy-symphony/config.yml</span></div>
+                <span class="pill">Repo</span>
+              </div>
+              <div class="safety-row">
+                <div class="safety-icon">4</div>
+                <div><strong>Keep WORKFLOW.md unchanged</strong><span>No prompt default silently creates policy files.</span></div>
+                <span class="pill">Repo</span>
+              </div>
+            </div>
+            <div>
+              <div class="diff">
+                <div class="diff-line"><span>Token storage</span><strong>env reference only</strong></div>
+                <div class="diff-line"><span>Source protection</span><strong>enabled</strong></div>
+                <div class="diff-line"><span>Dispatch</span><strong>starts only after start</strong></div>
+              </div>
+              <div class="button-row" style="margin-top: 12px;">
+                <button style="background: var(--red);">Apply changes</button>
+                <button class="secondary">Back</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>5. Two-Lane Choice</h2>
+            <span class="density">Decisive</span>
+          </div>
+          <p class="tradeoff">Tradeoff: makes starter vs existing obvious, but adds one explicit decision up front.</p>
+        </div>
+        <div class="screen">
+          <div class="choice">
+            <div>
+              <div class="label">Choose your route</div>
+              <h3>Are we creating a workflow surface or adopting one?</h3>
+            </div>
+            <div class="choice-lanes">
+              <section class="lane create">
+                <span class="pill">Fastest first run</span>
+                <h4>Create starter board</h4>
+                <div class="mini-board" aria-label="Starter board sketch">
+                  <div class="mini-line"></div>
+                  <div class="mini-line short"></div>
+                  <div class="mini-line"></div>
+                </div>
+                <div class="lane-list">
+                  <div><strong>1</strong><span>Create columns and golden ticket</span></div>
+                  <div><strong>2</strong><span>Pin Codex model and max agents</span></div>
+                  <div><strong>3</strong><span>Write config, then start daemon</span></div>
+                </div>
+                <button style="background: var(--green);">Create starter</button>
+              </section>
+              <section class="lane adopt">
+                <span class="pill">For existing teams</span>
+                <h4>Adopt existing board</h4>
+                <div class="mini-board" aria-label="Existing board sketch">
+                  <div class="mini-line short"></div>
+                  <div class="mini-line"></div>
+                  <div class="mini-line short"></div>
+                </div>
+                <div class="lane-list">
+                  <div><strong>1</strong><span>List boards visible to the token</span></div>
+                  <div><strong>2</strong><span>Verify golden card route shape</span></div>
+                  <div><strong>3</strong><span>Write config without changing board</span></div>
+                </div>
+                <button style="background: var(--violet);">Adopt board</button>
+              </section>
+            </div>
+            <p class="tiny">Best when the user already understands Fizzy boards and wants to pick the setup mode before any details.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-meta">
+          <div class="concept-topline">
+            <h2>6. First-Run Lab</h2>
+            <span class="density">Proof-led</span>
+          </div>
+          <p class="tradeoff">Tradeoff: builds confidence by showing the smoke path, but makes onboarding feel more like a test harness.</p>
+        </div>
+        <div class="screen">
+          <div class="lab">
+            <div class="lab-hero">
+              <span class="pill">Disposable starter board</span>
+              <h3>Prove one card end to end before trusting automation.</h3>
+              <p class="tiny">The user sees the exact smoke loop they will run after setup: card in, worktree out, result back on the board.</p>
+            </div>
+            <div class="run-track" aria-label="First run sequence">
+              <div class="run-step"><b>1</b><strong>Create board</strong><span class="tiny">Starter columns plus Repo Agent.</span></div>
+              <div class="run-step"><b>2</b><strong>Add task card</strong><span class="tiny">Normal card in Ready for Agents.</span></div>
+              <div class="run-step"><b>3</b><strong>Claim</strong><span class="tiny">Daemon marks the card.</span></div>
+              <div class="run-step"><b>4</b><strong>Run Codex</strong><span class="tiny">Protected git worktree.</span></div>
+              <div class="run-step"><b>5</b><strong>Move Done</strong><span class="tiny">Comment, tag, and completion route.</span></div>
+            </div>
+            <div class="evidence">
+              <div><strong>0 dirty files</strong><span class="tiny">outside setup state</span></div>
+              <div><strong>1 active agent</strong><span class="tiny">starter default</span></div>
+              <div><strong>/status ready</strong><span class="tiny">dashboard observer</span></div>
+            </div>
+            <div class="button-row">
+              <button>Run setup lab</button>
+              <button class="secondary">Skip smoke</button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

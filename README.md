@@ -50,11 +50,16 @@ node bin/fizzy-symphony.js status
 npm test
 ```
 
-`setup` is the primary first-run command. Plain guided setup asks for missing Fizzy URL/token
-values, creates a starter board by default, previews mutating actions, and writes the compact
-operator config to `.fizzy-symphony/config.yml`. Use `--mode existing --board BOARD_ID` to wire an
-existing board, or `--adopt-starter --board BOARD_ID` when the board already has the starter route.
-`init` remains as a deprecated compatibility alias for `setup`.
+`setup` is the primary first-run command. In a real terminal, guided setup uses the Terminal Kit TUI
+to ask for missing Fizzy URL/token values, choose the starter-board or existing-board lane, preview
+mutating actions, and write the compact operator config to `.fizzy-symphony/config.yml`. Use
+`--mode existing --board BOARD_ID` to wire an existing board, `--mode create-starter` for a scripted
+starter-board run, or `--adopt-starter --board BOARD_ID` when the board already has the starter
+route. `init` remains as a deprecated compatibility alias for `setup`.
+
+Non-TTY setup is never an implicit wizard. In CI, redirected shells, and dumb terminals, pass the
+scripted setup flags explicitly or use `setup --template-only --config PATH` when you only need the
+annotated config template.
 
 Use `fizzy-symphony boards` before `setup --mode existing` when you already have a Fizzy board. It
 prints the real boards, columns, and golden cards the token can see, without constructing a runner or

@@ -391,6 +391,39 @@ test("runSetup rejects invalid max agents before creating remote starter resourc
   assert.equal(fizzy.calls.some((call) => call[0] === "createBoard"), false);
 });
 
+test("runSetup cancels create-starter setup before workflow, board, or config mutations", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-cancel-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeStarterFizzy();
+  const plans = [];
+
+  await assert.rejects(
+    () => runSetup({
+      configPath,
+      fizzy,
+      runner: fakeRunner(),
+      account: "acct_1",
+      setupMode: "create_starter",
+      starterBoardName: "Agent Playground: repo",
+      workspaceRepo: dir,
+      workflowPolicy: { action: "create" },
+      prompts: {
+        async confirmSetupMutations(plan) {
+          plans.push(plan);
+          return false;
+        }
+      },
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => error.code === "SETUP_MUTATION_CANCELLED"
+  );
+
+  assert.deepEqual(plans.map((plan) => plan.mutations), [["create_workflow", "create_starter_board", "write_config"]]);
+  assert.equal(fizzy.calls.some((call) => call[0] === "createBoard"), false);
+  await assert.rejects(() => readFile(join(dir, "WORKFLOW.md"), "utf8"));
+  await assert.rejects(() => readFile(configPath, "utf8"));
+});
+
 test("runSetup creates starter WORKFLOW.md only when workflow policy says create", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-workflow-create-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");

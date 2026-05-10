@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { access, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { main as cliMain } from "../bin/fizzy-symphony.js";
@@ -13,7 +12,7 @@ import { writeAnnotatedConfig } from "../src/config.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/fizzy-symphony.js", import.meta.url));
 
-test("public setup creates a starter workflow, starter board config, and human next steps when explicitly requested", async () => {
+test("explicit scripted setup creates a starter workflow and starter board config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
   const calls = [];
@@ -27,6 +26,8 @@ test("public setup creates a starter workflow, starter board config, and human n
     configPath,
     "--workspace-repo",
     dir,
+    "--mode",
+    "create-starter",
     "--create-starter-workflow",
     "--api-url",
     "https://fizzy.example.test"
@@ -45,12 +46,14 @@ test("public setup creates a starter workflow, starter board config, and human n
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  const plainStdout = stripAnsi(result.stdout);
-  assert.match(plainStdout, /FIZZY SYMPHONY/u);
-  assert.equal(plainStdout.indexOf("FIZZY SYMPHONY") < plainStdout.indexOf("fizzy-symphony is ready"), true);
-  assert.match(result.stdout, /fizzy-symphony is ready/u);
-  assert.match(result.stdout, /fizzy-symphony start --config/u);
-  assert.match(result.stdout, /Create a normal Fizzy card in Ready for Agents/u);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    ok: true,
+    path: configPath,
+    account: "acct_1",
+    boards: ["starter_board"],
+    runner: "cli_app_server",
+    warnings: []
+  });
   assert.deepEqual(calls, [
     ["createFizzyClient", "https://fizzy.example.test", true],
     ["createRunner", "cli_app_server"]
@@ -82,6 +85,7 @@ test("public init delegates to setup with a deprecation warning", async () => {
     "https://fizzy.example.test"
   ], {
     env: {},
+    prompts: {},
     clientFactories: {
       createFizzyClient() {
         return fakeStarterSetupFizzy();
@@ -98,8 +102,78 @@ test("public init delegates to setup with a deprecation warning", async () => {
   assert.match(stripAnsi(result.stdout), /fizzy-symphony is ready/u);
 });
 
-test("public setup defaults to the guided starter flow when no existing board is selected", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-guided-"));
+test("public init follows the guided setup TTY requirement", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-init-non-tty-"));
+  const result = await runCli([
+    "init",
+    "--config",
+    join(dir, ".fizzy-symphony", "config.yml"),
+    "--workspace-repo",
+    dir
+  ], {
+    env: {
+      TERM: "dumb",
+      FIZZY_API_URL: "https://fizzy.example.test",
+      FIZZY_API_TOKEN: "token-from-env"
+    },
+    clientFactories: {
+      createFizzyClient() {
+        throw new Error("non-TTY init should fail before constructing clients");
+      },
+      createRunner() {
+        throw new Error("non-TTY init should fail before constructing clients");
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /SETUP_TTY_REQUIRED/u);
+});
+
+test("implicit guided setup fails in non-TTY before setup mutations", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-non-tty-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeStarterSetupFizzy();
+  const createCalls = [];
+  const createBoard = fizzy.createBoard;
+  fizzy.createBoard = async (request) => {
+    createCalls.push(request);
+    return createBoard(request);
+  };
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir
+  ], {
+    env: {
+      TERM: "dumb",
+      FIZZY_API_URL: "https://fizzy.example.test",
+      FIZZY_API_TOKEN: "token-from-env"
+    },
+    clientFactories: {
+      createFizzyClient() {
+        return fizzy;
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /SETUP_TTY_REQUIRED/u);
+  assert.equal(createCalls.length, 0);
+  await assert.rejects(() => access(configPath), { code: "ENOENT" });
+  await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
+});
+
+test("explicit scripted setup can create a starter board in non-TTY", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-scripted-starter-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
 
   const result = await runCli([
@@ -108,6 +182,9 @@ test("public setup defaults to the guided starter flow when no existing board is
     configPath,
     "--workspace-repo",
     dir,
+    "--mode",
+    "create-starter",
+    "--no-workflow-change",
     "--model",
     "gpt-5.4",
     "--reasoning-effort",
@@ -131,13 +208,7 @@ test("public setup defaults to the guided starter flow when no existing board is
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  const plainStdout = stripAnsi(result.stdout);
-  assert.match(plainStdout, /FIZZY SYMPHONY/u);
-  assert.match(plainStdout, /fizzy-symphony is ready/u);
-  assert.match(plainStdout, /fizzy-symphony start --config/u);
-  assert.match(plainStdout, /Model\s+gpt-5\.4/u);
-  assert.match(plainStdout, /Reasoning\s+high/u);
-  assert.match(plainStdout, /Max agents\s+3/u);
+  assert.deepEqual(JSON.parse(result.stdout).boards, ["starter_board"]);
 
   await assert.rejects(() => access(join(dir, "WORKFLOW.md")), { code: "ENOENT" });
 
@@ -151,7 +222,7 @@ test("public setup defaults to the guided starter flow when no existing board is
   assert.doesNotMatch(generatedConfig, /terminate_timeout_ms/u);
 });
 
-test("guided setup can ask for model, reasoning, max agents, and workspace mode", async () => {
+test("setup prompt seam can ask for model, reasoning, max agents, and workspace mode", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-default-prompts-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
   const prompts = [];
@@ -162,6 +233,8 @@ test("guided setup can ask for model, reasoning, max agents, and workspace mode"
     configPath,
     "--workspace-repo",
     dir,
+    "--mode",
+    "create-starter",
     "--api-url",
     "https://fizzy.example.test",
     "--token",
@@ -196,10 +269,7 @@ test("guided setup can ask for model, reasoning, max agents, and workspace mode"
   assert.equal(prompts[0].maxAgents, 1);
   assert.equal(prompts[0].workspaceMode, "protected_worktree");
 
-  const plainStdout = stripAnsi(result.stdout);
-  assert.match(plainStdout, /Reasoning\s+xhigh/u);
-  assert.match(plainStdout, /Max agents\s+4/u);
-  assert.match(plainStdout, /Workspace\s+no dispatch/u);
+  assert.deepEqual(JSON.parse(result.stdout).boards, ["starter_board"]);
 
   const generatedConfig = await readFile(configPath, "utf8");
   assert.match(generatedConfig, /default_model: gpt-5\.5/u);
@@ -207,6 +277,43 @@ test("guided setup can ask for model, reasoning, max agents, and workspace mode"
   assert.match(generatedConfig, /max_concurrent: 4/u);
   assert.match(generatedConfig, /diagnostics:/u);
   assert.match(generatedConfig, /no_dispatch: true/u);
+});
+
+test("explicit scripted setup can adopt an existing starter route in non-TTY", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-adopt-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  const result = await runCli([
+    "setup",
+    "--adopt-starter",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--board",
+    "board_1",
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).boards, ["board_1"]);
+
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /id: board_1/u);
+  assert.match(generatedConfig, /max_concurrent: 1/u);
 });
 
 test("public setup does not require or create WORKFLOW.md without an explicit workflow flag", async () => {
@@ -219,6 +326,8 @@ test("public setup does not require or create WORKFLOW.md without an explicit wo
     configPath,
     "--workspace-repo",
     dir,
+    "--mode",
+    "create-starter",
     "--api-url",
     "https://fizzy.example.test",
     "--token",
@@ -293,10 +402,12 @@ test("guided setup prompt skips missing WORKFLOW.md by default and still creates
   assert.match(await readFile(configPath, "utf8"), /id: starter_board/u);
 });
 
-test("guided setup shows the opener and human remediation before missing credential failures", async () => {
+test("explicit scripted setup reports missing credentials without entering the TUI", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-missing-token-"));
   const result = await runCli([
     "setup",
+    "--mode",
+    "create-starter",
     "--config",
     join(dir, ".fizzy-symphony", "config.yml"),
     "--workspace-repo",
@@ -308,10 +419,10 @@ test("guided setup shows the opener and human remediation before missing credent
   });
 
   assert.equal(result.exitCode, 2);
-  assert.match(stripAnsi(result.stdout), /FIZZY SYMPHONY/u);
-  assert.doesNotMatch(result.stderr, /^\{/u);
-  assert.match(result.stderr, /Fizzy API credentials/u);
-  assert.match(result.stderr, /\.env/u);
+  assert.equal(result.stdout, "");
+  const payload = JSON.parse(result.stderr);
+  assert.equal(payload.code, "FIZZY_CREDENTIALS_MISSING");
+  assert.match(payload.details.remediation, /FIZZY_API_TOKEN/u);
 });
 
 test("guided setup can prompt for missing Fizzy URL and token", async () => {
@@ -354,41 +465,13 @@ test("guided setup can prompt for missing Fizzy URL and token", async () => {
   assert.match(await readFile(configPath, "utf8"), /api_url: https:\/\/prompted\.fizzy\.test/u);
 });
 
-test("guided setup uses terminal prompts for mutation review", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-terminal-prompts-"));
-  const configPath = join(dir, ".fizzy-symphony", "config.yml");
-  const stdin = new PassThrough();
-  stdin.isTTY = true;
-  setImmediate(() => stdin.write("yes\n"));
+test("real guided setup is wired through the Terminal Kit setup wizard provider", async () => {
+  const cli = await readFile(new URL("../bin/fizzy-symphony.js", import.meta.url), "utf8");
 
-  const result = await runCli([
-    "setup",
-    "--config",
-    configPath,
-    "--workspace-repo",
-    dir,
-    "--create-starter-workflow",
-    "--api-url",
-    "https://fizzy.example.test",
-    "--token",
-    "token-from-cli"
-  ], {
-    env: { TERM: "xterm-256color" },
-    stdin,
-    stdoutIsTTY: true,
-    clientFactories: {
-      createFizzyClient() {
-        return fakeStarterSetupFizzy();
-      },
-      createRunner() {
-        return fakeRunner();
-      }
-    }
-  });
-
-  assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(stripAnsi(result.stdout), /Review setup changes/u);
-  assert.match(await readFile(configPath, "utf8"), /id: starter_board/u);
+  assert.match(cli, /isImplicitGuidedSetupArgs/u);
+  assert.match(cli, /setupWizardPromptProvider/u);
+  assert.match(cli, /createSetupWizardPromptProvider/u);
+  assert.doesNotMatch(cli, /createInterface|terminalPrompts|@clack\/prompts/u);
 });
 
 test("public help exits successfully", async () => {
@@ -542,6 +625,7 @@ test("public init animates the opener on an interactive terminal", async () => {
     "https://fizzy.example.test"
   ], {
     env: { TERM: "xterm-256color", FIZZY_SYMPHONY_ANIM: "paint" },
+    prompts: {},
     stdoutIsTTY: true,
     openerFrameDelayMs: 0,
     clientFactories: {
@@ -579,6 +663,7 @@ test("public init keeps dumb terminals static", async () => {
     "https://fizzy.example.test"
   ], {
     env: { TERM: "dumb", FIZZY_SYMPHONY_ANIM: "pop" },
+    prompts: {},
     stdoutIsTTY: true,
     openerFrameDelayMs: 0,
     clientFactories: {

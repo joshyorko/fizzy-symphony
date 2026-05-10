@@ -218,126 +218,6 @@ export function createHumanDaemonLogger(io, options = {}) {
   };
 }
 
-export async function createClackPromptProvider(io, env = process.env) {
-  if (!shouldUseClackPrompts(io, env)) return null;
-  const prompts = await import("@clack/prompts").catch(() => null);
-  if (!prompts) return null;
-
-  return {
-    async input(prompt) {
-      const value = prompt.secret
-        ? await prompts.password({ message: prompt.message })
-        : await prompts.text({
-          message: prompt.message,
-          placeholder: prompt.defaultValue,
-          defaultValue: prompt.defaultValue
-        });
-      return cancelToEmpty(prompts, value);
-    },
-
-    async selectAccount(accounts = []) {
-      if (accounts.length <= 1) return null;
-      const value = await prompts.select({
-        message: "Which Fizzy account?",
-        options: accounts.map((account) => ({
-          value: account,
-          label: account.name ?? account.id ?? account.slug ?? "Account",
-          hint: account.slug ?? account.path ?? account.id
-        }))
-      });
-      return cancelToEmpty(prompts, value);
-    },
-
-    async selectBoards(boards = []) {
-      const value = await prompts.multiselect({
-        message: "Which boards should fizzy-symphony watch?",
-        required: true,
-        options: boards.map((board) => ({
-          value: board,
-          label: board.name ?? board.label ?? board.id,
-          hint: board.id
-        }))
-      });
-      return cancelToEmpty(prompts, value);
-    },
-
-    async configureSetupDefaults(defaults = {}) {
-      const defaultModel = cancelToEmpty(prompts, await prompts.text({
-        message: "Codex model",
-        placeholder: defaults.defaultModel,
-        defaultValue: defaults.defaultModel
-      })) || defaults.defaultModel;
-      const reasoningEffort = cancelToEmpty(prompts, await prompts.select({
-        message: "Codex reasoning effort",
-        options: (defaults.reasoningEfforts ?? ["low", "medium", "high", "xhigh"]).map((effort) => ({
-          value: effort,
-          label: effort,
-          hint: effort === defaults.reasoningEffort ? "default" : undefined
-        })),
-        initialValue: defaults.reasoningEffort
-      })) || defaults.reasoningEffort;
-      const maxAgents = cancelToEmpty(prompts, await prompts.text({
-        message: "Max agents",
-        placeholder: String(defaults.maxAgents ?? 1),
-        defaultValue: String(defaults.maxAgents ?? 1)
-      })) || defaults.maxAgents;
-      const workspaceMode = cancelToEmpty(prompts, await prompts.select({
-        message: "Workspace mode",
-        options: [
-          {
-            value: "protected_worktree",
-            label: "Protected git worktrees",
-            hint: "recommended; keeps card edits outside the source repo"
-          },
-          {
-            value: "no_dispatch",
-            label: "Watch only",
-            hint: "no agents run until you edit config"
-          }
-        ],
-        initialValue: defaults.workspaceMode ?? "protected_worktree"
-      })) || defaults.workspaceMode;
-
-      return { defaultModel, reasoningEffort, maxAgents, workspaceMode };
-    },
-
-    async confirmWorkflowPolicy({ exists, path }) {
-      if (exists) {
-        const value = await prompts.confirm({
-          message: `Append fizzy-symphony agent guidance to ${path}?`,
-          initialValue: false
-        });
-        return cancelToEmpty(prompts, value) ? { action: "append" } : { action: "skip" };
-      }
-
-      const value = await prompts.confirm({
-        message: `Create WORKFLOW.md for this repo?`,
-        initialValue: false
-      });
-      return cancelToEmpty(prompts, value) ? { action: "create" } : { action: "skip" };
-    },
-
-    async confirmSetupMutations(plan) {
-      prompts.note(formatSetupMutationReview(plan, { includeInstruction: false }), "Setup plan");
-      const value = await prompts.confirm({
-        message: "Apply these setup changes?",
-        initialValue: true
-      });
-      return cancelToEmpty(prompts, value);
-    }
-  };
-}
-
-export function shouldUseClackPrompts(io, env = process.env) {
-  if (env.FIZZY_SYMPHONY_PROMPTS === "plain") return false;
-  if (env.CI) return false;
-  if (env.TERM === "dumb") return false;
-  return Boolean(io.stdin?.isTTY) &&
-    Boolean(io.stdout?.isTTY) &&
-    io.stdin === process.stdin &&
-    io.stdout === process.stdout;
-}
-
 export function supportsColor(env = process.env, stream = process.stdout) {
   return Boolean(stream?.isTTY) && env.NO_COLOR === undefined && env.TERM !== "dumb";
 }
@@ -413,10 +293,6 @@ function cardCount(count) {
 
 function unique(values = []) {
   return [...new Set(values)];
-}
-
-function cancelToEmpty(prompts, value) {
-  return prompts.isCancel?.(value) ? "" : value;
 }
 
 function markForLevel(level) {

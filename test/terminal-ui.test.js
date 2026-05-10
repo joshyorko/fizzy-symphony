@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { stripAnsi } from "../src/cli-opener.js";
 import {
@@ -7,7 +8,6 @@ import {
   formatDaemonStartSummary,
   formatSetupMutationReview,
   formatSetupSuccess,
-  shouldUseClackPrompts,
   supportsColor
 } from "../src/terminal-ui.js";
 
@@ -89,15 +89,15 @@ test("human daemon logger renders dirty-source protection without JSON", () => {
   assert.match(stripAnsi(stderr), /Commit or stash/u);
 });
 
-test("clack prompts are reserved for the real interactive terminal", () => {
-  assert.equal(shouldUseClackPrompts({
-    stdin: { isTTY: true },
-    stdout: { isTTY: true }
-  }, { TERM: "xterm-256color" }), false);
-  assert.equal(shouldUseClackPrompts({
-    stdin: process.stdin,
-    stdout: process.stdout
-  }, { TERM: "dumb" }), false);
+test("setup prompt implementation is Terminal Kit-only", async () => {
+  const terminalUi = await readFile(new URL("../src/terminal-ui.js", import.meta.url), "utf8");
+  const cli = await readFile(new URL("../bin/fizzy-symphony.js", import.meta.url), "utf8");
+  const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
+
+  assert.match(packageJson, /"terminal-kit"/u);
+  assert.doesNotMatch(packageJson, /"@clack\/prompts"/u);
+  assert.doesNotMatch(terminalUi, /@clack\/prompts|createClackPromptProvider|shouldUseClackPrompts/u);
+  assert.doesNotMatch(cli, /node:readline\/promises|createInterface|terminalPrompts/u);
   assert.equal(supportsColor({ TERM: "xterm-256color" }, { isTTY: true }), true);
   assert.equal(supportsColor({ TERM: "dumb" }, { isTTY: true }), false);
 });

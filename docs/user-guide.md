@@ -23,7 +23,9 @@ That is the normal path.
 
 `setup` is the normal first-run path. `init` still works, but it is only a deprecated compatibility alias for `setup`.
 
-Interactive `setup` launches the opener, asks for any missing Fizzy URL/token values, checks Fizzy and Codex, then shows the mutating actions before it applies them. Plain guided setup creates a starter board by default and writes a compact `.fizzy-symphony/config.yml`. Non-interactive runs stay scriptable when you pass explicit flags.
+Interactive `setup` launches the opener and then uses the Terminal Kit TUI for the setup wizard. It asks for any missing Fizzy URL/token values, lets you create a starter board or adopt/wire an existing route, checks Fizzy and Codex, then shows the mutating actions before it applies them. Guided setup writes a compact `.fizzy-symphony/config.yml`.
+
+Non-interactive setup must be explicit. In CI, redirected shells, and dumb terminals, pass the scripted setup flags for the lane you want, or run `setup --template-only --config PATH` when you only need the annotated config template.
 
 `WORKFLOW.md` is optional repo policy, not the workflow source of truth. The golden card and each work card are the visible workflow. When `WORKFLOW.md` exists, fizzy-symphony adds it to agent context; when it is absent, the built-in fallback keeps setup usable.
 
@@ -107,7 +109,7 @@ If you want to use a different env file, Codex model, or reasoning effort:
 fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model> --reasoning medium
 ```
 
-If you already built a Fizzy board route yourself:
+If you already built a Fizzy board route yourself, use the explicit scripted path:
 
 ```sh
 fizzy-symphony boards
@@ -117,6 +119,12 @@ fizzy-symphony start
 
 `boards` is read-only. Use it to see the board IDs, columns, and golden cards Fizzy already has
 before you wire an existing board.
+
+If you want a non-interactive starter board setup, spell out the lane:
+
+```sh
+fizzy-symphony setup --mode create-starter --workspace-repo . --api-url https://fizzy.example.com --token "$FIZZY_API_TOKEN"
+```
 
 If the board already has the starter route and you want setup to use starter defaults:
 

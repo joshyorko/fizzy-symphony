@@ -534,13 +534,15 @@ test("CLI exposes setup template generation and parse-only validation commands",
 
 });
 
-test("CLI setup runs the live injected-client setup path", async () => {
+test("CLI setup keeps the explicit scripted existing-board path working in non-TTY", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-live-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
   const configPath = join(dir, "config.yml");
 
   const setup = await runCli([
     "setup",
+    "--mode",
+    "existing",
     "--config",
     configPath,
     "--account",
@@ -550,7 +552,7 @@ test("CLI setup runs the live injected-client setup path", async () => {
     "--workspace-repo",
     dir
   ], {
-    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    env: { ...process.env, TERM: "dumb", FIZZY_API_TOKEN: "token" },
     fizzy: fakeLiveSetupFizzy(),
     runner: fakeLiveSetupRunner()
   });

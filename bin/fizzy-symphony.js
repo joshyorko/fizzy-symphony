@@ -3,7 +3,6 @@
 import { access, readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_FIZZY_API_URL, createCliFizzyClient, createCliRunner, resolveFizzyClientConfig } from "../src/client-factories.js";
@@ -21,7 +20,6 @@ import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
 import {
-  createClackPromptProvider,
   createHumanDaemonLogger,
   formatDaemonStartSummary,
   formatSetupSuccess,
@@ -102,11 +100,7 @@ async function setupCommand(args, io) {
 
 async function initCommand(args, io) {
   io.stderr.write("fizzy-symphony init is deprecated; use `fizzy-symphony setup`.\n");
-  return setupCommandWithOptions(args, io, {
-    defaultSetupMode: "create_starter",
-    friendlyOutput: true,
-    promptForCredentials: true
-  });
+  return setupCommandWithOptions(args, io, setupCommandOptionsForArgs(args));
 }
 
 async function smartEntryCommand(args, io) {
@@ -128,6 +122,12 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
   }
 
   const baseEnv = io.env ?? process.env;
+  if (commandOptions.requireSetupTty && !io.prompts && !isUsableSetupTty(io, baseEnv)) {
+    throw new FizzySymphonyError("SETUP_TTY_REQUIRED", "Guided setup needs an interactive terminal.", {
+      remediation: "Run `fizzy-symphony setup` from a TTY, or pass an explicit scripted mode such as `--mode existing --board <id>` or `--mode create-starter` with credentials."
+    });
+  }
+
   if (commandOptions.friendlyOutput) {
     await writeOpener(io, {
       env: baseEnv,
@@ -135,60 +135,64 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
     });
   }
 
-  const prompts = await promptProvider(io);
-  const env = await envWithCliOverrides(baseEnv, args, {
-    dotenvBasePath: setupDotenvBaseForArgs(args, baseEnv, configPath),
-    promptForCredentials: commandOptions.promptForCredentials,
-    prompts
-  });
-  const workspaceRepo = workspaceRepoForArgs(args, env);
-  const dependencyConfig = resolveFizzyClientConfig({
-    config: { runner: { preferred: "cli_app_server" } },
-    env
-  });
-  const fizzy = await createFizzyDependency({ io, config: dependencyConfig, env });
-  const runner = await createRunnerDependency({ io, config: dependencyConfig, env });
+  const prompts = await promptProvider(io, commandOptions);
+  try {
+    const env = await envWithCliOverrides(baseEnv, args, {
+      dotenvBasePath: setupDotenvBaseForArgs(args, baseEnv, configPath),
+      promptForCredentials: commandOptions.promptForCredentials,
+      prompts
+    });
+    const workspaceRepo = workspaceRepoForArgs(args, env);
+    const dependencyConfig = resolveFizzyClientConfig({
+      config: { runner: { preferred: "cli_app_server" } },
+      env
+    });
+    const fizzy = await createFizzyDependency({ io, config: dependencyConfig, env });
+    const runner = await createRunnerDependency({ io, config: dependencyConfig, env });
 
-  const result = await runSetup({
-    configPath,
-    fizzy,
-    runner,
-    prompts,
-    env,
-    apiUrl: dependencyConfig.fizzy.api_url,
-    account: optionValue(args, "--account") ?? undefined,
-    selectedBoardIds: boardValues(args),
-    setupMode: setupModeForArgs(args, commandOptions.defaultSetupMode),
-    defaultModel: defaultModelForArgs(args, env),
-    reasoningEffort: reasoningEffortForArgs(args, env),
-    maxAgents: maxAgentsForArgs(args, env),
-    workspaceMode: workspaceModeForArgs(args),
-    workspaceRepo,
-    workspaceRepoRef: workspaceRepoRefForArgs(args, env),
-    sourceCacheRoot: sourceCacheRootForArgs(args, env),
-    starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
-    workflowPolicy: await workflowPolicyForArgs(args, prompts, workspaceRepo),
-    createSmokeTestCard: args.includes("--smoke-card"),
-    botUserId: optionValue(args, "--bot-user-id") ?? undefined,
-    webhook: webhookOptions(args)
-  });
+    const result = await runSetup({
+      configPath,
+      fizzy,
+      runner,
+      prompts,
+      env,
+      apiUrl: dependencyConfig.fizzy.api_url,
+      account: optionValue(args, "--account") ?? undefined,
+      selectedBoardIds: boardValues(args),
+      setupMode: setupModeForArgs(args, commandOptions.defaultSetupMode),
+      defaultModel: defaultModelForArgs(args, env),
+      reasoningEffort: reasoningEffortForArgs(args, env),
+      maxAgents: maxAgentsForArgs(args, env),
+      workspaceMode: workspaceModeForArgs(args),
+      workspaceRepo,
+      workspaceRepoRef: workspaceRepoRefForArgs(args, env),
+      sourceCacheRoot: sourceCacheRootForArgs(args, env),
+      starterBoardName: optionValue(args, "--starter-board-name") ?? undefined,
+      workflowPolicy: await workflowPolicyForArgs(args, prompts, workspaceRepo),
+      createSmokeTestCard: args.includes("--smoke-card"),
+      botUserId: optionValue(args, "--bot-user-id") ?? undefined,
+      webhook: webhookOptions(args)
+    });
 
-  if (commandOptions.friendlyOutput) {
-    io.stdout.write(formatSetupSuccess(result, {
-      color: supportsColor(io.env ?? process.env, io.stdout)
-    }));
+    if (commandOptions.friendlyOutput) {
+      io.stdout.write(formatSetupSuccess(result, {
+        color: supportsColor(io.env ?? process.env, io.stdout)
+      }));
+      return 0;
+    }
+
+    io.stdout.write(`${JSON.stringify({
+      ok: true,
+      path: result.path,
+      account: result.account,
+      boards: result.boards.map((board) => board.id),
+      runner: result.runner.kind,
+      warnings: result.warnings.map((warning) => warning.code)
+    })}\n`);
     return 0;
+  } finally {
+    prompts?.close?.();
   }
-
-  io.stdout.write(`${JSON.stringify({
-    ok: true,
-    path: result.path,
-    account: result.account,
-    boards: result.boards.map((board) => board.id),
-    runner: result.runner.kind,
-    warnings: result.warnings.map((warning) => warning.code)
-  })}\n`);
-  return 0;
 }
 
 async function validateCommand(args, io) {
@@ -467,11 +471,13 @@ function maxAgentsForArgs(args, env = process.env) {
 }
 
 function setupCommandOptionsForArgs(args) {
-  if (!isGuidedSetupArgs(args)) return {};
+  if (!isImplicitGuidedSetupArgs(args)) return {};
   return {
     defaultSetupMode: "create_starter",
     friendlyOutput: true,
-    promptForCredentials: true
+    promptForCredentials: true,
+    guidedSetup: true,
+    requireSetupTty: true
   };
 }
 
@@ -543,17 +549,16 @@ async function pathExists(path) {
   }
 }
 
-function isGuidedSetupArgs(args) {
+function isImplicitGuidedSetupArgs(args) {
   if (args.includes("--template-only")) return false;
   if (boardValues(args)) return false;
+  if (args.includes("--starter") || args.includes("--new-board")) return false;
   if (args.includes("--adopt-starter")) return false;
-
-  const mode = normalizeSetupMode(optionValue(args, "--mode"));
-  return mode !== "existing" && mode !== "adopt_starter";
+  return !optionValue(args, "--mode");
 }
 
 function usesFriendlyErrors(command, args) {
-  return command === "init" || (command === "setup" && isGuidedSetupArgs(args));
+  return command === "init" || (command === "setup" && isImplicitGuidedSetupArgs(args));
 }
 
 function normalizeSetupMode(mode) {
@@ -682,6 +687,13 @@ function friendlyRemediation(error) {
     ];
   }
 
+  if (error.code === "SETUP_TTY_REQUIRED") {
+    return [
+      "Run `fizzy-symphony setup` from an interactive terminal for the guided wizard.",
+      "For scripts, pass an explicit mode such as `--mode existing --board <id>` or `--mode create-starter` with FIZZY_API_URL and FIZZY_API_TOKEN."
+    ];
+  }
+
   if (error.code === "FIZZY_IDENTITY_INVALID") {
     return [
       error.details?.remediation ?? "Check FIZZY_API_URL, network access, and Fizzy API availability, then rerun setup."
@@ -698,11 +710,23 @@ function friendlyRemediation(error) {
   return [];
 }
 
-async function promptProvider(io) {
+async function promptProvider(io, options = {}) {
   if (io.prompts) return io.prompts;
-  const clack = await createClackPromptProvider(io, io.env ?? process.env);
-  if (clack) return clack;
-  return terminalPrompts(io);
+
+  if (!options.guidedSetup) return null;
+
+  const env = io.env ?? process.env;
+  if (isUsableSetupTty(io, env)) {
+    const provider = await setupWizardPromptProvider(io, env);
+    if (provider) return provider;
+  }
+  if (options.requireSetupTty) {
+    throw new FizzySymphonyError("SETUP_TTY_REQUIRED", "Guided setup needs an interactive terminal.", {
+      remediation: "Run `fizzy-symphony setup` from a TTY, or pass an explicit scripted mode such as `--mode existing --board <id>` or `--mode create-starter` with credentials."
+    });
+  }
+
+  return null;
 }
 
 async function promptInput(prompts, prompt) {
@@ -710,74 +734,20 @@ async function promptInput(prompts, prompt) {
   return prompts.input(prompt);
 }
 
-function terminalPrompts(io) {
+function isUsableSetupTty(io, env = process.env) {
+  if (env.CI) return false;
+  if (env.TERM === "dumb") return false;
   const input = io.stdin ?? process.stdin;
   const output = io.stdout ?? process.stdout;
-  if (!input?.isTTY || !output?.isTTY) return null;
-
-  return {
-    async input(prompt) {
-      if (prompt.secret && input.setRawMode) return promptSecret(input, output, prompt);
-      return promptVisible(input, output, prompt);
-    }
-  };
+  return Boolean(input?.isTTY) &&
+    Boolean(output?.isTTY) &&
+    input === process.stdin &&
+    output === process.stdout;
 }
 
-async function promptVisible(input, output, prompt) {
-  const rl = createInterface({ input, output });
-  try {
-    const suffix = prompt.defaultValue ? ` (${prompt.defaultValue})` : "";
-    const answer = await rl.question(`${prompt.message}${suffix}: `);
-    return answer.trim() || prompt.defaultValue || "";
-  } finally {
-    rl.close();
-  }
-}
-
-function promptSecret(input, output, prompt) {
-  return new Promise((resolve, reject) => {
-    const wasRaw = input.isRaw;
-    let value = "";
-
-    const cleanup = () => {
-      input.off("data", onData);
-      if (!wasRaw) input.setRawMode(false);
-      input.pause();
-    };
-
-    const finish = () => {
-      cleanup();
-      output.write("\n");
-      resolve(value);
-    };
-
-    const abort = () => {
-      cleanup();
-      output.write("\n");
-      reject(new Error("Interrupted"));
-    };
-
-    const onData = (chunk) => {
-      for (const char of String(chunk)) {
-        if (char === "\u0003") return abort();
-        if (char === "\r" || char === "\n") return finish();
-        if (char === "\u007f" || char === "\b") {
-          if (value.length > 0) {
-            value = value.slice(0, -1);
-            output.write("\b \b");
-          }
-          continue;
-        }
-        value += char;
-        output.write("*");
-      }
-    };
-
-    output.write(`${prompt.message}: `);
-    input.setRawMode(true);
-    input.resume();
-    input.on("data", onData);
-  });
+async function setupWizardPromptProvider(io, env) {
+  const { createSetupWizardPromptProvider } = await import("../src/setup-wizard.js");
+  return createSetupWizardPromptProvider(io, env);
 }
 
 function webhookOptions(args) {
@@ -801,9 +771,11 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
-    "  fizzy-symphony setup [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow]",
+    "  fizzy-symphony setup",
     "  fizzy-symphony setup --template-only [--config path]",
+    "  fizzy-symphony setup --mode create-starter [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow|--no-workflow-change]",
     "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--repo url|--git-repo url|--workspace-repo path-or-url] [--augment-workflow|--no-workflow-change]",
+    "  fizzy-symphony setup --adopt-starter --board id [--config path] [--account id] [--repo url|--git-repo url|--workspace-repo path-or-url] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",
     "  fizzy-symphony start [--config path]",
     "  fizzy-symphony daemon [--config path]",
