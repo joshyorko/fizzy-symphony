@@ -423,7 +423,7 @@ async function cancelStatusRun({
   }
 
   try {
-    const release = await claims?.release?.({ config, claim: run.claim, run, status: "cancelled", now, reason });
+    const release = await claims?.release?.({ config, card: run.card, claim: run.claim, run, status: "cancelled", now, reason });
     cancellation.claim_release = release ?? { released: true };
     cancellation.states.claim_cancelled = release?.released === false || release?.status === "failed"
       ? { status: "failed", at: currentIso(now), result: release }
@@ -905,7 +905,7 @@ async function runCard({
         runner_session_finalization: runnerSessionFinalization
       }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
-      await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      await claims.release({ config, card: refreshedCard, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       logCardProgress(logger, "card.dispatch_failed", { card: refreshedCard, route, workspace, run: failed ?? run, error });
       return { status: "failed", run: failed ?? run, error };
     }
@@ -947,7 +947,7 @@ async function runCard({
         runner_session_finalization: runnerSessionFinalization
       }, "failed");
       await upsertWorkpad({ config, status, fizzy, card: refreshedCard, route, run: failed ?? run, workspace, phase: "completion_failed", proof, resultComment, now });
-      await claims.release({ config, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
+      await claims.release({ config, card: refreshedCard, claim, run: failed ?? run, status: "failed", now, error, completion_marker: recordedFailureMarker });
       logCardProgress(logger, "card.dispatch_failed", { card: refreshedCard, route, workspace, run: failed ?? run, error });
       return { status: "failed", run: failed ?? run, error };
     }
@@ -985,7 +985,7 @@ async function runCard({
       completed_at: now
     });
 
-    const claimRelease = await claims.release({ config, claim, run: completed ?? run, status: "completed", now });
+    const claimRelease = await claims.release({ config, card: refreshedCard, claim, run: completed ?? run, status: "completed", now });
     orchestratorState?.completeRun?.(runId, { proof, result_comment_id: resultComment?.id });
     recordLifecycle(status, orchestratorState);
     let cleanup = evaluateCleanupEligibility({
@@ -1061,6 +1061,7 @@ async function runCard({
     }, "failed");
     await claims.release?.({
       config,
+      card,
       claim,
       run: failed ?? run,
       status: "failed",

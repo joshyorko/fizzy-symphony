@@ -68,6 +68,7 @@ You will see:
 
 - Fizzy's system columns, such as `Not Now`, `Maybe?`, and `Done`
 - `Ready for Agents`
+- `Ready To Ship`
 - one golden card named `Repo Agent`
 
 Do not edit the golden card for the first smoke test. It is the route.
@@ -80,7 +81,7 @@ The daemon should:
 2. run Codex in a git worktree
 3. comment with the result
 4. add an `agent-completed-*` tag
-5. move the card to `Done`
+5. move the card to `Ready To Ship`
 
 That is the whole workflow.
 
@@ -125,6 +126,8 @@ If you want a non-interactive starter board setup, spell out the lane:
 ```sh
 fizzy-symphony setup --mode create-starter --workspace-repo . --api-url https://fizzy.example.com --token "$FIZZY_API_TOKEN"
 ```
+
+Starter-board setup creates a limited-access board for the current Fizzy user, not an Everyone board.
 
 If the board already has the starter route and you want setup to use starter defaults:
 

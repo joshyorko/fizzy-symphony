@@ -30,7 +30,10 @@ export function setupMutationLines(plan = {}) {
   const lines = [];
   if (plan.workflow?.action === "create") lines.push(`Create WORKFLOW.md at ${plan.workflow.path}`);
   if (plan.workflow?.action === "append") lines.push(`Append a fizzy-symphony section to ${plan.workflow.path}`);
-  if (plan.setup_mode === "create_starter") lines.push(`Create starter board "${plan.starter_board_name}"`);
+  if (plan.setup_mode === "create_starter") {
+    lines.push(`Create starter board "${plan.starter_board_name}" with limited access`);
+    lines.push("Create route Ready for Agents -> Ready To Ship");
+  }
   if (plan.webhook?.manage) lines.push(`Manage webhooks for ${reviewBoardCount(plan)} board(s): ${plan.webhook.callback_url || "configured callback"}`);
   lines.push(`Write config to ${plan.config_path}`);
   return lines;
@@ -44,10 +47,10 @@ export function formatSetupSuccess(result = {}, options = {}) {
   const boardId = board.id ?? "unknown";
   const configPath = result.path ?? ".fizzy-symphony/config.yml";
   const runner = result.runner?.kind ?? "unknown";
-  const routeLabel = formatRouteLabel(route) || "Ready for Agents -> Done";
+  const routeLabel = formatRouteLabel(route) || "Ready for Agents -> Ready To Ship";
   const tags = golden?.tags?.length
     ? golden.tags.map((tag) => `#${normalizeTagLabel(tag)}`).join(" ")
-    : "#agent-instructions #codex #move-to-done";
+    : "#agent-instructions #codex #move-to-ready-to-ship";
   const model = result.default_model ?? route.model ?? "";
   const reasoning = result.reasoning_effort ?? "";
   const workspaceMode = result.workspace_mode === "no_dispatch"

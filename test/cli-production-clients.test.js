@@ -222,6 +222,57 @@ test("explicit scripted setup can create a starter board in non-TTY", async () =
   assert.doesNotMatch(generatedConfig, /terminate_timeout_ms/u);
 });
 
+test("guided setup asks for the board lane so an existing board can be watched", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-existing-lane-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const prompts = [];
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli"
+  ], {
+    env: { TERM: "dumb" },
+    prompts: {
+      async selectSetupMode(modes) {
+        prompts.push(["selectSetupMode", modes]);
+        return "existing";
+      },
+      async selectBoards(boards) {
+        prompts.push(["selectBoards", boards.map((board) => board.id)]);
+        return [boards[0]];
+      },
+      async input(prompt) {
+        prompts.push(["input", prompt.name]);
+        if (prompt.name === "setup_mutation_review") return "yes";
+        return "";
+      }
+    },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(prompts.slice(0, 3), [
+    ["input", "workflow_action"],
+    ["selectSetupMode", ["existing", "create_starter", "adopt_starter"]],
+    ["selectBoards", ["board_1"]]
+  ]);
+  assert.match(await readFile(configPath, "utf8"), /id: board_1/u);
+});
+
 test("setup prompt seam can ask for model, reasoning, max agents, and workspace mode", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-default-prompts-"));
   const configPath = join(dir, ".fizzy-symphony", "config.yml");
@@ -376,6 +427,9 @@ test("guided setup prompt skips missing WORKFLOW.md by default and still creates
   ], {
     env: { TERM: "dumb" },
     prompts: {
+      async selectSetupMode() {
+        return "create_starter";
+      },
       async input(prompt) {
         prompts.push(prompt);
         if (prompt.name === "setup_mutation_review") return "yes";
@@ -440,6 +494,9 @@ test("guided setup can prompt for missing Fizzy URL and token", async () => {
   ], {
     env: { TERM: "dumb" },
     prompts: {
+      async selectSetupMode() {
+        return "create_starter";
+      },
       async input(prompt) {
         prompts.push(prompt.name);
         if (prompt.name === "fizzy_api_url") return "https://prompted.fizzy.test";
@@ -1037,7 +1094,7 @@ function fakeStarterSetupFizzy() {
     },
     async createColumn(request) {
       const column = {
-        id: request.name === "Ready for Agents" ? "starter_ready" : "starter_done",
+        id: request.name === "Ready for Agents" ? "starter_ready" : "starter_ship",
         name: request.name
       };
       board.columns.push(column);
@@ -1142,6 +1199,7 @@ function managedTags() {
   return [
     { id: "tag_agent", name: "agent-instructions" },
     { id: "tag_codex", name: "codex" },
-    { id: "tag_done", name: "move-to-done" }
+    { id: "tag_done", name: "move-to-done" },
+    { id: "tag_ship", name: "move-to-ready-to-ship" }
   ];
 }

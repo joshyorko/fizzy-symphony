@@ -25,6 +25,9 @@ const DEFAULT_WEBHOOK_ACTIONS = [
   "card_unassigned",
   "comment_created"
 ];
+const STARTER_READY_COLUMN = "Ready for Agents";
+const STARTER_COMPLETE_COLUMN = "Ready To Ship";
+const STARTER_COMPLETION_TAG = "move-to-ready-to-ship";
 
 export async function runSetup(options = {}) {
   const {
@@ -298,13 +301,14 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
   const plan = {
     account,
     name,
-    columns: ["Ready for Agents"],
+    all_access: false,
+    columns: [STARTER_READY_COLUMN, STARTER_COMPLETE_COLUMN],
     golden_ticket: {
       title: "Repo Agent",
       description: starterGoldenDescription(),
-      column: "Ready for Agents",
+      column: STARTER_READY_COLUMN,
       golden: true,
-      tags: ["agent-instructions", "codex", "move-to-done"]
+      tags: ["agent-instructions", "codex", STARTER_COMPLETION_TAG]
     },
     smoke_test: Boolean(options.createSmokeTestCard)
   };
@@ -322,10 +326,11 @@ async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {
     throw new FizzySymphonyError("STARTER_BOARD_UNAVAILABLE", "Fizzy client cannot create starter board resources.");
   }
 
-  const board = await fizzy.createBoard({ account, name });
+  const board = await fizzy.createBoard({ account, name, all_access: false });
   const initialBoard = await fizzy.getBoard(board.id, { account });
-  const ready = await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Ready for Agents" });
-  await ensureStarterColumn({ fizzy, account, board: initialBoard, name: "Done" });
+  const ready = await ensureStarterColumn({ fizzy, account, board: initialBoard, name: STARTER_READY_COLUMN });
+  const boardWithReady = await fizzy.getBoard(board.id, { account });
+  await ensureStarterColumn({ fizzy, account, board: boardWithReady, name: STARTER_COMPLETE_COLUMN });
   const golden = await fizzy.createCard({
     account,
     board_id: board.id,

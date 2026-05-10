@@ -14,7 +14,7 @@ const DEFAULT_FRAME_DELAY_MS = 20;
 
 const FULL_ART = [
   divider("┌", "┬", "┐", FULL_COLUMN_WIDTHS),
-  boardRow([" Backlog        ♫", " Ready for Agents   ★", " Done            ♪"], FULL_COLUMN_WIDTHS),
+  boardRow([" Backlog        ♫", " Ready for Agents   ★", " Ready To Ship  ♪"], FULL_COLUMN_WIDTHS),
   boardRow([" work cards enter", " golden route lives here", " result lands here"], FULL_COLUMN_WIDTHS),
   divider("├", "┼", "┤", FULL_COLUMN_WIDTHS),
   boardRow([" work card", "  ╔════════════════╗", " result card"], FULL_COLUMN_WIDTHS),
@@ -30,7 +30,7 @@ const FULL_ART = [
 
 const COMPACT_ART = [
   divider("┌", "┬", "┐", COMPACT_COLUMN_WIDTHS),
-  boardRow([" ♫ Backlog", " ★ Ready", " ♪ Done"], COMPACT_COLUMN_WIDTHS),
+  boardRow([" ♫ Backlog", " ★ Ready", " ♪ Ship"], COMPACT_COLUMN_WIDTHS),
   boardRow([" work", " ╔════════╗", " result"], COMPACT_COLUMN_WIDTHS),
   boardRow([" request", " ║ GOLDEN ║", " proof"], COMPACT_COLUMN_WIDTHS),
   boardRow(["", " route tag", ""], COMPACT_COLUMN_WIDTHS),

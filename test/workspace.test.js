@@ -399,6 +399,33 @@ test("prepareWorkspace preserves a dirty existing worktree instead of reusing it
   assert.equal(await readFile(join(prepared.workspace_path, "debug.log"), "utf8"), "keep me\n");
 });
 
+test("prepareWorkspace reuses a dirty guarded worktree for explicit reruns", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-rerun-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const prepared = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  await writeFile(join(prepared.workspace_path, "debug.log"), "keep me\n", "utf8");
+
+  const rerun = await prepareWorkspace({
+    config,
+    identity,
+    reuseDirtyExisting: true,
+    metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+  });
+
+  assert.equal(rerun.workspace_path, prepared.workspace_path);
+  assert.equal(rerun.created, false);
+  assert.equal(await readFile(join(rerun.workspace_path, "debug.log"), "utf8"), "keep me\n");
+
+  const metadata = JSON.parse(await readFile(rerun.metadata_path, "utf8"));
+  assert.equal(metadata.run_attempt_id, "attempt_2");
+});
+
 test("preflightWorkspaceSource rejects dirty source repositories when policy requires a clean source", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-dirty-"));
   const source = await initSourceRepo(dir);

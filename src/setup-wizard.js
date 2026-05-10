@@ -40,10 +40,11 @@ const INPUT_KEY_BINDINGS = {
 };
 
 const SETUP_MODE_LABELS = {
-  create_starter: "Create a starter board",
+  create_starter: "Create private starter board",
   existing: "Watch existing board(s)",
   adopt_starter: "Adopt an existing starter board"
 };
+const SETUP_WIZARD_WIDTH = 72;
 
 export async function createSetupWizardPromptProvider(io, env = process.env, options = {}) {
   const adapter = options.adapter ?? await createTerminalKitAdapter(io, env, options);
@@ -117,12 +118,12 @@ class SetupWizardPromptProvider {
     const laneChoices = [
       {
         value: "create_starter",
-        label: "Create a starter board",
-        hint: "best first-run path; setup creates the starter route"
+        label: "Create private starter board",
+        hint: "builds Ready for Agents -> Ready To Ship"
       },
       {
         value: "existing_lane",
-        label: "Use an existing board",
+        label: "Watch or adopt an existing board",
         hint: "watch existing routes or adopt a starter-style board"
       }
     ];
@@ -320,11 +321,16 @@ class TerminalKitWizardAdapter {
   constructor(terminal, io = {}) {
     this.term = terminal;
     this.io = io;
+    this.step = 0;
     this.term.grabInput?.({ mouse: "button" });
   }
 
   section(title) {
-    this.write(`\n${title}\n`);
+    this.step += 1;
+    this.write(`\n${setupFrame(`Step ${this.step}: ${title}`, [
+      "fizzy-symphony setup wizard",
+      "↑/↓ or Tab moves   Enter/click selects   Esc/q cancels"
+    ])}\n`);
   }
 
   note(text, title) {
@@ -497,7 +503,7 @@ function boardLabel(board = {}) {
 }
 
 function setupModeHint(mode) {
-  if (mode === "create_starter") return "create a starter route";
+  if (mode === "create_starter") return "private starter route to Ready To Ship";
   if (mode === "adopt_starter") return "single existing starter route";
   if (mode === "existing") return "watch selected boards";
   return "";
@@ -539,6 +545,25 @@ function numericOrRaw(value) {
 function normalizeSelectionList(selected) {
   if (!selected) return [];
   return Array.isArray(selected) ? selected : [selected];
+}
+
+function setupFrame(title, body = []) {
+  const width = SETUP_WIZARD_WIDTH;
+  const heading = ` ${title} `;
+  const topFill = "─".repeat(Math.max(1, width - heading.length - 2));
+  return [
+    `┌${heading}${topFill}┐`,
+    ...body.map((line) => `│ ${fitSetupLine(line, width - 4)} │`),
+    `└${"─".repeat(width - 2)}┘`
+  ].join("\n");
+}
+
+function fitSetupLine(value, width) {
+  const text = String(value ?? "");
+  if (text.length === width) return text;
+  if (text.length < width) return text.padEnd(width, " ");
+  if (width <= 1) return text.slice(0, width);
+  return `${text.slice(0, width - 1)}…`;
 }
 
 function formatMenuItem(choice = {}) {

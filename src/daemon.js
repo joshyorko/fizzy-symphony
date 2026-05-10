@@ -370,7 +370,7 @@ async function cancelActiveRuns(options = {}) {
     }
 
     try {
-      const release = await claims?.release?.({ config, claim: run.claim ?? { ...run, status: "claimed" }, run, status: "cancelled", now: currentDate(now), reason });
+      const release = await claims?.release?.({ config, card: run.card, claim: run.claim ?? { ...run, status: "claimed" }, run, status: "cancelled", now: currentDate(now), reason });
       cancellation.claim_release = release;
       cancellation.states.claim_cancelled = { status: release?.released === false ? "failed" : "succeeded", at: currentIso(now), result: release };
     } catch (error) {

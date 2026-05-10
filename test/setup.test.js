@@ -149,7 +149,7 @@ function fakeStarterFizzy() {
     },
     async createColumn(request) {
       calls.push(["createColumn", request]);
-      const id = request.name === "Ready for Agents" ? "starter_ready" : "starter_done";
+      const id = request.name === "Ready for Agents" ? "starter_ready" : "starter_ship";
       const column = { id, name: request.name };
       board.columns.push(column);
       return column;
@@ -306,10 +306,14 @@ test("runSetup creates a starter board with native golden route defaults and wri
   assert.equal(result.ok, true);
   assert.equal(result.starter.created, true);
   assert.equal(result.boards[0].id, "starter_board");
-  assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Not Now", "Maybe?", "Done", "Ready for Agents"]);
+  assert.deepEqual(result.boards[0].columns.map((column) => column.name), ["Not Now", "Maybe?", "Done", "Ready for Agents", "Ready To Ship"]);
+  assert.deepEqual(
+    fizzy.calls.filter((call) => call[0] === "createBoard").map((call) => call[1]),
+    [{ account: "acct_1", name: "Agent Playground: repo", all_access: false }]
+  );
   assert.deepEqual(
     fizzy.calls.filter((call) => call[0] === "createColumn").map((call) => call[1].name),
-    ["Ready for Agents"]
+    ["Ready for Agents", "Ready To Ship"]
   );
   assert.deepEqual(result.boards[0].cards[0], {
     id: "starter_golden",
@@ -317,13 +321,14 @@ test("runSetup creates a starter board with native golden route defaults and wri
     title: "Repo Agent",
     golden: true,
     column_id: "starter_ready",
-    tags: ["agent-instructions", "codex", "move-to-done"]
+    tags: ["agent-instructions", "codex", "move-to-ready-to-ship"]
   });
   assert.deepEqual(
     fizzy.calls.filter((call) => ["listTags", "createBoard", "createColumn", "createCard", "toggleTag", "moveCardToColumn", "markGolden"].includes(call[0])).map((call) => call[0]),
     [
       "listTags",
       "createBoard",
+      "createColumn",
       "createColumn",
       "createCard",
       "toggleTag",
@@ -336,7 +341,7 @@ test("runSetup creates a starter board with native golden route defaults and wri
   );
   assert.deepEqual(
     fizzy.calls.filter((call) => call[0] === "createColumn").map((call) => call[1].name),
-    ["Ready for Agents"]
+    ["Ready for Agents", "Ready To Ship"]
   );
 
   const written = await readFile(configPath, "utf8");

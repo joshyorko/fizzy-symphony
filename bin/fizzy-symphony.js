@@ -100,7 +100,10 @@ async function setupCommand(args, io) {
 
 async function initCommand(args, io) {
   io.stderr.write("fizzy-symphony init is deprecated; use `fizzy-symphony setup`.\n");
-  return setupCommandWithOptions(args, io, setupCommandOptionsForArgs(args));
+  return setupCommandWithOptions(args, io, {
+    ...setupCommandOptionsForArgs(args),
+    defaultSetupMode: "create_starter"
+  });
 }
 
 async function smartEntryCommand(args, io) {
@@ -473,7 +476,6 @@ function maxAgentsForArgs(args, env = process.env) {
 function setupCommandOptionsForArgs(args) {
   if (!isImplicitGuidedSetupArgs(args)) return {};
   return {
-    defaultSetupMode: "create_starter",
     friendlyOutput: true,
     promptForCredentials: true,
     guidedSetup: true,

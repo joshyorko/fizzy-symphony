@@ -148,12 +148,13 @@ export function createWorkspaceManager({ fs = nodeFs, exec = defaultExec, source
     preflight({ config, identity, workspace } = {}) {
       return preflightWorkspaceSource({ config, identity: identity ?? workspace, fs, exec });
     },
-    prepare({ config, identity, workspace, claim = {}, now = new Date() } = {}) {
+    prepare({ config, identity, workspace, claim = {}, decision = {}, now = new Date() } = {}) {
       return prepareWorkspace({
         config,
         identity: identity ?? workspace,
         fs,
         exec,
+        reuseDirtyExisting: decision.rerun_requested === true || decision.rerunRequested === true,
         metadata: {
           run_attempt_id: claim.attempt_id ?? claim.attemptId,
           run_id: claim.run_id ?? claim.runId,
@@ -223,7 +224,7 @@ export async function preflightWorkspaceSource({ config, identity, fs = nodeFs, 
   };
 }
 
-export async function prepareWorkspace({ config, identity, metadata = {}, fs = nodeFs, exec = defaultExec } = {}) {
+export async function prepareWorkspace({ config, identity, metadata = {}, reuseDirtyExisting = false, fs = nodeFs, exec = defaultExec } = {}) {
   const key = identity.workspace_key ?? workspaceKey(identity);
   const path = identity.workspace_path ?? workspacePathFromRoot(
     identity.workspace_root ?? config?.workspaces?.root,
@@ -279,6 +280,7 @@ export async function prepareWorkspace({ config, identity, metadata = {}, fs = n
         metadata: existing,
         metadataPath,
         guardPath,
+        reuseDirtyExisting,
         fs,
         exec
       });
@@ -740,6 +742,7 @@ async function validateReusableWorktree({
   metadata,
   metadataPath,
   guardPath,
+  reuseDirtyExisting,
   fs,
   exec
 }) {
@@ -775,6 +778,12 @@ async function validateReusableWorktree({
 
   const status = await gitStatus({ cwd: workspacePath, exec });
   if (!status.clean) {
+    if (reuseDirtyExisting) {
+      return {
+        status: "dirty_reused",
+        dirty_paths: status.paths
+      };
+    }
     throw new FizzySymphonyError("WORKSPACE_WORKTREE_DIRTY", "Existing workspace has local changes; preserving workspace.", {
       preserve_workspace: true,
       workspace_path: workspacePath,

@@ -139,8 +139,9 @@ function successfulDependencies({ calls, cards, route }) {
           }
         };
       },
-      async release({ status }) {
+      async release({ card, status }) {
         calls.push("releaseClaim");
+        assert.equal(Number.isFinite(card.number), true);
         assert.equal(status, "completed");
         return { released: true };
       }
@@ -1044,8 +1045,9 @@ test("runReconciliationTick records a non-looping completion-failure marker when
     },
     claims: {
       ...deps.claims,
-      async release({ status }) {
+      async release({ card, status }) {
         calls.push(`releaseClaim:${status}`);
+        assert.equal(card.number, 1);
         assert.equal(status, "failed");
         return { released: true };
       }
@@ -1107,8 +1109,9 @@ test("runReconciliationTick records one non-looping failure marker when the runn
     },
     claims: {
       ...deps.claims,
-      async release({ status, completion_marker }) {
+      async release({ card, status, completion_marker }) {
         calls.push(`releaseClaim:${status}`);
+        assert.equal(card.number, 1);
         assert.equal(status, "failed");
         assert.equal(completion_marker.id, "runner_failure_marker_1");
         return { released: true };
