@@ -596,11 +596,41 @@ test("public boards lists real boards and columns without constructing a runner"
 
   assert.equal(result.exitCode, 0, result.stderr);
   assert.deepEqual(calls, [["createFizzyClient", "https://fizzy.example.test", true]]);
-  assert.match(result.stdout, /Fizzy boards for acct_1/u);
+  assert.match(result.stdout, /Fizzy Symphony Boards/u);
+  assert.match(result.stdout, /Account\s+acct_1/u);
   assert.match(result.stdout, /Agents \(board_1\)/u);
+  assert.match(result.stdout, /Columns\s+2/u);
+  assert.match(result.stdout, /Golden tickets\s+Repo Agent/u);
   assert.match(result.stdout, /Ready for Agents \(col_ready\)/u);
   assert.match(result.stdout, /Done \(col_done\)/u);
-  assert.match(result.stdout, /golden: #Repo Agent/u);
+  assert.doesNotMatch(result.stdout, /\x1b\[/u);
+});
+
+test("implicit setup friendly errors are premium plain text under NO_COLOR and CI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-friendly-error-"));
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    join(dir, ".fizzy-symphony", "config.yml"),
+    "--workspace-repo",
+    dir
+  ], {
+    env: {
+      TERM: "xterm-256color",
+      NO_COLOR: "1",
+      CI: "true"
+    }
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Fizzy Symphony Setup/u);
+  assert.match(result.stderr, /\[NEEDS INPUT\]/u);
+  assert.match(result.stderr, /Guided setup needs an interactive terminal/u);
+  assert.match(result.stderr, /Next steps/u);
+  assert.match(result.stderr, /SETUP_TTY_REQUIRED/u);
+  assert.doesNotMatch(result.stderr, /\x1b\[/u);
 });
 
 test("bare command opens dashboard when config exists", async () => {

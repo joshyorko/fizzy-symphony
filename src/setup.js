@@ -68,7 +68,7 @@ export async function runSetup(options = {}) {
   );
   const runnerReport = await detectRunner(runner);
 
-  const setupMode = await selectSetupMode(options, prompts);
+  const setupMode = await selectSetupMode(options, prompts, boards);
   const setupDefaults = await selectSetupDefaults(options, prompts, setupMode);
   const maxAgents = setupDefaults.maxAgents;
   const defaultModel = setupDefaults.defaultModel;
@@ -278,9 +278,9 @@ function normalizeAccountSlug(value) {
   return String(value ?? "").trim().replace(/^\/+|\/+$/gu, "");
 }
 
-async function selectSetupMode(options, prompts) {
+async function selectSetupMode(options, prompts, boards = []) {
   if (options.setupMode) return options.setupMode;
-  return (await prompts?.selectSetupMode?.(["existing", "create_starter", "adopt_starter"])) ?? "existing";
+  return (await prompts?.selectSetupMode?.(["existing", "create_starter", "adopt_starter"], { boards })) ?? "existing";
 }
 
 async function selectBoardIds(boards, options, prompts) {
@@ -289,11 +289,21 @@ async function selectBoardIds(boards, options, prompts) {
   if (prompted?.length) {
     return prompted.map((board) => typeof board === "object" ? board.id : board);
   }
-  const selected = boards.slice(0, 1).map((board) => board.id);
-  if (selected.length === 0) {
+  if (prompts?.selectBoards) {
+    throw new FizzySymphonyError("SETUP_BOARD_SELECTION_REQUIRED", "Setup needs at least one selected Fizzy board.", {
+      remediation: "Select one or more boards in the setup wizard, or press q to cancel."
+    });
+  }
+  if (boards.length === 0) {
     throw new FizzySymphonyError("FIZZY_BOARD_UNAVAILABLE", "Setup requires at least one selected Fizzy board.");
   }
-  return selected;
+  if (boards.length > 1) {
+    throw new FizzySymphonyError("SETUP_BOARD_SELECTION_REQUIRED", "Setup found multiple Fizzy boards and cannot guess which one to watch.", {
+      board_count: boards.length,
+      remediation: "Pass `--board <id>` for scripted setup, or run `fizzy-symphony setup` in an interactive terminal to pick from the board list."
+    });
+  }
+  return [boards[0].id];
 }
 
 async function createStarterBoard({ fizzy, account, workspaceRepo, options }) {

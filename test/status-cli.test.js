@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { runStatusCommand } from "../src/status-cli.js";
+import { renderStatus, runStatusCommand } from "../src/status-cli.js";
 import { runDashboardCommand } from "../src/dashboard.js";
 
 function ioCapture() {
@@ -57,14 +57,39 @@ test("status CLI discovers an instance endpoint and prints operator-readable sta
 
   assert.equal(exitCode, 0);
   assert.deepEqual(requested, ["http://127.0.0.1:4567/status"]);
-  assert.match(io.stdout.text, /Instance: instance-a \(local\)/);
-  assert.match(io.stdout.text, /Ready: yes/);
-  assert.match(io.stdout.text, /Runner: cli_app_server ready/);
-  assert.match(io.stdout.text, /Active runs: 1/);
-  assert.match(io.stdout.text, /Claims: 1/);
-  assert.match(io.stdout.text, /Recent completions: 1/);
-  assert.match(io.stdout.text, /Recent failures: 1/);
-  assert.match(io.stdout.text, /Validation warnings: 1/);
+  assert.match(io.stdout.text, /Fizzy Symphony Status/u);
+  assert.match(io.stdout.text, /instance-a \(local\)/);
+  assert.match(io.stdout.text, /\[READY\]/u);
+  assert.match(io.stdout.text, /Runner\s+cli_app_server ready/u);
+  assert.match(io.stdout.text, /Boards\s+1/u);
+  assert.match(io.stdout.text, /Active runs\s+1/u);
+  assert.match(io.stdout.text, /Claims\s+1/u);
+  assert.match(io.stdout.text, /Recent completions\s+1/u);
+  assert.match(io.stdout.text, /Recent failures\s+1/u);
+  assert.match(io.stdout.text, /Validation warnings\s+1/u);
+  assert.doesNotMatch(io.stdout.text, /\x1b\[/u);
+});
+
+test("renderStatus preserves every operator fact in a scannable premium layout", () => {
+  const rendered = renderStatus(statusSnapshot(), {
+    endpoint: "http://127.0.0.1:4567",
+    color: false
+  });
+
+  assert.match(rendered, /Fizzy Symphony Status/u);
+  assert.match(rendered, /Endpoint\s+http:\/\/127\.0\.0\.1:4567/u);
+  assert.match(rendered, /Readiness\s+\[READY\]/u);
+  assert.match(rendered, /Runner\s+cli_app_server ready/u);
+  assert.match(rendered, /Boards\s+1/u);
+  assert.match(rendered, /Active runs\s+1/u);
+  assert.match(rendered, /Claims\s+1/u);
+  assert.match(rendered, /Workpads\s+1/u);
+  assert.match(rendered, /Retry queue\s+1/u);
+  assert.match(rendered, /Recent completions\s+1/u);
+  assert.match(rendered, /Recent failures\s+1/u);
+  assert.match(rendered, /Validation warnings\s+1/u);
+  assert.match(rendered, /Validation errors\s+0/u);
+  assert.match(rendered, /Token\/rate metadata\s+available/u);
 });
 
 test("status CLI exits 3 with a clear message when no live instance is reachable", async () => {

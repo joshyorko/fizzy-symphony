@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { loadConfig } from "./config.js";
 import { discoverStatusEndpoints } from "./status-discovery.js";
+import { createTerminalRenderer, supportsColor } from "./terminal-renderer.js";
 
 const DEFAULT_REGISTRY_DIR = ".fizzy-symphony/run/instances";
 const DEFAULT_ENDPOINT = "http://127.0.0.1:4567";
@@ -42,7 +43,10 @@ export async function runStatusCommand(args = [], io = defaultIo(), deps = {}) {
         throw new Error(`status endpoint returned ${response?.status ?? "unknown"}`);
       }
       const snapshot = await response.json();
-      io.stdout.write(renderStatus(snapshot, { endpoint }) + "\n");
+      io.stdout.write(renderStatus(snapshot, {
+        endpoint,
+        color: supportsColor(io.env ?? process.env, io.stdout)
+      }) + "\n");
       return 0;
     } catch {
       continue;
@@ -81,28 +85,48 @@ export async function discoverRegistryEndpoints(registryDir = DEFAULT_REGISTRY_D
 }
 
 export function renderStatus(snapshot = {}, source = {}) {
+  const renderer = createTerminalRenderer(source);
   const readiness = snapshot.readiness ?? {};
   const runnerHealth = snapshot.runner_health ?? {};
   const validation = snapshot.validation ?? {};
   const tokenRateLimit = snapshot.token_rate_limit ?? {};
   const instance = snapshot.instance ?? {};
   const endpoint = snapshot.endpoint?.base_url ?? source.endpoint ?? "unknown";
+  const ready = readiness.ready === true;
 
   return [
-    `Instance: ${instance.id ?? "unknown"}${instance.label ? ` (${instance.label})` : ""}`,
-    `Endpoint: ${endpoint}`,
-    `Ready: ${readiness.ready ? "yes" : "no"}`,
-    `Runner: ${runnerHealth.kind ?? "unknown"} ${runnerHealth.status ?? "unknown"}`,
-    `Boards: ${(snapshot.watched_boards ?? []).length}`,
-    `Active runs: ${(snapshot.active_runs ?? []).length}`,
-    `Claims: ${(snapshot.claims ?? []).length}`,
-    `Workpads: ${(snapshot.workpads ?? []).length}`,
-    `Retry queue: ${(snapshot.retry_queue ?? []).length}`,
-    `Recent completions: ${(snapshot.recent_completions ?? []).length}`,
-    `Recent failures: ${(snapshot.recent_failures ?? []).length}`,
-    `Validation warnings: ${(validation.warnings ?? []).length}`,
-    `Validation errors: ${(validation.errors ?? []).length}`,
-    `Token/rate metadata: ${tokenRateLimit.available ? "available" : "unavailable"}`
+    renderer.title("Fizzy Symphony Status", "Live daemon snapshot for the board-native workflow"),
+    `${renderer.badge(ready ? "success" : "warning", ready ? "ready" : "not ready")} ${instance.id ?? "unknown"}${instance.label ? ` (${instance.label})` : ""}`,
+    "",
+    renderer.section("Overview"),
+    renderer.kvRows([
+      ["Instance", `${instance.id ?? "unknown"}${instance.label ? ` (${instance.label})` : ""}`],
+      ["Endpoint", endpoint],
+      ["Readiness", renderer.badge(ready ? "success" : "warning", ready ? "ready" : "not ready")],
+      ["Runner", `${runnerHealth.kind ?? "unknown"} ${runnerHealth.status ?? "unknown"}`],
+      ["Token/rate metadata", tokenRateLimit.available ? "available" : "unavailable"]
+    ]),
+    "",
+    renderer.section("Work queues"),
+    renderer.kvRows([
+      ["Boards", (snapshot.watched_boards ?? []).length],
+      ["Active runs", (snapshot.active_runs ?? []).length],
+      ["Claims", (snapshot.claims ?? []).length],
+      ["Workpads", (snapshot.workpads ?? []).length],
+      ["Retry queue", (snapshot.retry_queue ?? []).length]
+    ]),
+    "",
+    renderer.section("Recent activity"),
+    renderer.kvRows([
+      ["Recent completions", (snapshot.recent_completions ?? []).length],
+      ["Recent failures", (snapshot.recent_failures ?? []).length]
+    ]),
+    "",
+    renderer.section("Validation"),
+    renderer.kvRows([
+      ["Validation warnings", (validation.warnings ?? []).length],
+      ["Validation errors", (validation.errors ?? []).length]
+    ])
   ].join("\n");
 }
 
@@ -154,6 +178,7 @@ function unique(values) {
 function defaultIo() {
   return {
     stdout: process.stdout,
-    stderr: process.stderr
+    stderr: process.stderr,
+    env: process.env
   };
 }

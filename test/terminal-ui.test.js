@@ -15,6 +15,10 @@ test("setup success renders the board-native golden route and protected-work hin
   const rendered = formatSetupSuccess(setupResultFixture(), { color: false });
 
   assert.match(rendered, /fizzy-symphony is ready/u);
+  assert.match(rendered, /Fizzy Symphony Setup/u);
+  assert.match(rendered, /\[READY\]/u);
+  assert.match(rendered, /Overview/u);
+  assert.match(rendered, /Next steps/u);
   assert.match(rendered, /Setup wrote the route into Fizzy/u);
   assert.match(rendered, /Board\s+Agent Playground: repo \(board_1\)/u);
   assert.match(rendered, /Route\s+Ready for Agents -> Done/u);
@@ -25,6 +29,7 @@ test("setup success renders the board-native golden route and protected-work hin
   assert.match(rendered, /Max agents\s+2/u);
   assert.match(rendered, /Create a normal Fizzy card in Ready for Agents/u);
   assert.match(rendered, /Dirty repos are protected and reported before dispatch/u);
+  assert.doesNotMatch(rendered, /\x1b\[/u);
 });
 
 test("mutation review is readable as plain text and does not expose token-shaped details", () => {
@@ -52,6 +57,9 @@ test("daemon start summary explains routes and dirty-repo protection up front", 
   });
 
   assert.match(rendered, /fizzy-symphony watching boards/u);
+  assert.match(rendered, /Fizzy Symphony Daemon/u);
+  assert.match(rendered, /\[RUNNING\]/u);
+  assert.match(rendered, /Watched boards/u);
   assert.match(rendered, /Endpoint\s+http:\/\/127\.0\.0\.1:4567/u);
   assert.match(rendered, /Config\s+\.fizzy-symphony\/config\.yml/u);
   assert.match(rendered, /Source repo\s+\/work\/repo/u);
@@ -62,6 +70,7 @@ test("daemon start summary explains routes and dirty-repo protection up front", 
   assert.match(rendered, /Ready -> Done \(codex\)/u);
   assert.match(rendered, /Live board/u);
   assert.match(rendered, /#42 Fix terminal output/u);
+  assert.doesNotMatch(rendered, /\x1b\[/u);
 });
 
 test("human daemon logger renders dirty-source protection without JSON", () => {
@@ -100,6 +109,7 @@ test("setup prompt implementation is Terminal Kit-only", async () => {
   assert.doesNotMatch(cli, /node:readline\/promises|createInterface|terminalPrompts/u);
   assert.equal(supportsColor({ TERM: "xterm-256color" }, { isTTY: true }), true);
   assert.equal(supportsColor({ TERM: "dumb" }, { isTTY: true }), false);
+  assert.equal(supportsColor({ TERM: "xterm-256color", CI: "true" }, { isTTY: true }), false);
 });
 
 function setupResultFixture() {

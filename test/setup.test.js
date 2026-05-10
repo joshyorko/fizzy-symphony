@@ -563,6 +563,62 @@ test("runSetup writes every selected board to the generated config", async () =>
   assert.match(written, /label: Docs Board/);
 });
 
+test("runSetup passes live boards into the setup-mode prompt", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-mode-board-context-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+  const seen = [];
+
+  await runSetup({
+    configPath: join(dir, ".fizzy-symphony", "config.yml"),
+    fizzy: fakeFizzy({ boards: [boardFixture(), secondBoardFixture()] }),
+    runner: fakeRunner(),
+    account: "acct_1",
+    workspaceRepo: dir,
+    workflowPolicy: { action: "skip" },
+    prompts: {
+      async selectSetupMode(modes, context) {
+        seen.push({
+          modes,
+          boards: context.boards.map((board) => [board.id, board.name])
+        });
+        return "existing";
+      },
+      async selectBoards(boards) {
+        return [boards[1]];
+      }
+    },
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.deepEqual(seen, [{
+    modes: ["existing", "create_starter", "adopt_starter"],
+    boards: [["board_1", "Agent Board"], ["board_2", "Docs Board"]]
+  }]);
+});
+
+test("runSetup refuses to guess among multiple existing boards without a prompt or board flag", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-missing-board-selection-"));
+  await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");
+
+  await assert.rejects(
+    () => runSetup({
+      configPath: join(dir, ".fizzy-symphony", "config.yml"),
+      fizzy: fakeFizzy({ boards: [boardFixture(), secondBoardFixture()] }),
+      runner: fakeRunner(),
+      account: "acct_1",
+      setupMode: "existing",
+      workspaceRepo: dir,
+      workflowPolicy: { action: "skip" },
+      env: { FIZZY_API_TOKEN: "token" }
+    }),
+    (error) => {
+      assert.equal(error.code, "SETUP_BOARD_SELECTION_REQUIRED");
+      assert.match(error.details.remediation, /--board/u);
+      return true;
+    }
+  );
+});
+
 test("runSetup writes default config paths that resolve to the selected workspace repo", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-default-config-paths-"));
   await writeFile(join(dir, "WORKFLOW.md"), "# Workflow\n", "utf8");

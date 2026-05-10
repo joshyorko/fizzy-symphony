@@ -93,35 +93,64 @@ async function createTerminalKitDashboard() {
 
 function renderTerminalKitDashboard(terminal, model, options = {}) {
   terminal.clear();
-  terminal.bold(`${model.title}\n\n`);
+  writeBold(terminal, `${model.title}\n`);
+  terminal("Command: fizzy-symphony dashboard\n\n");
+  terminal(`State: ${model.state.label} - ${model.state.detail}\n`);
   terminal(`Instance: ${model.instance.id}${model.instance.label ? ` (${model.instance.label})` : ""}\n`);
   terminal(`Endpoint: ${model.instance.endpoint}\n`);
-  terminal(`Ready: ${model.readiness.ready ? "yes" : "no"}\n`);
-  terminal(`Runner: ${model.runner.label}\n\n`);
-  terminal(`Boards: ${model.counts.boards}  Routes: ${model.counts.routes}  Active: ${model.counts.activeRuns}\n`);
-  terminal(`Claims: ${model.counts.claims}  Workpads: ${model.counts.workpads}  Failures: ${model.counts.failures}\n`);
-  terminal(`Webhook errors: ${model.counts.webhookErrors}  Capacity refusals: ${model.counts.capacityRefusals}\n`);
+  terminal(`Runner: ${model.runner.label}\n`);
   terminal(`Cleanup: ${model.cleanup.status}\n`);
-  writeTerminalRows(terminal, "Blockers", model.readiness.blockers.map((blocker) => blocker.code ?? "BLOCKED"));
-  writeTerminalRows(terminal, "Active", model.activeRuns.map((run) => {
-    const cardNumber = run.card_number ?? run.card?.number;
-    const workspacePath = run.workspace_path ?? run.workspace?.path;
-    return `${run.id ?? run.run_id ?? "run"}${cardNumber ? ` #${cardNumber}` : ""}${workspacePath ? ` -> ${workspacePath}` : ""}`;
-  }));
-  writeTerminalRows(terminal, "Worktrees", model.workspacePaths);
-  writeTerminalRows(terminal, "Recent failures", model.failures.map((failure) => {
-    const code = failure.error?.code ?? failure.code ?? "FAILED";
-    return `${failure.run_id ?? failure.id ?? failure.card_id ?? "run"}: ${code}`;
-  }));
-  terminal(`\nRefresh: ${options.refreshMs}ms. Press q to exit.\n`);
+  if (model.updatedAt) terminal(`Updated: ${model.updatedAt}\n`);
+  terminal("\nCounters\n");
+  writeTerminalMetrics(terminal, model.metrics);
+  writeTerminalGroupedRows(terminal, "Board workflow", model.sections.boardWorkflow, "No watched boards or golden-ticket routes reported.");
+  writeTerminalRows(terminal, "Active work", model.sections.activeWork, "No active work is running.");
+  writeTerminalRows(terminal, "Recent activity", model.sections.recentActivity, "No recent completions or runtime warnings reported.");
+  writeTerminalRows(terminal, "Failures and blockers", model.sections.failures, "No readiness blockers or recent failures reported.");
+  terminal("\nFooter\n");
+  terminal(`- Refresh: ${options.refreshMs}ms\n`);
+  terminal("- Controls: q, Esc, or Ctrl-C exits the live dashboard.\n");
 }
 
-function writeTerminalRows(terminal, title, rows = []) {
-  const visible = rows.filter(Boolean).slice(0, 3);
-  if (visible.length === 0) return;
+function writeTerminalMetrics(terminal, metrics = []) {
+  const rows = metrics.filter((metric) => metric.value !== undefined);
+  for (let index = 0; index < rows.length; index += 3) {
+    terminal(`- ${rows.slice(index, index + 3).map((metric) => `${metric.label}: ${metric.value}`).join("  ")}\n`);
+  }
+}
+
+function writeTerminalGroupedRows(terminal, title, groups = [], emptyText = "") {
+  const visible = groups.filter(Boolean).slice(0, 4);
   terminal(`\n${title}:\n`);
+  if (visible.length === 0) {
+    if (emptyText) terminal(`- ${emptyText}\n`);
+    return;
+  }
+  for (const group of visible) {
+    terminal(`- ${group.title}\n`);
+    for (const row of group.rows.slice(0, 3)) terminal(`  - ${row}\n`);
+    if (group.rows.length > 3) terminal(`  - ... ${group.rows.length - 3} more\n`);
+  }
+  if (groups.length > visible.length) terminal(`- ... ${groups.length - visible.length} more\n`);
+}
+
+function writeTerminalRows(terminal, title, rows = [], emptyText = "") {
+  const visible = rows.filter(Boolean).slice(0, 4);
+  terminal(`\n${title}:\n`);
+  if (visible.length === 0) {
+    if (emptyText) terminal(`- ${emptyText}\n`);
+    return;
+  }
   for (const row of visible) terminal(`- ${row}\n`);
   if (rows.length > visible.length) terminal(`- ... ${rows.length - visible.length} more\n`);
+}
+
+function writeBold(terminal, text) {
+  if (typeof terminal.bold === "function") {
+    terminal.bold(text);
+  } else {
+    terminal(text);
+  }
 }
 
 function waitForTerminalInput(terminal, refreshMs) {

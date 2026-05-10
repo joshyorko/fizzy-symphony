@@ -14,7 +14,14 @@ function statusSnapshot() {
     readiness: { ready: false, blockers: [{ code: "RUNNER_NOT_READY" }] },
     runner_health: { status: "unavailable", kind: "cli_app_server" },
     watched_boards: [{ id: "board_1", label: "Agents" }],
-    routes: [{ id: "route_1", board_id: "board_1", source_column_id: "ready" }],
+    routes: [{
+      id: "route_1",
+      board_id: "board_1",
+      source_column_id: "ready",
+      source_column_name: "Ready for Agents",
+      backend: "codex",
+      completion: { policy: "move_to_column", target_column_id: "done", target_column_name: "Done" }
+    }],
     active_runs: [{
       id: "run_1",
       card: { number: 42, title: "Fix terminal output" },
@@ -24,16 +31,19 @@ function statusSnapshot() {
     claims: [{ id: "claim_1", card_id: "card_1", status: "claimed" }],
     workpads: [{ card_id: "card_1", comment_id: "comment_workpad" }],
     retry_queue: [{ run_id: "run_retry" }],
-    recent_completions: [{ run_id: "run_done", card_id: "card_done" }],
-    recent_failures: [{ run_id: "run_failed", error: { code: "RUNNER_ERROR" } }],
+    recent_completions: [{ run_id: "run_done", card_id: "card_done", completed_at: "2026-04-29T12:05:00.000Z" }],
+    recent_failures: [{ run_id: "run_failed", error: { code: "RUNNER_ERROR", message: "runner failed" } }],
     webhook: {
       enabled: true,
       management: { enabled: true, status: "managed" },
-      recent_delivery_errors: [{ code: "DELIVERY_FAILED" }]
+      recent_delivery_errors: [{ code: "DELIVERY_FAILED", message: "callback failed" }]
     },
     capacity_refusals: [{ card_id: "card_blocked", reason: "agent capacity reached" }],
+    recent_warnings: [{ code: "WORKPAD_UPDATE_FAILED", message: "workpad update failed" }],
+    workpad_failures: [{ run_id: "run_1", error: { code: "COMMENT_UPDATE_FAILED" } }],
     cleanup_state: { status: "preserved" },
-    validation: { warnings: [{ code: "ENTROPY_UNKNOWN" }], errors: [] }
+    validation: { warnings: [{ code: "ENTROPY_UNKNOWN" }], errors: [] },
+    last_updated_at: "2026-04-29T12:06:00.000Z"
   };
 }
 
@@ -60,8 +70,11 @@ function clone(value) {
 test("dashboard model summarizes status truth without inventing workflow state", () => {
   const model = createDashboardModel(statusSnapshot(), { endpoint: "http://127.0.0.1:4567" });
 
-  assert.equal(model.title, "fizzy-symphony dashboard");
+  assert.equal(model.title, "fizzy-symphony operator cockpit");
   assert.equal(model.instance.id, "instance-a");
+  assert.equal(model.state.label, "BLOCKED");
+  assert.equal(model.state.running, true);
+  assert.match(model.state.detail, /1 active run/u);
   assert.equal(model.readiness.status, "not ready");
   assert.equal(model.runner.label, "cli_app_server unavailable");
   assert.equal(model.counts.boards, 1);
@@ -73,17 +86,24 @@ test("dashboard model summarizes status truth without inventing workflow state",
   assert.equal(model.counts.completions, 1);
   assert.equal(model.counts.webhookErrors, 1);
   assert.equal(model.counts.capacityRefusals, 1);
+  assert.equal(model.counts.runtimeWarnings, 1);
+  assert.equal(model.counts.workpadFailures, 1);
   assert.equal(model.cleanup.status, "preserved");
   assert.deepEqual(model.workspacePaths, ["/work/repo/.fizzy-symphony/worktrees/card-42"]);
+  assert.equal(model.sections.boardWorkflow[0].title, "Agents (board_1)");
+  assert.match(model.sections.boardWorkflow[0].rows[0], /Ready for Agents -> Done \(codex\)/u);
+  assert.match(model.sections.recentActivity[0], /completed run_done/u);
+  assert.match(model.sections.failures.join("\n"), /RUNNER_NOT_READY/u);
 });
 
 test("dashboard text fallback renders operator sections for non-TTY output", () => {
   const text = renderDashboardText(createDashboardModel(statusSnapshot()));
 
-  assert.match(text, /fizzy-symphony dashboard/u);
+  assert.match(text, /fizzy-symphony operator cockpit/u);
+  assert.match(text, /State: BLOCKED/u);
   assert.match(text, /Instance: instance-a \(local\)/u);
-  assert.match(text, /Ready: no/u);
   assert.match(text, /Runner: cli_app_server unavailable/u);
+  assert.match(text, /Counters/u);
   assert.match(text, /Boards: 1/u);
   assert.match(text, /Routes: 1/u);
   assert.match(text, /Active runs: 1/u);
@@ -91,11 +111,38 @@ test("dashboard text fallback renders operator sections for non-TTY output", () 
   assert.match(text, /Webhook errors: 1/u);
   assert.match(text, /Capacity refusals: 1/u);
   assert.match(text, /Cleanup: preserved/u);
-  assert.match(text, /Blockers\n- RUNNER_NOT_READY/u);
-  assert.match(text, /Active\n- run_1 #42 Fix terminal output \(running\) -> \/work\/repo\/\.fizzy-symphony\/worktrees\/card-42/u);
-  assert.match(text, /Worktrees\n- \/work\/repo\/\.fizzy-symphony\/worktrees\/card-42/u);
-  assert.match(text, /Recent failures\n- run_failed: RUNNER_ERROR/u);
-  assert.match(text, /Capacity refusals\n- card_blocked: agent capacity reached/u);
+  assert.match(text, /Board workflow/u);
+  assert.match(text, /Agents \(board_1\)/u);
+  assert.match(text, /Ready for Agents -> Done \(codex\)/u);
+  assert.match(text, /Active work/u);
+  assert.match(text, /run_1 #42 Fix terminal output \(running\)/u);
+  assert.match(text, /Recent activity/u);
+  assert.match(text, /completed run_done/u);
+  assert.match(text, /Failures and blockers/u);
+  assert.match(text, /RUNNER_NOT_READY/u);
+  assert.match(text, /run_failed: RUNNER_ERROR - runner failed/u);
+  assert.match(text, /card_blocked: agent capacity reached/u);
+  assert.match(text, /Footer/u);
+  assert.match(text, /q, Esc, or Ctrl-C/u);
+});
+
+test("dashboard model distinguishes running, ready, and blocked states", () => {
+  const running = createDashboardModel({
+    ...statusSnapshot(),
+    readiness: { ready: true, blockers: [] },
+    runner_health: { status: "ready", kind: "cli_app_server" }
+  });
+  const ready = createDashboardModel({
+    ...statusSnapshot(),
+    readiness: { ready: true, blockers: [] },
+    runner_health: { status: "ready", kind: "cli_app_server" },
+    active_runs: []
+  });
+  const blocked = createDashboardModel(statusSnapshot());
+
+  assert.equal(running.state.label, "RUNNING");
+  assert.equal(ready.state.label, "READY");
+  assert.equal(blocked.state.label, "BLOCKED");
 });
 
 test("dashboard config discovery loads repo dotenv before config parsing", async () => {

@@ -96,24 +96,53 @@ test("setup wizard supports the existing-board lane and adopt-starter selection"
   ];
 
   const adoptAdapter = fakeAdapter([
-    ["menu", "existing_lane"],
     ["menu", "adopt_starter"],
     ["menu", boards[1]]
   ]);
   const adoptProvider = await createSetupWizardPromptProvider(fakeIo(), {}, { adapter: adoptAdapter });
 
-  assert.equal(await adoptProvider.selectSetupMode(["existing", "create_starter", "adopt_starter"]), "adopt_starter");
+  assert.equal(await adoptProvider.selectSetupMode(["existing", "create_starter", "adopt_starter"], { boards }), "adopt_starter");
   assert.deepEqual(await adoptProvider.selectBoards(boards), [boards[1]]);
 
   const existingAdapter = fakeAdapter([
-    ["menu", "existing_lane"],
     ["menu", "existing"],
     ["multiselect", [boards[0], boards[1]]]
   ]);
   const existingProvider = await createSetupWizardPromptProvider(fakeIo(), {}, { adapter: existingAdapter });
 
-  assert.equal(await existingProvider.selectSetupMode(["existing", "create_starter", "adopt_starter"]), "existing");
+  assert.equal(await existingProvider.selectSetupMode(["existing", "create_starter", "adopt_starter"], { boards }), "existing");
   assert.deepEqual(await existingProvider.selectBoards(boards), boards);
+});
+
+test("setup wizard uses one board-path menu and previews existing boards before selection", async () => {
+  const boards = [
+    boardFixture("board_1", "Core Board"),
+    boardFixture("board_2", "Starter Board")
+  ];
+  const adapter = fakeAdapter([
+    ["menu", "existing"],
+    ["multiselect", [boards[0]]]
+  ]);
+  const provider = await createSetupWizardPromptProvider(fakeIo(), {}, { adapter });
+
+  assert.equal(
+    await provider.selectSetupMode(["existing", "create_starter", "adopt_starter"], { boards }),
+    "existing"
+  );
+  assert.deepEqual(await provider.selectBoards(boards), [boards[0]]);
+
+  const modeMenu = adapter.calls.find((call) => call[0] === "menu");
+  assert.equal(modeMenu[1].message, "How should setup configure boards?");
+  assert.deepEqual(modeMenu[1].choices.map((choice) => choice.label), [
+    "Create recommended starter board",
+    "Use existing board(s)",
+    "Adopt existing starter board"
+  ]);
+  assert.match(modeMenu[1].choices[1].hint, /2 boards found/u);
+
+  const boardPreview = adapter.calls.find((call) => call[0] === "note" && call[1].title === "Available boards");
+  assert.match(boardPreview[1].text, /Core Board/u);
+  assert.match(boardPreview[1].text, /Starter Board/u);
 });
 
 test("setup wizard cancellation before mutations throws SETUP_CANCELLED", async () => {
@@ -158,6 +187,54 @@ test("setup wizard grabs and releases an injected terminal explicitly", async ()
   assert.deepEqual(terminal.grabs, [{ mouse: "button" }]);
   provider.close();
   assert.deepEqual(terminal.grabs, [{ mouse: "button" }, false]);
+});
+
+test("terminal setup wizard frames board selection with details and selected state", async () => {
+  const boards = [
+    boardFixture("board_1", "Core Board", {
+      description: "Production dispatch lane",
+      columns: [{}, {}],
+      cards: [{ golden: true }]
+    }),
+    boardFixture("board_2", "Starter Board", {
+      description: "Starter route for new agents",
+      columns: [{}, {}, {}],
+      cards: []
+    })
+  ];
+  const terminal = fakeTerminal([
+    ["menu", 1],
+    ["menu", 1],
+    ["menu", 2]
+  ]);
+  const provider = await createSetupWizardPromptProvider(fakeIo(), { TERM: "xterm-256color" }, {
+    terminal
+  });
+
+  assert.equal(
+    await provider.selectSetupMode(["existing", "create_starter", "adopt_starter"], { boards }),
+    "existing"
+  );
+  assert.deepEqual(await provider.selectBoards(boards), boards);
+
+  const output = terminal.outputText();
+  assert.match(output, /fizzy-symphony setup wizard/u);
+  assert.match(output, /Step 1/u);
+  assert.match(output, /Board path/u);
+  assert.match(output, /Review detected boards before choosing what setup will watch/u);
+  assert.match(output, /Core Board/u);
+  assert.match(output, /board_1/u);
+  assert.match(output, /Production dispatch lane/u);
+  assert.match(output, /2 columns/u);
+  assert.match(output, /1 golden route/u);
+
+  const boardMenus = terminal.menus.filter((menu) => (
+    menu.items.some((item) => item.includes("Use selected boards"))
+  ));
+  assert.equal(boardMenus.length, 2);
+  assert.match(boardMenus[0].items.join("\n"), /\[x\] Core Board.*board_1.*Production dispatch lane/u);
+  assert.match(boardMenus[0].items.join("\n"), /\[ \] Starter Board.*board_2.*Starter route for new agents/u);
+  assert.match(boardMenus[1].items.join("\n"), /\[x\] Starter Board.*board_2.*Starter route for new agents/u);
 });
 
 function fakeIo() {
@@ -211,15 +288,28 @@ function accountFixture(id, name) {
   return { id, name, slug: `/${id}` };
 }
 
-function boardFixture(id, name) {
-  return { id, name, columns: [], cards: [] };
+function boardFixture(id, name, attrs = {}) {
+  return { id, name, columns: [], cards: [], ...attrs };
 }
 
-function fakeTerminal() {
-  function terminal() {}
+function fakeTerminal(script = []) {
+  const queue = [...script];
+  const output = [];
+  function terminal(text) {
+    output.push(String(text));
+  }
   terminal.grabs = [];
+  terminal.menus = [];
   terminal.grabInput = (value) => {
     terminal.grabs.push(value);
   };
+  terminal.singleColumnMenu = (items, options) => {
+    terminal.menus.push({ items, options });
+    const entry = queue.shift();
+    assert.ok(entry, "missing fake terminal menu response");
+    assert.equal(entry[0], "menu");
+    return { promise: Promise.resolve({ selectedIndex: entry[1] }) };
+  };
+  terminal.outputText = () => output.join("");
   return terminal;
 }

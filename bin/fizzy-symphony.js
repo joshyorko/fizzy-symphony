@@ -19,6 +19,7 @@ import { isRemoteGitUrl } from "../src/git-source-cache.js";
 import { runSetup } from "../src/setup.js";
 import { runStatusCommand } from "../src/status-cli.js";
 import { discoverStatusEndpoints } from "../src/status-discovery.js";
+import { createTerminalRenderer } from "../src/terminal-renderer.js";
 import {
   createHumanDaemonLogger,
   formatDaemonStartSummary,
@@ -62,7 +63,9 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
     return 0;
   } catch (error) {
     if (usesFriendlyErrors(command, args.slice(1))) {
-      io.stderr.write(formatFriendlyError(error, command));
+      io.stderr.write(formatFriendlyError(error, command, {
+        color: supportsColor(io.env ?? process.env, io.stderr)
+      }));
       return isFizzySymphonyError(error) ? 2 : 1;
     }
 
@@ -249,7 +252,9 @@ async function boardsCommand(args, io) {
     }
   }
 
-  io.stdout.write(formatBoardsList(hydrated, account));
+  io.stdout.write(formatBoardsList(hydrated, account, {
+    color: supportsColor(io.env ?? process.env, io.stdout)
+  }));
   return 0;
 }
 
@@ -276,24 +281,62 @@ function normalizeAccountValue(account = {}) {
   return slug || account.id || account.name || "";
 }
 
-function formatBoardsList(boards = [], account = "") {
-  const lines = [`Fizzy boards${account ? ` for ${account}` : ""}`];
+function formatBoardsList(boards = [], account = "", options = {}) {
+  const renderer = createTerminalRenderer(options);
+  const lines = [
+    renderer.title("Fizzy Symphony Boards", "Fizzy board inventory for golden-ticket routing"),
+    "",
+    renderer.section("Overview"),
+    renderer.kvRows([
+      ...(account ? [["Account", account]] : []),
+      ["Boards", boards.length]
+    ])
+  ];
+  if (boards.length === 0) {
+    lines.push("", renderer.callout("warning", "No boards found."));
+    return `${lines.join("\n")}\n`;
+  }
+
+  lines.push(
+    "",
+    renderer.section("Boards"),
+    renderer.table(["Board", "ID", "Columns", "Golden tickets"], boards.map((board) => {
+      const goldenCards = (board.cards ?? []).filter((card) => card.golden);
+      return [
+        board.name ?? board.label ?? board.id,
+        board.id ?? "unknown",
+        (board.columns ?? []).length,
+        goldenCardTitles(goldenCards).join(", ") || "-"
+      ];
+    })),
+    "",
+    renderer.section("Details")
+  );
+
   for (const board of boards) {
-    lines.push(`- ${board.name ?? board.label ?? board.id} (${board.id})`);
+    const boardName = board.name ?? board.label ?? board.id;
+    const goldenCards = (board.cards ?? []).filter((card) => card.golden);
+    lines.push(`  ${boardName} (${board.id ?? "unknown"})`);
     const columns = board.columns ?? [];
+    lines.push(indentBlock(renderer.kvRows([
+      ["Columns", columns.length],
+      ["Golden tickets", goldenCardTitles(goldenCards).join(", ") || "-"]
+    ], { width: 16 })));
     if (columns.length > 0) {
-      lines.push("  columns:");
       for (const column of columns) {
-        lines.push(`    - ${column.name ?? column.title ?? column.id} (${column.id})`);
+        lines.push(`    ${column.name ?? column.title ?? column.id} (${column.id ?? "unknown"})`);
       }
     }
-    const goldenCards = (board.cards ?? []).filter((card) => card.golden);
-    if (goldenCards.length > 0) {
-      lines.push(`  golden: ${goldenCards.map((card) => `#${card.title ?? card.name ?? card.id}`).join(", ")}`);
-    }
   }
-  if (boards.length === 0) lines.push("- no boards found");
   return `${lines.join("\n")}\n`;
+}
+
+function goldenCardTitles(cards = []) {
+  return cards.map((card) => card.title ?? card.name ?? card.id).filter(Boolean);
+}
+
+function indentBlock(text, prefix = "  ") {
+  return String(text).split("\n").map((line) => `${prefix}${line}`).join("\n");
 }
 
 async function createRunnerDependency({ io, config, env }) {
@@ -474,7 +517,15 @@ function maxAgentsForArgs(args, env = process.env) {
 }
 
 function setupCommandOptionsForArgs(args) {
-  if (!isImplicitGuidedSetupArgs(args)) return {};
+  if (!isImplicitGuidedSetupArgs(args)) {
+    if (needsGuidedBoardSelection(args)) {
+      return {
+        promptForCredentials: true,
+        guidedSetup: true
+      };
+    }
+    return {};
+  }
   return {
     friendlyOutput: true,
     promptForCredentials: true,
@@ -557,6 +608,14 @@ function isImplicitGuidedSetupArgs(args) {
   if (args.includes("--starter") || args.includes("--new-board")) return false;
   if (args.includes("--adopt-starter")) return false;
   return !optionValue(args, "--mode");
+}
+
+function needsGuidedBoardSelection(args) {
+  if (args.includes("--template-only")) return false;
+  if (boardValues(args)) return false;
+  if (args.includes("--adopt-starter")) return true;
+  const mode = normalizeSetupMode(optionValue(args, "--mode"));
+  return mode === "existing" || mode === "adopt_starter";
 }
 
 function usesFriendlyErrors(command, args) {
@@ -663,18 +722,25 @@ function isInteractiveStderr(io) {
   return Boolean(io.stderr?.isTTY) && !nonEmpty(io.env?.CI);
 }
 
-function formatFriendlyError(error, command) {
+function formatFriendlyError(error, command, options = {}) {
+  const renderer = createTerminalRenderer(options);
+  const label = error.code === "SETUP_TTY_REQUIRED" || error.code === "FIZZY_CREDENTIALS_MISSING"
+    ? "needs input"
+    : "stopped";
   const lines = [
-    `fizzy-symphony ${command} could not finish.`,
+    renderer.title("Fizzy Symphony Setup", "Guided first-run configuration"),
+    `${renderer.badge(label === "needs input" ? "warning" : "error", label)} fizzy-symphony ${command} could not finish.`,
     "",
-    error.message
+    renderer.section("Issue"),
+    renderer.kvRows([
+      ["Message", error.message],
+      ...(error.code ? [["Code", error.code]] : [])
+    ])
   ];
-
-  if (error.code) lines.push(`Code: ${error.code}`);
 
   const remediation = friendlyRemediation(error);
   if (remediation.length > 0) {
-    lines.push("", "Next:", ...remediation.map((line) => `  ${line}`));
+    lines.push("", renderer.section("Next steps"), ...remediation.map((line) => `  ${line}`));
   }
 
   return `${lines.join("\n")}\n`;

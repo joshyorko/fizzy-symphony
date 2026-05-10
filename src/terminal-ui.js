@@ -1,14 +1,5 @@
 import { redactGitRemoteUrl } from "./git-source-cache.js";
-
-const RESET = "\x1b[0m";
-const COLORS = {
-  dim: "38;2;100;116;139",
-  primary: "1;38;2;96;165;250",
-  success: "1;38;2;34;197;94",
-  warning: "1;38;2;250;204;21",
-  error: "1;38;2;248;113;113",
-  accent: "1;38;2;244;114;182"
-};
+import { createTerminalRenderer, supportsColor as rendererSupportsColor } from "./terminal-renderer.js";
 
 export function formatSetupMutationReview(plan = {}, options = {}) {
   const lines = [
@@ -40,6 +31,7 @@ export function setupMutationLines(plan = {}) {
 }
 
 export function formatSetupSuccess(result = {}, options = {}) {
+  const renderer = createTerminalRenderer(options);
   const board = result.boards?.[0] ?? {};
   const route = result.routes?.[0] ?? {};
   const golden = findGoldenCard(board, route);
@@ -60,26 +52,34 @@ export function formatSetupSuccess(result = {}, options = {}) {
   const startCommand = `fizzy-symphony start --config ${configPath}`;
 
   return [
-    `${mark(options, "success")} fizzy-symphony is ready`,
+    renderer.title("Fizzy Symphony Setup", "Golden-ticket workflow for board-native agents"),
+    `${renderer.badge("success", "ready")} fizzy-symphony is ready`,
     "",
-    `${muted(options, "Setup wrote the route into Fizzy. The golden card is the workflow; normal cards are the work.")}`,
+    renderer.callout("success", "Setup wrote the route into Fizzy.", [
+      "The golden card is the workflow; normal cards are the work."
+    ]),
     "",
-    `  ${label(options, "Config")} ${configPath}`,
-    `  ${label(options, "Board")} ${boardName} (${boardId})`,
-    `  ${label(options, "Route")} ${routeLabel}`,
-    `  ${label(options, "Golden")} ${golden ? goldenTitle(golden) : "Repo Agent"} ${muted(options, tags)}`,
-    `  ${label(options, "Model")} ${model || "Codex default"}`,
-    `  ${label(options, "Reasoning")} ${reasoning || "medium"}`,
-    `  ${label(options, "Max agents")} ${maxAgents || "1"}`,
-    `  ${label(options, "Workspace")} ${workspaceMode}`,
-    `  ${label(options, "Runner")} ${runner}`,
+    renderer.section("Overview"),
+    renderer.kvRows([
+      ["Config", configPath],
+      ["Board", `${boardName} (${boardId})`],
+      ["Route", routeLabel],
+      ["Golden", `${golden ? goldenTitle(golden) : "Repo Agent"} ${renderer.muted(tags)}`],
+      ["Model", model || "Codex default"],
+      ["Reasoning", reasoning || "medium"],
+      ["Max agents", maxAgents || "1"],
+      ["Workspace", workspaceMode],
+      ["Runner", runner]
+    ]),
     "",
     formatBoardSnapshot(result.boards, result.routes, options),
     "",
-    `${label(options, "Start watching")}`,
-    `  ${startCommand}`,
+    renderer.section("Next steps"),
+    renderer.kvRows([
+      ["Start watching", startCommand]
+    ]),
     "",
-    `${label(options, "Smoke test")}`,
+    renderer.section("Smoke test"),
     "  1. Leave the golden card alone; it defines the route.",
     `  2. Create a normal Fizzy card in ${route.source_column_name ?? "Ready for Agents"}.`,
     "  3. Watch this terminal. Dirty repos are protected and reported before dispatch.",
@@ -88,6 +88,7 @@ export function formatSetupSuccess(result = {}, options = {}) {
 }
 
 export function formatDaemonStartSummary(daemon, options = {}) {
+  const renderer = createTerminalRenderer(options);
   const snapshot = daemon.status.status();
   const seconds = Math.round((daemon.config.polling?.interval_ms ?? 30000) / 1000);
   const endpoint = daemon.endpoint?.base_url ?? snapshot.endpoint?.base_url ?? "unknown";
@@ -106,30 +107,35 @@ export function formatDaemonStartSummary(daemon, options = {}) {
     : `fizzy-symphony status --endpoint ${endpoint}`;
   const lines = [
     "",
-    `${mark(options, "primary")} fizzy-symphony watching boards`,
+    renderer.title("Fizzy Symphony Daemon", "Watching Fizzy boards from this workstation"),
+    `${renderer.badge("success", "running")} fizzy-symphony watching boards`,
     "",
-    `  ${label(options, "Instance")} ${snapshot.instance?.id ?? "unknown"}`,
-    `  ${label(options, "Endpoint")} ${endpoint}`,
-    ...(configPath ? [`  ${label(options, "Config")} ${configPath}`] : []),
-    ...(sourceRepo ? [`  ${label(options, "Source repo")} ${sourceRepo}`] : []),
-    ...(worktreeRoot ? [`  ${label(options, "Worktrees")} ${worktreeRoot}`] : []),
-    `  ${label(options, "Polling")} ${seconds}s`,
-    `  ${label(options, "Safety")} protecting your work: dirty source repos are skipped, not overwritten`,
-    ...(daemon.config.diagnostics?.no_dispatch
-      ? [`  ${label(options, "Mode")} watch only: dispatch is disabled in config`]
-      : []),
-    `  ${label(options, "Inspect")} ${dashboardCommand}`,
-    `  ${label(options, "Status")} ${statusCommand}`,
+    renderer.section("Overview"),
+    renderer.kvRows([
+      ["Instance", snapshot.instance?.id ?? "unknown"],
+      ["Endpoint", endpoint],
+      ...(configPath ? [["Config", configPath]] : []),
+      ...(sourceRepo ? [["Source repo", sourceRepo]] : []),
+      ...(worktreeRoot ? [["Worktrees", worktreeRoot]] : []),
+      ["Polling", `${seconds}s`],
+      ["Safety", "protecting your work: dirty source repos are skipped, not overwritten"],
+      ...(daemon.config.diagnostics?.no_dispatch
+        ? [["Mode", "watch only: dispatch is disabled in config"]]
+        : []),
+      ["Inspect", dashboardCommand],
+      ["Status", statusCommand]
+    ]),
     ""
   ];
 
   const boards = snapshot.watched_boards ?? [];
   const routes = snapshot.routes ?? [];
   if (boards.length === 0) {
-    lines.push(`  ${mark(options, "warning")} No watched boards configured.`);
+    lines.push(renderer.callout("warning", "No watched boards configured."));
     return `${lines.join("\n")}\n`;
   }
 
+  lines.push(renderer.section("Watched boards"));
   for (const board of boards) {
     const boardRoutes = routes.filter((route) => route.board_id === board.id);
     lines.push(`  ${mark(options, "accent")} ${board.label ?? board.name ?? board.id}`);
@@ -159,10 +165,11 @@ function defaultWorkspace(config = {}) {
 }
 
 export function formatBoardSnapshot(boards = [], routes = [], options = {}) {
+  const renderer = createTerminalRenderer(options);
   const snapshots = (boards ?? []).filter(Boolean);
   if (snapshots.length === 0) return "";
 
-  const lines = [`${label(options, "Live board")}`];
+  const lines = [renderer.section("Live board")];
   const maxBoards = options.maxBoards ?? 3;
   const maxCardsPerColumn = options.maxCardsPerColumn ?? 5;
 
@@ -222,7 +229,7 @@ export function createHumanDaemonLogger(io, options = {}) {
 }
 
 export function supportsColor(env = process.env, stream = process.stdout) {
-  return Boolean(stream?.isTTY) && env.NO_COLOR === undefined && env.TERM !== "dumb";
+  return rendererSupportsColor(env, stream);
 }
 
 function reviewBoardCount(plan) {
@@ -306,26 +313,13 @@ function markForLevel(level) {
 }
 
 function mark(options, kind) {
-  const symbol = {
-    primary: "◆",
-    success: "✓",
-    warning: "▲",
-    error: "✗",
-    accent: "◇",
-    dim: "·"
-  }[kind] ?? "◇";
-  return style(options, COLORS[kind] ?? COLORS.primary, symbol);
+  return createTerminalRenderer(options).marker(kind);
 }
 
 function label(options, text) {
-  return style(options, COLORS.primary, `${String(text).padEnd(14, " ")} `);
+  return createTerminalRenderer(options).label(text, 14);
 }
 
 function muted(options, text) {
-  return style(options, COLORS.dim, text);
-}
-
-function style(options, code, text) {
-  if (!options.color) return text;
-  return `\x1b[${code}m${text}${RESET}`;
+  return createTerminalRenderer(options).muted(text);
 }
