@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 
 import {
   applyCompletionPolicy,
+  COMPLETION_FAILED_MARKER,
+  COMPLETION_MARKER,
   createCompletionFailureMarker,
   createCompletionMarker,
   evaluateCleanupEligibility,
@@ -129,7 +131,7 @@ test("completion-failure markers parse with proof fields and canonical JSON", ()
   assert.equal(parsed.proof_digest, "sha256:proof");
 });
 
-test("completion markers parse when live Fizzy plain text strips HTML sentinels", () => {
+test("completion markers parse when live Fizzy plain text strips HTML structure", () => {
   const completion = createCompletionMarker({
     run: run(),
     route: route(),
@@ -151,11 +153,11 @@ test("completion markers parse when live Fizzy plain text strips HTML sentinels"
   });
 
   assert.equal(
-    parseCompletionMarker(completion.body.replace("<!-- fizzy-symphony-marker -->\n", "")).run_id,
+    parseCompletionMarker(livePlainMarker(COMPLETION_MARKER, completion.payload, "fizzy-symphony recorded completion.")).run_id,
     "run_1"
   );
   assert.equal(
-    parseCompletionFailureMarker(failure.body.replace("<!-- fizzy-symphony-marker -->\n", "")).run_id,
+    parseCompletionFailureMarker(livePlainMarker(COMPLETION_FAILED_MARKER, failure.payload, "fizzy-symphony recorded a completion problem.")).run_id,
     "run_1"
   );
 });
@@ -430,6 +432,55 @@ test("workpad discovery prefers replacement comments after daemon restart", asyn
   assert.equal(snapshot.workpad_failures[0].replacement_skipped_reason, "already_replacement");
 });
 
+test("workpad discovery parses live Fizzy plain text without HTML sentinels", async () => {
+  const store = createWorkpadStatusStore();
+  const calls = [];
+  const activeCard = card({
+    comments: [
+      {
+        id: "comment_old",
+        body: livePlainWorkpadBody({
+          comment_id: "comment_old",
+          updated_at: "2026-04-29T12:00:00.000Z"
+        })
+      },
+      {
+        id: "comment_replacement",
+        body: livePlainWorkpadBody({
+          comment_id: "comment_replacement",
+          replacement_of_comment_id: "comment_old",
+          updated_at: "2026-04-29T12:06:00.000Z"
+        })
+      }
+    ]
+  });
+
+  const result = await upsertWorkpad({
+    config: { workpad: { enabled: true, mode: "single_comment" } },
+    status: store,
+    fizzy: {
+      async updateWorkpadComment({ comment_id }) {
+        calls.push(`update:${comment_id}`);
+        return { id: comment_id };
+      },
+      async postWorkpadComment() {
+        calls.push("post");
+        return { id: "comment_unexpected" };
+      }
+    },
+    card: activeCard,
+    route: route(),
+    run: run(),
+    workspace: workspace(),
+    phase: "runner_completed",
+    now: "2026-04-29T12:07:00.000Z"
+  });
+
+  assert.deepEqual(calls, ["update:comment_replacement"]);
+  assert.equal(result.action, "updated");
+  assert.equal(result.comment_id, "comment_replacement");
+});
+
 function createWorkpadStatusStore() {
   return createStatusStore({
     instance: { id: "instance-a" },
@@ -445,6 +496,15 @@ function createWorkpadStatusStore() {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function livePlainMarker(marker, payload, title) {
+  return [
+    title,
+    "",
+    `Automation marker${marker}`,
+    canonicalJson(payload)
+  ].join("\n");
 }
 
 function workpadCommentBody({ comment_id, replacement_of_comment_id, updated_at }) {
@@ -464,4 +524,16 @@ function workpadCommentBody({ comment_id, replacement_of_comment_id, updated_at 
     }),
     "```"
   ].join("\n");
+}
+
+function livePlainWorkpadBody({ comment_id, replacement_of_comment_id, updated_at }) {
+  return livePlainMarker("fizzy-symphony:workpad:v1", {
+    marker: "fizzy-symphony:workpad:v1",
+    card_id: "card_1",
+    comment_id,
+    replacement_of_comment_id,
+    run_id: "run_1",
+    phase: "runner_completed",
+    updated_at
+  }, "fizzy-symphony workpad.");
 }

@@ -633,7 +633,7 @@ function findWorkpadComment(comments = []) {
   const candidates = (comments ?? [])
     .map((comment, index) => {
       const body = commentBody(comment);
-      if (!body.includes(WORKPAD_SENTINEL)) return null;
+      if (!body.includes(WORKPAD_SENTINEL) && !body.includes("fizzy-symphony:workpad:v1")) return null;
       const payload = parseJsonBlock(body);
       return {
         card_id: comment.card_id,

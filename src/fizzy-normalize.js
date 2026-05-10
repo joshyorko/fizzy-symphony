@@ -5,7 +5,7 @@ export function richText(value) {
   if (Array.isArray(value)) return value.map(richText).filter(Boolean).join("\n");
   if (typeof value !== "object") return String(value);
 
-  for (const key of ["plain_text", "plainText", "markdown", "text", "content"]) {
+  for (const key of ["plain_text", "plainText", "markdown", "text", "content", "html", "body_html", "bodyHtml"]) {
     if (value[key] !== undefined && value[key] !== null) return richText(value[key]);
   }
 
@@ -15,7 +15,17 @@ export function richText(value) {
 
 export function commentBody(comment) {
   if (typeof comment === "string") return comment;
-  return richText(comment?.body ?? comment?.content ?? comment?.text ?? comment?.markdown ?? comment?.plain_text ?? comment?.plainText);
+  return richText(
+    comment?.body ??
+    comment?.content ??
+    comment?.text ??
+    comment?.markdown ??
+    comment?.plain_text ??
+    comment?.plainText ??
+    comment?.body_html ??
+    comment?.bodyHtml ??
+    comment?.html
+  );
 }
 
 export function cardDescription(card = {}) {

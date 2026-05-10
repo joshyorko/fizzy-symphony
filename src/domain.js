@@ -155,7 +155,10 @@ function normalizeNonDaemonComments(comments = []) {
 
 function isDaemonMarkerComment(comment) {
   const body = commentBody(comment);
-  return /<!--\s*fizzy-symphony-marker\s*-->/u.test(body) && /fizzy-symphony:[a-z-]+:v1/u.test(body);
+  return (
+    /<!--\s*fizzy-symphony-(?:marker|workpad)\s*-->/u.test(body) ||
+    /fizzy-symphony:(?:claim|completion|completion-failed|workpad):v1\s*\r?\n\s*\{/u.test(body)
+  );
 }
 
 function isDaemonTag(tag) {

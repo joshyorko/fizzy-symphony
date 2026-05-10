@@ -145,6 +145,15 @@ test("cardDigest excludes only explicit daemon-owned tags and marker comments", 
       "```"
     ].join("\n")
   };
+  const liveDaemonMarker = {
+    id: "comment_live_daemon",
+    body: [
+      "fizzy-symphony recorded completion.",
+      "",
+      "Automation markerfizzy-symphony:completion:v1",
+      canonicalJson({ marker: "fizzy-symphony:completion:v1", kind: "completion" })
+    ].join("\n")
+  };
 
   const withoutDaemonState = baseCard({
     tags: ["feature", "agent-rerun"],
@@ -158,7 +167,7 @@ test("cardDigest excludes only explicit daemon-owned tags and marker comments", 
       "agent-completed-abcdef123456",
       "agent-completion-failed-abcdef123456"
     ],
-    comments: [humanComment, daemonMarker]
+    comments: [humanComment, daemonMarker, liveDaemonMarker]
   });
 
   assert.equal(cardDigest(withDaemonState, route), cardDigest(withoutDaemonState, route));

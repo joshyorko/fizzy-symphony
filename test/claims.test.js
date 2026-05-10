@@ -5,6 +5,7 @@ import { FizzySymphonyError } from "../src/errors.js";
 import {
   applyClaimEventLog,
   canAcquireClaim,
+  CLAIM_MARKER,
   createBoardClaimStore,
   createClaimMarker,
   createReleaseMarker,
@@ -253,12 +254,25 @@ test("claim marker readers parse live Fizzy rich-text comment bodies", () => {
     workspace: workspace(),
     now: NOW
   });
+  const payload = JSON.stringify(marker.claim);
   const liveComment = {
     id: "comment_live",
-    body: {
-      plain_text: marker.body,
-      html: `<p>${marker.body}</p>`
-    },
+    body: [
+      "fizzy-symphony claimed this card.",
+      "",
+      "Status: claimed",
+      `Run: ${marker.claim.run_id}`,
+      `Expires: ${marker.claim.expires_at}`,
+      "",
+      `Automation marker${CLAIM_MARKER}`,
+      payload
+    ].join("\n"),
+    body_html: `<div class="action-text-content">
+  <p><strong>fizzy-symphony claimed this card.</strong></p>
+  <p>Status: <strong>claimed</strong><br>Run: <code>${marker.claim.run_id}</code><br>Expires: ${marker.claim.expires_at}</p>
+  <details><summary>Automation marker</summary><pre><code>${CLAIM_MARKER}
+${payload}</code></pre></details>
+</div>`,
     created_at: NOW.toISOString()
   };
 
@@ -271,7 +285,7 @@ test("claim marker readers parse live Fizzy rich-text comment bodies", () => {
   assert.equal(reduced[0].claim_id, "claim_1");
 });
 
-test("claim marker readers parse live Fizzy plain text when HTML sentinels are stripped", () => {
+test("claim marker readers parse live Fizzy plain text when details labels are glued to markers", () => {
   const marker = createClaimMarker({
     claim: claim(),
     route: route(),
@@ -280,7 +294,12 @@ test("claim marker readers parse live Fizzy plain text when HTML sentinels are s
     workspace: workspace(),
     now: NOW
   });
-  const stripped = marker.body.replace("<!-- fizzy-symphony-marker -->\n", "");
+  const stripped = [
+    "fizzy-symphony claimed this card.",
+    "",
+    `Automation marker${CLAIM_MARKER}`,
+    JSON.stringify(marker.claim)
+  ].join("\n");
 
   const parsed = readClaims([{ id: "comment_live", body: { plain_text: stripped }, created_at: NOW.toISOString() }]);
 
