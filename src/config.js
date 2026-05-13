@@ -411,7 +411,7 @@ export function generateOperatorConfig(options = {}) {
     "safety:",
     "  allowed_roots:",
     renderStringList(uniqueStrings(remoteWorkspaceRepo ? [sourceCachePath, "."] : [workspaceRepoPath, "."]), 4),
-    "  dirty_source_repo_policy: fail",
+    "  dirty_source_repo_policy: warn",
     "  ignored_dirty_paths:",
     renderStringList(ignoredDirtyPaths, 4)
   ];
@@ -1010,7 +1010,7 @@ function defaultConfig(options = {}) {
     safety: {
       allowed_roots: defaultAllowedRootsForConfig(options.configDir),
       ignored_dirty_paths: [...DEFAULT_SETUP_IGNORED_DIRTY_PATHS],
-      dirty_source_repo_policy: "fail",
+      dirty_source_repo_policy: "warn",
       cleanup: {
         policy: "preserve",
         require_proof_before_cleanup: true,

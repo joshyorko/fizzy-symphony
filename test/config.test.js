@@ -168,7 +168,7 @@ function minimalConfig() {
     },
     safety: {
       allowed_roots: [".", ".fizzy-symphony"],
-      dirty_source_repo_policy: "fail",
+      dirty_source_repo_policy: "warn",
       cleanup: {
         policy: "preserve",
         require_proof_before_cleanup: true,

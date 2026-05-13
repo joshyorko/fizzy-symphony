@@ -188,32 +188,24 @@ export async function preflightWorkspaceSource({ config, identity, fs = nodeFs, 
   await assertGitRepository(sourceRepositoryPath, exec);
   await assertGitRef(sourceRepositoryPath, identity.source_ref, exec);
 
-  const workspace = workspaceConfig(config, identity.workspace_name);
   const sourceStatus = await gitStatus({
     cwd: sourceRepositoryPath,
     exec,
     ignoredPaths: config?.safety?.ignored_dirty_paths ?? []
   });
   const snapshotPolicy = config?.safety?.dirty_source_repo_policy === "snapshot";
-  const policyRequiresClean = !snapshotPolicy && (
-    workspace?.require_clean_source === true ||
-    config?.safety?.dirty_source_repo_policy === "fail"
-  );
-
-  if (policyRequiresClean && !sourceStatus.clean) {
-    throw new FizzySymphonyError(
-      "WORKSPACE_SOURCE_DIRTY",
-      "Source repository has local changes and the workspace policy requires a clean source.",
-      {
-        preserve_workspace: true,
-        source_repository_path: sourceRepositoryPath,
-        dirty_paths: sourceStatus.paths
-      }
-    );
-  }
+  const dirtySourceWarning = !snapshotPolicy && !sourceStatus.clean;
+  const status = dirtySourceWarning ? "source_dirty_warning" : "ok";
 
   return {
-    status: "ok",
+    status,
+    ...(dirtySourceWarning ? {
+      code: "WORKSPACE_SOURCE_DIRTY_WARNING",
+      message: "Source repository has local changes; continuing from the committed source ref. Uncommitted changes are not copied into agent worktrees.",
+      uncommitted_changes_included: false,
+      dirty_source_repo_policy: config?.safety?.dirty_source_repo_policy ?? "warn",
+      remediation: "Commit first if the agent needs these edits; otherwise dispatch continues from the committed ref."
+    } : {}),
     source_repository_path: sourceRepositoryPath,
     source_ref: identity.source_ref,
     clean: sourceStatus.clean,

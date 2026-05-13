@@ -775,8 +775,8 @@ test("runReconciliationTick runs workspace preflight before acquiring a claim", 
   const status = statusStore(config);
   const route = routeFixture();
   const card = cardFixture("card_1", 1);
-  const preflightError = new Error("source repo is dirty");
-  preflightError.code = "WORKSPACE_SOURCE_DIRTY";
+  const preflightError = new Error("source ref is invalid");
+  preflightError.code = "WORKSPACE_SOURCE_REF_INVALID";
 
   await assert.rejects(
     () => runReconciliationTick({
@@ -814,10 +814,62 @@ test("runReconciliationTick runs workspace preflight before acquiring a claim", 
       workflowLoader: {},
       runner: {}
     }),
-    (error) => error.code === "WORKSPACE_SOURCE_DIRTY"
+    (error) => error.code === "WORKSPACE_SOURCE_REF_INVALID"
   );
 
   assert.deepEqual(calls, ["discover", "route", "resolveIdentity", "preflight"]);
+});
+
+test("runReconciliationTick warns and continues when workspace preflight reports a dirty source", async () => {
+  const calls = [];
+  const events = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-dirty-source-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_1", 1);
+  const deps = successfulDependencies({ calls, cards: [card], route });
+  const prepare = deps.workspaceManager.prepare;
+  deps.workspaceManager = {
+    async resolveIdentity() {
+      calls.push("resolveIdentity");
+      return { workspace_identity_digest: "sha256:workspace", workspace_path: "/tmp/workspace" };
+    },
+    async preflight() {
+      calls.push("preflight");
+      return {
+        status: "source_dirty_warning",
+        code: "WORKSPACE_SOURCE_DIRTY_WARNING",
+        message: "Source repository has local changes; continuing from the committed source ref.",
+        source_repository_path: "/repo",
+        dirty_paths: ["README.md"],
+        dirty_paths_count: 1,
+        uncommitted_changes_included: false
+      };
+    },
+    prepare
+  };
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    logger: loggerFixture(events),
+    ...deps
+  });
+
+  assert.equal(result.dispatched, 1);
+  assert.equal(result.completed, 1);
+  assert.deepEqual(calls.slice(0, 5), ["discover", "route", "resolveIdentity", "preflight", "claim"]);
+
+  const warning = events.find((event) => event.event === "workspace.source_dirty_continuing");
+  assert.equal(warning.level, "warn");
+  assert.equal(warning.fields.code, "WORKSPACE_SOURCE_DIRTY_WARNING");
+  assert.equal(warning.fields.source_repository_path, "/repo");
+  assert.deepEqual(warning.fields.dirty_paths, ["README.md"]);
+  assert.equal(warning.fields.uncommitted_changes_included, false);
 });
 
 test("runReconciliationTick dispatches due retry entries through routing, preflight, claims, and runner capacity", async () => {

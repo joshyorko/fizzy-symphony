@@ -98,6 +98,32 @@ test("human daemon logger renders dirty-source protection without JSON", () => {
   assert.match(stripAnsi(stderr), /Commit or stash/u);
 });
 
+test("human daemon logger renders dirty-source continuation without JSON", () => {
+  let stderr = "";
+  const logger = createHumanDaemonLogger({
+    env: { TERM: "dumb" },
+    stderr: {
+      isTTY: true,
+      write(chunk) {
+        stderr += chunk;
+      }
+    }
+  });
+
+  logger.warn("workspace.source_dirty_continuing", {
+    source_repository_path: "/work/repo",
+    dirty_paths: ["README.md"],
+    remediation: "Commit first if the agent needs these edits; otherwise dispatch continues from the committed ref."
+  });
+
+  assert.doesNotMatch(stderr, /^\{/u);
+  assert.match(stripAnsi(stderr), /source repo has local changes/u);
+  assert.match(stripAnsi(stderr), /dispatch will continue/u);
+  assert.match(stripAnsi(stderr), /not copied into agent worktrees/u);
+  assert.match(stripAnsi(stderr), /README\.md/u);
+  assert.match(stripAnsi(stderr), /Commit first/u);
+});
+
 test("setup prompt implementation is Terminal Kit-only", async () => {
   const terminalUi = await readFile(new URL("../src/terminal-ui.js", import.meta.url), "utf8");
   const cli = await readFile(new URL("../bin/fizzy-symphony.js", import.meta.url), "utf8");

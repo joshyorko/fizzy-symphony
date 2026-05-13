@@ -128,7 +128,7 @@ export async function runReconciliationTick(options = {}) {
       }
 
       const workspaceIdentity = await resolveWorkspaceIdentity({ config, card, decision, workspaceManager });
-      await workspaceManager?.preflight?.({
+      const preflight = await workspaceManager?.preflight?.({
         config,
         card,
         route: decision.route,
@@ -136,6 +136,7 @@ export async function runReconciliationTick(options = {}) {
         identity: workspaceIdentity,
         workspace: workspaceIdentity
       });
+      logWorkspacePreflight(logger, preflight);
       const claimResult = await claims.acquire({
         config,
         card,
@@ -195,6 +196,23 @@ export async function runReconciliationTick(options = {}) {
   }
 }
 
+function logWorkspacePreflight(logger, preflight) {
+  if (!logger || preflight?.status !== "source_dirty_warning") return;
+
+  const dirtyPaths = Array.isArray(preflight.dirty_paths) ? preflight.dirty_paths : [];
+  logger.warn?.("workspace.source_dirty_continuing", {
+    code: preflight.code ?? "WORKSPACE_SOURCE_DIRTY_WARNING",
+    message: preflight.message ?? "Source repository has local changes; continuing from the committed source ref.",
+    source_repository_path: preflight.source_repository_path,
+    dirty_paths: dirtyPaths.slice(0, MAX_LOGGED_DIRTY_PATHS),
+    dirty_paths_count: preflight.dirty_paths_count ?? dirtyPaths.length,
+    dirty_paths_truncated: dirtyPaths.length > MAX_LOGGED_DIRTY_PATHS,
+    uncommitted_changes_included: preflight.uncommitted_changes_included ?? false,
+    dirty_source_repo_policy: preflight.dirty_source_repo_policy,
+    remediation: preflight.remediation ?? "Commit first if the agent needs these edits; otherwise dispatch continues from the committed ref."
+  });
+}
+
 function logReconciliationError(logger, error, { config = {} } = {}) {
   if (!logger) return;
 
@@ -208,7 +226,7 @@ function logReconciliationError(logger, error, { config = {} } = {}) {
       dirty_paths_count: dirtyPaths.length,
       dirty_paths_truncated: dirtyPaths.length > MAX_LOGGED_DIRTY_PATHS,
       preserve_workspace: error.details?.preserve_workspace,
-      dirty_source_repo_policy: config.safety?.dirty_source_repo_policy ?? "fail",
+      dirty_source_repo_policy: config.safety?.dirty_source_repo_policy ?? "warn",
       remediation: "Commit, stash, or explicitly change the dirty source repo policy before retrying."
     });
     return;

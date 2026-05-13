@@ -426,22 +426,25 @@ test("prepareWorkspace reuses a dirty guarded worktree for explicit reruns", asy
   assert.equal(metadata.run_attempt_id, "attempt_2");
 });
 
-test("preflightWorkspaceSource rejects dirty source repositories when policy requires a clean source", async () => {
+test("preflightWorkspaceSource warns and continues when the source repository is dirty", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-dirty-"));
   const source = await initSourceRepo(dir);
   const config = baseConfig(dir);
   const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
   await writeFile(join(source, "scratch.txt"), "dirty\n", "utf8");
 
-  await assert.rejects(
-    () => preflightWorkspaceSource({ config, identity }),
-    (error) => error.code === "WORKSPACE_SOURCE_DIRTY" &&
-      error.details.preserve_workspace === true &&
-      error.details.source_repository_path === resolve(source)
-  );
+  const preflight = await preflightWorkspaceSource({ config, identity });
+
+  assert.equal(preflight.status, "source_dirty_warning");
+  assert.equal(preflight.code, "WORKSPACE_SOURCE_DIRTY_WARNING");
+  assert.equal(preflight.source_repository_path, resolve(source));
+  assert.equal(preflight.clean, false);
+  assert.deepEqual(preflight.dirty_paths, ["scratch.txt"]);
+  assert.equal(preflight.uncommitted_changes_included, false);
+  assert.match(preflight.message, /continuing from the committed source ref/u);
 });
 
-test("preflightWorkspaceSource ignores setup-owned config dirt while still protecting user work", async () => {
+test("preflightWorkspaceSource ignores setup-owned config dirt while warning about user work", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-source-setup-dirt-"));
   const source = await initSourceRepo(dir);
   const config = baseConfig(dir);
@@ -456,12 +459,11 @@ test("preflightWorkspaceSource ignores setup-owned config dirt while still prote
   assert.deepEqual(clean.dirty_paths, []);
 
   await writeFile(join(source, "README.md"), "real user change\n", "utf8");
-  await assert.rejects(
-    () => preflightWorkspaceSource({ config, identity }),
-    (error) => error.code === "WORKSPACE_SOURCE_DIRTY" &&
-      error.details.dirty_paths.includes("README.md") &&
-      !error.details.dirty_paths.includes(".fizzy-symphony/config.yml")
-  );
+  const dirty = await preflightWorkspaceSource({ config, identity });
+
+  assert.equal(dirty.status, "source_dirty_warning");
+  assert.ok(dirty.dirty_paths.includes("README.md"));
+  assert.equal(dirty.dirty_paths.includes(".fizzy-symphony/config.yml"), false);
 });
 
 test("preflightWorkspaceSource treats nonzero injected git results as failed commands", async () => {

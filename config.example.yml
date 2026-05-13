@@ -408,9 +408,9 @@ safety:
     - .
     - .fizzy-symphony
 
-  # Required: no. Default: fail.
-  # Valid: fail, snapshot.
-  dirty_source_repo_policy: fail
+  # Required: no. Default: warn.
+  # Valid: warn, snapshot.
+  dirty_source_repo_policy: warn
 
   cleanup:
     # Required: no. Default: preserve.

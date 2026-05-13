@@ -948,10 +948,10 @@ For git worktrees:
   identity digest are REQUIRED.
 - Existing card worktrees MUST be reused unless config explicitly requests a fresh attempt.
 - Dirty worktrees MUST NOT be removed silently.
-- Source repositories MUST be validated before dispatch. If `require_clean_source` is true and the
-  source repo is dirty, dispatch MUST fail before claim acquisition. If the policy is `snapshot`, the
-  snapshot ID MUST be recorded in workspace metadata and included in the workspace key, route
-  fingerprint input, and proof record.
+- Source repositories MUST be validated before dispatch. If the source repo is dirty, dispatch MUST
+  warn the operator that uncommitted changes are not copied into agent worktrees and continue from the
+  committed source ref. If the policy is `snapshot`, the snapshot ID MUST be recorded in workspace
+  metadata and included in the workspace key, route fingerprint input, and proof record.
 - Worktree removal SHOULD use non-force removal. Force removal and raw recursive deletion are
   forbidden for normal cleanup. They MAY exist only as a separate operator command that requires
   explicit card/workspace identity and prints the proof and guard checks it is bypassing.
@@ -2059,7 +2059,7 @@ function prepare_workspace(workspace):
     return reuse_existing_workspace("clean matching workspace")
 
   if workspace.isolation == "git_worktree":
-    validate_source_repo_clean_or_snapshot(workspace.source_repo)
+    warn_if_source_repo_dirty(workspace.source_repo)
     branch = deterministic_branch_name(workspace.identity)
     if branch_exists_with_different_identity(branch, workspace.identity):
       fail_preserve("branch identity collision")

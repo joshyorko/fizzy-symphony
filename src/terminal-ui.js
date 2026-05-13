@@ -118,7 +118,7 @@ export function formatDaemonStartSummary(daemon, options = {}) {
       ...(sourceRepo ? [["Source repo", sourceRepo]] : []),
       ...(worktreeRoot ? [["Worktrees", worktreeRoot]] : []),
       ["Polling", `${seconds}s`],
-      ["Safety", "protecting your work: dirty source repos are skipped, not overwritten"],
+      ["Safety", "protecting your work: dirty source repos are reported; worktrees use the committed ref"],
       ...(daemon.config.diagnostics?.no_dispatch
         ? [["Mode", "watch only: dispatch is disabled in config"]]
         : []),
@@ -206,6 +206,17 @@ export function createHumanDaemonLogger(io, options = {}) {
     if (event === "workspace.source_dirty_protected") {
       write(`${mark(styled, "warning")} protecting your work: source repo has local changes, so this card was not dispatched`);
       write(`  ${label(styled, "Repo")} ${fields.source_repository_path ?? "unknown"}`);
+      const dirtyPaths = Array.isArray(fields.dirty_paths) ? fields.dirty_paths : [];
+      for (const path of dirtyPaths.slice(0, 10)) write(`  ${label(styled, "Dirty")} ${path}`);
+      if (fields.dirty_paths_truncated) write(`  ${label(styled, "Dirty")} ... ${fields.dirty_paths_count} total paths`);
+      if (fields.remediation) write(`  ${label(styled, "Next")} ${fields.remediation}`);
+      return;
+    }
+
+    if (event === "workspace.source_dirty_continuing") {
+      write(`${mark(styled, "warning")} source repo has local changes; dispatch will continue from the committed ref`);
+      write(`  ${label(styled, "Repo")} ${fields.source_repository_path ?? "unknown"}`);
+      write(`  ${label(styled, "Note")} uncommitted changes are not copied into agent worktrees`);
       const dirtyPaths = Array.isArray(fields.dirty_paths) ? fields.dirty_paths : [];
       for (const path of dirtyPaths.slice(0, 10)) write(`  ${label(styled, "Dirty")} ${path}`);
       if (fields.dirty_paths_truncated) write(`  ${label(styled, "Dirty")} ... ${fields.dirty_paths_count} total paths`);

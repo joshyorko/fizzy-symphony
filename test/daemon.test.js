@@ -98,18 +98,18 @@ test("CLI start renders a real board snapshot for interactive terminals", async 
   assert.match(result.stderr, /#42 Fix terminal output/u);
 });
 
-test("CLI start warns when workspace protection skips a dirty source repo", async () => {
+test("CLI start warns and dispatches when workspace preflight reports a dirty source repo", async () => {
   const root = await tempProject("fizzy-symphony-start-dirty-source-");
   const configPath = await writeConfig(root);
   const calls = [];
-  const dirtyError = Object.assign(new Error("source repo is dirty"), {
-    code: "WORKSPACE_SOURCE_DIRTY",
-    details: {
-      preserve_workspace: true,
-      source_repository_path: root,
-      dirty_paths: ["README.md", "WORKFLOW.md", ".fizzy-symphony/config.yml"]
-    }
-  });
+  const dirtyWarning = {
+    status: "source_dirty_warning",
+    code: "WORKSPACE_SOURCE_DIRTY_WARNING",
+    message: "Source repository has local changes; continuing from the committed source ref.",
+    source_repository_path: root,
+    dirty_paths: ["README.md", "WORKFLOW.md", ".fizzy-symphony/config.yml"],
+    uncommitted_changes_included: false
+  };
 
   const result = await runCli(["start", "--config", configPath], {
     env: { ...process.env, FIZZY_API_TOKEN: "token" },
@@ -118,6 +118,7 @@ test("CLI start warns when workspace protection skips a dirty source repo", asyn
       dependencies: {
         ...daemonDependencies({
           calls,
+          runner: fakeRunner({ calls }),
           cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }]
         }),
         workspaceManagerFactory: () => ({
@@ -127,7 +128,15 @@ test("CLI start warns when workspace protection skips a dirty source repo", asyn
           },
           async preflight() {
             calls.push("preflightWorkspace");
-            throw dirtyError;
+            return dirtyWarning;
+          },
+          async prepare() {
+            calls.push("prepareWorkspace");
+            return { key: "workspace_card_1", path: "/tmp/workspace-card-1", identity_digest: "sha256:workspace" };
+          },
+          async preserve() {
+            calls.push("preserveWorkspace");
+            return { status: "preserved", workspace_path: "/tmp/workspace-card-1" };
           }
         })
       }
@@ -140,27 +149,31 @@ test("CLI start warns when workspace protection skips a dirty source repo", asyn
 
   assert.equal(result.exitCode, 0, result.stderr);
   assert.ok(calls.includes("preflightWorkspace"));
-  const warning = result.stderr.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))[0];
+  assert.ok(calls.includes("claim"));
+  assert.ok(calls.includes("stream"));
+  const warning = result.stderr.trim().split("\n").filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((line) => line.event === "workspace.source_dirty_continuing");
   assert.equal(warning.level, "warn");
-  assert.equal(warning.event, "workspace.source_dirty_protected");
-  assert.equal(warning.code, "WORKSPACE_SOURCE_DIRTY");
-  assert.equal(warning.message, "Source repository has local changes; preserving work and skipping dispatch.");
+  assert.equal(warning.code, "WORKSPACE_SOURCE_DIRTY_WARNING");
+  assert.match(warning.message, /continuing from the committed source ref/u);
   assert.equal(warning.source_repository_path, root);
   assert.deepEqual(warning.dirty_paths, ["README.md", "WORKFLOW.md", ".fizzy-symphony/config.yml"]);
   assert.equal(warning.dirty_paths_count, 3);
+  assert.equal(warning.uncommitted_changes_included, false);
 });
 
-test("CLI start renders workspace protection warnings for interactive terminals", async () => {
+test("CLI start renders dirty-source continuation warnings for interactive terminals", async () => {
   const root = await tempProject("fizzy-symphony-start-dirty-source-tty-");
   const configPath = await writeConfig(root);
-  const dirtyError = Object.assign(new Error("source repo is dirty"), {
-    code: "WORKSPACE_SOURCE_DIRTY",
-    details: {
-      preserve_workspace: true,
-      source_repository_path: root,
-      dirty_paths: ["README.md", "WORKFLOW.md"]
-    }
-  });
+  const dirtyWarning = {
+    status: "source_dirty_warning",
+    code: "WORKSPACE_SOURCE_DIRTY_WARNING",
+    message: "Source repository has local changes; continuing from the committed source ref.",
+    source_repository_path: root,
+    dirty_paths: ["README.md", "WORKFLOW.md"],
+    uncommitted_changes_included: false
+  };
 
   const result = await runCli(["start", "--config", configPath], {
     stderrIsTTY: true,
@@ -176,7 +189,13 @@ test("CLI start renders workspace protection warnings for interactive terminals"
             return { workspace_key: "workspace_card_1", workspace_identity_digest: "sha256:workspace" };
           },
           async preflight() {
-            throw dirtyError;
+            return dirtyWarning;
+          },
+          async prepare() {
+            return { key: "workspace_card_1", path: "/tmp/workspace-card-1", identity_digest: "sha256:workspace" };
+          },
+          async preserve() {
+            return { status: "preserved", workspace_path: "/tmp/workspace-card-1" };
           }
         })
       }
@@ -191,7 +210,8 @@ test("CLI start renders workspace protection warnings for interactive terminals"
   assert.match(result.stderr, /fizzy-symphony watching boards/u);
   assert.match(result.stderr, /protecting your work/u);
   assert.match(result.stderr, /Ready -> comment_once/u);
-  assert.match(result.stderr, /source repo has local changes, so this card was not dispatched/u);
+  assert.match(result.stderr, /source repo has local changes; dispatch will continue/u);
+  assert.match(result.stderr, /not copied into agent worktrees/u);
   assert.match(result.stderr, /README\.md/u);
 });
 
