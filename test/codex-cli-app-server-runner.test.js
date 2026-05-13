@@ -98,17 +98,35 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   });
   const config = runnerConfig();
 
-  const session = await runner.startSession("/tmp/card-workspace", { config, route: { model: "gpt-5.4" } }, { run_id: "run_1" });
+  const session = await runner.startSession(
+    "/tmp/card-workspace",
+    { config, route: { model: "gpt-5.4", model_profile: { service_tier: "default" } } },
+    { run_id: "run_1" }
+  );
   const turn = await runner.startTurn(session, "Implement the card.", { run_id: "run_1", attempt_number: 2 });
 
   assert.equal(session.session_id, "thread_1");
   assert.equal(session.thread_id, "thread_1");
   assert.equal(session.workspace, "/tmp/card-workspace");
+  assert.deepEqual(session.execution_environment, {
+    id: "/tmp/card-workspace",
+    kind: "local_workspace",
+    workspace_path: "/tmp/card-workspace",
+    cwd: "/tmp/card-workspace"
+  });
+  assert.deepEqual(session.model_selection, {
+    model: "gpt-5.4",
+    provider: "openai",
+    service_tier: null,
+    reasoning_effort: "medium",
+    model_profile: { service_tier: "default" }
+  });
   assert.equal(session.process_owned, true);
   assert.equal(session.process_id, 4321);
   assert.equal(turn.turn_id, "turn_1");
   assert.equal(turn.thread_id, "thread_1");
   assert.equal(turn.workspace, "/tmp/card-workspace");
+  assert.deepEqual(turn.execution_environment, session.execution_environment);
   assert.equal(turn.prompt_digest.length, 64);
 
   assert.equal(transport.requests[1].method, "thread/start");
@@ -131,7 +149,7 @@ test("Codex CLI app-server runner starts sessions and turns in the prepared work
   });
 });
 
-test("Codex CLI app-server runner sends configured default model and reasoning effort", async () => {
+test("Codex CLI app-server runner sends configured default model and reasoning effort config", async () => {
   const transport = new FakeTransport({}, {
     "initialize": () => initializeResult(),
     "thread/start": () => threadStartResult()
@@ -151,7 +169,8 @@ test("Codex CLI app-server runner sends configured default model and reasoning e
 
   assert.equal(transport.requests[1].method, "thread/start");
   assert.equal(transport.requests[1].params.model, "gpt-5.5");
-  assert.equal(transport.requests[1].params.reasoningEffort, "high");
+  assert.equal(transport.requests[1].params.reasoningEffort, undefined);
+  assert.deepEqual(transport.requests[1].params.config, { model_reasoning_effort: "high" });
 });
 
 test("Codex CLI app-server runner streams normalized activity and final turn result", async () => {

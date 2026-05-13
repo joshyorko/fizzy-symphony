@@ -82,6 +82,10 @@ agent:
   max_concurrent: 1
 ```
 
+The runner contract still treats model and tier details as runtime metadata: `model` is the stable
+route field, while future service-tier/profile data belongs in optional runner/session metadata rather
+than daemon routing logic.
+
 Maximum active agents stays on the existing concurrency contract: use `--max-agents` during setup,
 or edit `agent.max_concurrent` in `.fizzy-symphony/config.yml`. Starter-board setup defaults it to
 `1`.

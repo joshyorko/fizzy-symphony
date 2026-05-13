@@ -157,6 +157,7 @@ export function createCodexCliAppServerRunner(options = {}) {
         );
         const thread = threadStart.thread ?? {};
         const sessionId = thread.id;
+        const executionEnvironment = executionEnvironmentFor({ path, threadStart, metadata });
         const session = omitUndefined({
           type: "Session",
           session_id: sessionId,
@@ -167,9 +168,11 @@ export function createCodexCliAppServerRunner(options = {}) {
           process_owned: true,
           workspace: path,
           workspace_path: path,
+          execution_environment: executionEnvironment,
           started_at: now(),
           policies: serializablePolicies(policies),
           metadata,
+          model_selection: modelSelection({ threadStart, policies, metadata }),
           app_server: {
             user_agent: handshake.userAgent,
             platform_os: handshake.platformOs,
@@ -207,6 +210,7 @@ export function createCodexCliAppServerRunner(options = {}) {
         prompt_digest: sha256(prompt),
         workspace: session.workspace_path ?? session.workspace,
         workspace_path: session.workspace_path ?? session.workspace,
+        execution_environment: session.execution_environment,
         metadata,
         runner: {
           kind: KIND,
@@ -687,19 +691,48 @@ function threadStartParams({ path, policies, metadata, runnerConfig }) {
     metadata.reasoning_effort ??
     policies.route?.reasoning_effort ??
     policies.config?.agent?.reasoning_effort;
+  const configOverrides = omitUndefined({
+    model_reasoning_effort: reasoningEffort || undefined
+  });
   return omitUndefined({
     model: model || undefined,
-    reasoningEffort: reasoningEffort || undefined,
     cwd: path,
     approvalPolicy: approvalPolicy(runnerConfig),
     approvalsReviewer: "user",
     sandbox: runnerConfig.codex.thread_sandbox,
-    config: {},
+    config: configOverrides,
     serviceName: "fizzy-symphony",
     ephemeral: false,
     sessionStartSource: "clear",
     experimentalRawEvents: false,
     persistExtendedHistory: true
+  });
+}
+
+function executionEnvironmentFor({ path, threadStart, metadata }) {
+  const explicit = metadata.execution_environment ?? metadata.executionEnvironment ?? {};
+  const cwd = explicit.cwd ?? threadStart.cwd ?? threadStart.thread?.cwd ?? path;
+  return omitUndefined({
+    id: explicit.id ?? metadata.workspace_key ?? path,
+    kind: explicit.kind ?? "local_workspace",
+    workspace_path: explicit.workspace_path ?? path,
+    cwd
+  });
+}
+
+function modelSelection({ threadStart, policies, metadata }) {
+  const requestedModel = metadata.model ?? policies.route?.model ?? policies.config?.agent?.default_model;
+  const requestedReasoningEffort = metadata.reasoningEffort ??
+    metadata.reasoning_effort ??
+    policies.route?.reasoning_effort ??
+    policies.config?.agent?.reasoning_effort;
+  const profile = metadata.model_profile ?? policies.route?.model_profile ?? policies.route?.model_metadata;
+  return omitUndefined({
+    model: threadStart.model ?? requestedModel,
+    provider: threadStart.modelProvider,
+    service_tier: threadStart.serviceTier,
+    reasoning_effort: threadStart.reasoningEffort ?? requestedReasoningEffort,
+    model_profile: profile
   });
 }
 
