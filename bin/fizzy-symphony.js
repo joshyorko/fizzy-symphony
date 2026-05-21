@@ -28,6 +28,7 @@ import {
 } from "../src/terminal-ui.js";
 import { validateStartup } from "../src/validation.js";
 import { createLogger } from "../src/logger.js";
+import { runDoctorCommand, runWorktreesCommand } from "../src/operator.js";
 
 export async function main(args = process.argv.slice(2), io = defaultIo()) {
   const command = args[0]?.startsWith("-") ? undefined : args[0];
@@ -57,6 +58,10 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
       return runStatusCommand(commandArgs, io);
     } else if (command === "dashboard") {
       return runDashboardCommand(commandArgs, io, { fetch: io.fetch });
+    } else if (command === "worktrees") {
+      return runWorktreesCommand(commandArgs, io);
+    } else if (command === "doctor") {
+      return runDoctorCommand(commandArgs, io);
     } else {
       return usage(1, io);
     }
@@ -850,7 +855,9 @@ function usage(exitCode, io) {
     "  fizzy-symphony boards [--api-url url] [--token token] [--account id]",
     "  fizzy-symphony dashboard [--config path] [--endpoint url] [--registry-dir path] [--refresh-ms n]",
     "  fizzy-symphony status [--config path] [--instance id]",
-    "  fizzy-symphony status [--registry-dir path] [--endpoint url]"
+    "  fizzy-symphony status [--registry-dir path] [--endpoint url]",
+    "  fizzy-symphony worktrees [--config path] [--json] [--dirty-only] [--card number]",
+    "  fizzy-symphony doctor --goal [--config path] [--json]"
   ].join("\n");
   io.stdout.write(`${text}\n`);
   return exitCode;

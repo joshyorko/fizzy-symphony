@@ -412,10 +412,11 @@ export async function cleanupWorkspace({
   };
 }
 
-export async function scanWorkspaceMetadata({ config, fs = nodeFs } = {}) {
+export async function scanWorkspaceMetadata({ config, fs = nodeFs, exec = defaultExec } = {}) {
   const metadataRoot = config?.workspaces?.metadata_root;
   const report = {
     workspaces: [],
+    dirty_worktrees: [],
     preserved_workspaces: [],
     warnings: [],
     errors: []
@@ -451,6 +452,15 @@ export async function scanWorkspaceMetadata({ config, fs = nodeFs } = {}) {
       workspace_key: metadata.workspace_key,
       workspace_path: metadata.workspace_path,
       metadata_path: metadataPath,
+      card_id: metadata.card_id,
+      card_number: metadata.card_number,
+      board_id: metadata.board_id,
+      route_id: metadata.route_id,
+      route_fingerprint: metadata.route_fingerprint,
+      run_id: metadata.run_id,
+      run_attempt_id: metadata.run_attempt_id,
+      status: metadata.status,
+      last_error: metadata.last_error,
       metadata
     };
     report.workspaces.push(workspace);
@@ -502,6 +512,14 @@ export async function scanWorkspaceMetadata({ config, fs = nodeFs } = {}) {
       });
       report.preserved_workspaces.push(preserved);
       report.warnings.push(preserved);
+      continue;
+    }
+
+    const inspection = await inspectWorkspaceForScan({ metadata, workspacePath: metadata.workspace_path, exec });
+    Object.assign(workspace, inspection);
+    if (inspection.git_status === "dirty") {
+      workspace.recommended_action = "inspect_dirty_worktree";
+      report.dirty_worktrees.push(workspace);
     }
   }
 
@@ -902,6 +920,52 @@ async function inspectWorktreeForCleanup({ workspacePath, metadata, exec }) {
     unpushed_commits: unpushedCommits,
     branch,
     branch_merged: merged
+  };
+}
+
+async function inspectWorkspaceForScan({ metadata, workspacePath, exec }) {
+  if (!workspacePath) {
+    return {
+      git_status: "missing",
+      dirty_paths: [],
+      recommended_action: "inspect_workspace_metadata"
+    };
+  }
+
+  const status = await runGit(["status", "--porcelain=v1", "--untracked-files=all"], {
+    cwd: workspacePath,
+    exec,
+    allowFailure: true
+  });
+  if (!status.ok) {
+    return {
+      git_status: "unreadable",
+      dirty_paths: [],
+      recommended_action: "inspect_workspace_path",
+      git_error: {
+        exit_code: status.exit_code,
+        stderr: status.stderr,
+        stdout: status.stdout
+      }
+    };
+  }
+
+  const entries = parsePorcelainStatus(status.stdout).filter((entry) => !matchesIgnoredPath(entry.path, [GUARD_FILE_NAME]));
+  const branch = await runGit(["branch", "--show-current"], { cwd: workspacePath, exec, allowFailure: true });
+  const lastError = metadata.last_error ?? metadata.error;
+  const failed = metadata.status === "failed" || Boolean(lastError);
+
+  return {
+    git_status: entries.length > 0 ? "dirty" : "clean",
+    dirty_paths: entries.map((entry) => entry.path),
+    branch: branch.ok ? branch.stdout.trim() : undefined,
+    proof: metadata.proof ? "present" : "missing",
+    last_error: lastError,
+    recommended_action: entries.length > 0
+      ? "inspect_dirty_worktree"
+      : failed
+        ? "triage_failed_run"
+        : "none"
   };
 }
 

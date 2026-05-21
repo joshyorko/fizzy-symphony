@@ -100,9 +100,15 @@ node bin/fizzy-symphony.js status
 node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js dashboard --once
+node bin/fizzy-symphony.js worktrees --dirty-only
+node bin/fizzy-symphony.js doctor --goal
 node bin/fizzy-symphony.js validate
 node bin/fizzy-symphony.js start
 ```
+
+Before closing a multi-card goal, run `doctor --goal`. It checks Symphony run/worktree artifacts, not
+just the current daemon status, and fails when dirty preserved worktrees or failed run artifacts
+still need a human decision. Use `worktrees --json` for machine-readable triage data.
 
 If you want to use a different env file, Codex model, or reasoning effort:
 

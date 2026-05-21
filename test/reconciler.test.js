@@ -1180,6 +1180,99 @@ test("runReconciliationTick records one non-looping failure marker when the runn
   assert.deepEqual(calls.filter((call) => call === "runnerFailureMarker"), ["runnerFailureMarker"]);
 });
 
+test("runReconciliationTick records a non-looping dirty worktree failure marker before retrying", async () => {
+  const calls = [];
+  const config = {
+    ...configFixture(1),
+    observability: { state_dir: await mkdtemp(join(tmpdir(), "fizzy-symphony-reconciler-dirty-worktree-")) }
+  };
+  const status = statusStore(config);
+  const route = routeFixture();
+  const card = cardFixture("card_426", 426);
+  const dirtyError = Object.assign(new Error("Existing workspace has local changes; preserving workspace."), {
+    code: "WORKSPACE_WORKTREE_DIRTY",
+    details: {
+      preserve_workspace: true,
+      workspace_path: "/tmp/fizzy-card-426",
+      dirty_paths: ["finance-checklist.md"]
+    }
+  });
+  const failureMarkers = [];
+
+  const result = await runReconciliationTick({
+    config,
+    status,
+    now: fixedNow,
+    fizzy: {
+      async discoverCandidates() {
+        calls.push("discover");
+        return [card];
+      },
+      async recordCompletionFailureMarker({ body, payload }) {
+        calls.push("dirtyFailureMarker");
+        failureMarkers.push(parseCompletionFailureMarker(body));
+        assert.equal(payload.route_fingerprint, route.fingerprint);
+        assert.match(payload.failure_reason, /Existing workspace has local changes/u);
+        return { id: "dirty_failure_marker_1" };
+      }
+    },
+    router: {
+      async validateCandidate() {
+        calls.push("route");
+        return { action: "spawn", card, route };
+      }
+    },
+    claims: {
+      async acquire() {
+        calls.push("claim");
+        return {
+          acquired: true,
+          claim: { id: "claim_426", run_id: "run_426", attempt_id: "attempt_1" }
+        };
+      },
+      async release({ status, completion_marker }) {
+        calls.push(`releaseClaim:${status}`);
+        assert.equal(status, "failed");
+        assert.equal(completion_marker.id, "dirty_failure_marker_1");
+        return { released: true };
+      }
+    },
+    workspaceManager: {
+      async resolveIdentity() {
+        return { workspace_path: "/tmp/fizzy-card-426", workspace_key: "workspace_426" };
+      },
+      async preflight() {
+        return { status: "ok" };
+      },
+      async prepare() {
+        calls.push("prepareWorkspace");
+        throw dirtyError;
+      }
+    },
+    workflowLoader: {
+      async load() {
+        throw new Error("workflow should not load");
+      }
+    },
+    runner: {
+      async startSession() {
+        throw new Error("runner should not start");
+      }
+    },
+    orchestratorState: createOrchestratorState({ config })
+  });
+
+  assert.equal(result.failed, 1);
+  assert.equal(failureMarkers.length, 1);
+  assert.equal(failureMarkers[0].workspace_path, "/tmp/fizzy-card-426");
+  assert.deepEqual(failureMarkers[0].dirty_paths, ["finance-checklist.md"]);
+  assert.match(failureMarkers[0].remediation, /agent-rerun/u);
+  assert.equal(status.status().runs.failed[0].last_error.code, "WORKSPACE_WORKTREE_DIRTY");
+  assert.equal(status.status().runs.failed[0].completion_marker.id, "dirty_failure_marker_1");
+  assert.equal(status.status().retry_queue.length, 0);
+  assert.deepEqual(calls, ["discover", "route", "claim", "prepareWorkspace", "dirtyFailureMarker", "releaseClaim:failed"]);
+});
+
 test("runReconciliationTick releases the claim and does not start the runner when workflow cache has no valid workflow", async () => {
   const calls = [];
   const config = {

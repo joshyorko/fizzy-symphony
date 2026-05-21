@@ -47,6 +47,8 @@ node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js start
 node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js status
+node bin/fizzy-symphony.js worktrees
+node bin/fizzy-symphony.js doctor --goal
 npm test
 ```
 
@@ -93,6 +95,15 @@ clean-source policy is enabled; commit, stash, or change the policy deliberately
 `dashboard` observes the daemon's existing `/status` truth. Interactive TTY output refreshes by
 default, `--once` prints a static snapshot, and non-TTY, CI, or dumb terminals use the same text
 fallback. It does not define a separate workflow model.
+
+`worktrees` inspects Symphony-created worktrees and their metadata, including dirty file paths,
+branch, run id, last error, and recommended action. Use `--dirty-only`, `--card 426`, or `--json`
+when triaging preserved work after a failed run.
+
+`doctor --goal` is the goal-closing oracle. It exits non-zero when preserved metadata warnings,
+dirty `.fizzy-symphony/worktrees/*` directories, or failed run artifacts still need triage. A clean
+main repo is not enough; inspect every Symphony worktree touched by the goal before declaring the
+larger goal complete.
 
 Config loading supports JSON and generated YAML. Normal setup writes the compact operator config;
 `setup --template-only` writes the fully annotated template. Setup, validate, status, dashboard, and

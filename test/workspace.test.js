@@ -828,3 +828,35 @@ test("scanWorkspaceMetadata preserves workspaces with missing guards and guard m
   assert.equal(report.preserved_workspaces.find((entry) => entry.code === "WORKSPACE_GUARD_MISSING").workspace_key, identity.workspace_key);
   assert.equal(report.preserved_workspaces.find((entry) => entry.code === "WORKSPACE_METADATA_GUARD_MISMATCH").workspace_key, mismatchIdentity.workspace_key);
 });
+
+test("scanWorkspaceMetadata reports dirty preserved worktree details for operator triage", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-dirty-worktree-scan-"));
+  await initSourceRepo(dir, { extraFiles: { "notes.md": "clean\n" } });
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card({ number: 426 }) });
+  const workspace = await prepareWorkspace({
+    config,
+    identity,
+    metadata: {
+      run_id: "run_card_426",
+      run_attempt_id: "attempt_1",
+      created_at: "2026-05-21T12:00:00.000Z",
+      status: "failed",
+      last_error: { code: "RUN_CANCELLED", message: "Run cancelled: stalled" }
+    }
+  });
+  await writeFile(join(workspace.workspace_path, "finance-checklist.md"), "# Draft\n", "utf8");
+
+  const report = await scanWorkspaceMetadata({ config });
+  const inspected = report.workspaces.find((entry) => entry.workspace_key === workspace.workspace_key);
+
+  assert.equal(inspected.git_status, "dirty");
+  assert.deepEqual(inspected.dirty_paths, ["finance-checklist.md"]);
+  assert.equal(inspected.card_number, 426);
+  assert.equal(inspected.run_id, "run_card_426");
+  assert.equal(inspected.status, "failed");
+  assert.equal(inspected.last_error.code, "RUN_CANCELLED");
+  assert.equal(inspected.recommended_action, "inspect_dirty_worktree");
+  assert.equal(report.dirty_worktrees.length, 1);
+  assert.equal(report.dirty_worktrees[0].workspace_path, workspace.workspace_path);
+});

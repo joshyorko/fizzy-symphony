@@ -1062,8 +1062,9 @@ async function runCard({
     logCardProgress(logger, "card.dispatch_completed", { card: refreshedCard, route, workspace, run: completed ?? run });
     return { status: "completed", run: completed ?? run };
   } catch (error) {
-    const failureMarker = failureKind === "runner"
-      ? await recordRunnerFailureMarker({ config, fizzy, run, card, route, workspace, error, now })
+    const failureWorkspace = workspace ?? workspaceFromFailure({ workspaceIdentity, error });
+    const failureMarker = shouldRecordBlockingFailureMarker({ failureKind, error })
+      ? await recordBlockingFailureMarker({ config, fizzy, run, card, route, workspace: failureWorkspace, error, now })
       : null;
     orchestratorState?.recordFailure?.(runId, error, {
       retryable: failureKind === "runner" && isRetryableRunnerError(error),
@@ -1400,7 +1401,27 @@ function assertRouteStillCurrent(card, route) {
   });
 }
 
-async function recordRunnerFailureMarker({ config, fizzy, run, card, route, workspace, error, now }) {
+function shouldRecordBlockingFailureMarker({ failureKind, error } = {}) {
+  return failureKind === "runner" || error?.code === "WORKSPACE_WORKTREE_DIRTY";
+}
+
+function workspaceFromFailure({ workspaceIdentity, error } = {}) {
+  const path = error?.details?.workspace_path ?? workspaceIdentity?.workspace_path ?? workspaceIdentity?.path;
+  if (!path && !workspaceIdentity) return null;
+  return {
+    ...(workspaceIdentity ?? {}),
+    path,
+    workspace_path: path,
+    key: workspaceIdentity?.workspace_key ?? workspaceIdentity?.key,
+    workspace_key: workspaceIdentity?.workspace_key ?? workspaceIdentity?.key,
+    dirty_paths: error?.details?.dirty_paths,
+    remediation: error?.code === "WORKSPACE_WORKTREE_DIRTY"
+      ? "Inspect the preserved worktree, recover or commit useful artifacts, then add agent-rerun or create a fresh follow-up card."
+      : undefined
+  };
+}
+
+async function recordBlockingFailureMarker({ config, fizzy, run, card, route, workspace, error, now }) {
   if (!workspace) return null;
 
   const marker = createCompletionFailureMarker({
@@ -1538,7 +1559,6 @@ async function withOptionalTimeout(promise, timeoutMs) {
       promise,
       new Promise((resolve) => {
         timeout = setTimeout(() => resolve({ timeout: true }), Number(timeoutMs));
-        timeout.unref?.();
       })
     ]);
   } finally {

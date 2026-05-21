@@ -389,6 +389,18 @@ completion:
     # Required: no. Used for non-looping completion-policy failure tags.
     failure_tag_prefix: agent-completion-failed
 
+failure:
+  # Required: no. Default behavior is conservative: runner and dirty-worktree failures write a
+  # non-looping completion-failure marker. Cards require `agent-rerun` or a fresh follow-up card
+  # before dispatching through the same route again.
+  on_runner_failure:
+    mark_non_repeat: true
+  on_stall:
+    mark_non_repeat: true
+  on_dirty_workspace:
+    mark_non_repeat: true
+    policy: block_until_rerun
+
 workpad:
   # Required: no. Default: true.
   enabled: true

@@ -201,6 +201,23 @@ const schema = {
       failure_tag_prefix: true
     }
   },
+  failure: {
+    on_runner_failure: {
+      policy: true,
+      target_column: true,
+      mark_non_repeat: true
+    },
+    on_stall: {
+      policy: true,
+      target_column: true,
+      mark_non_repeat: true
+    },
+    on_dirty_workspace: {
+      policy: true,
+      target_column: true,
+      mark_non_repeat: true
+    }
+  },
   workpad: {
     enabled: true,
     mode: true,
