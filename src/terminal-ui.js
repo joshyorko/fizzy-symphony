@@ -48,6 +48,7 @@ export function formatSetupSuccess(result = {}, options = {}) {
   const workspaceMode = result.workspace_mode === "no_dispatch"
     ? "no dispatch"
     : "protected git worktrees";
+  const agentAccess = result.agent_access === "full" ? "full access" : "protected";
   const maxAgents = result.max_agents ?? "";
   const startCommand = `fizzy-symphony start --config ${configPath}`;
 
@@ -69,6 +70,7 @@ export function formatSetupSuccess(result = {}, options = {}) {
       ["Reasoning", reasoning || "medium"],
       ["Max agents", maxAgents || "1"],
       ["Workspace", workspaceMode],
+      ["Agent access", agentAccess],
       ["Runner", runner]
     ]),
     "",

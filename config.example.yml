@@ -276,6 +276,8 @@ runner:
     thread_sandbox: workspace-write
 
     # Required: no. Default: workspaceWrite scoped to the card workspace.
+    # Use dangerFullAccess only when unattended agents need networked commands such as ghx/gh,
+    # package downloads, or other host-level access that workspaceWrite cannot provide.
     turn_sandbox_policy:
       type: workspaceWrite
 

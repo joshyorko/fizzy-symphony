@@ -299,7 +299,8 @@ test("setup prompt seam can ask for model, reasoning, max agents, and workspace 
           defaultModel: "gpt-5.5",
           reasoningEffort: "xhigh",
           maxAgents: 4,
-          workspaceMode: "no_dispatch"
+          workspaceMode: "no_dispatch",
+          agentAccess: "full"
         };
       }
     },
@@ -319,6 +320,7 @@ test("setup prompt seam can ask for model, reasoning, max agents, and workspace 
   assert.equal(prompts[0].reasoningEffort, "medium");
   assert.equal(prompts[0].maxAgents, 1);
   assert.equal(prompts[0].workspaceMode, "protected_worktree");
+  assert.equal(prompts[0].agentAccess, "protected");
 
   assert.deepEqual(JSON.parse(result.stdout).boards, ["starter_board"]);
 
@@ -328,6 +330,42 @@ test("setup prompt seam can ask for model, reasoning, max agents, and workspace 
   assert.match(generatedConfig, /max_concurrent: 4/u);
   assert.match(generatedConfig, /diagnostics:/u);
   assert.match(generatedConfig, /no_dispatch: true/u);
+  assert.match(generatedConfig, /turn_sandbox_policy:\n      type: dangerFullAccess/u);
+});
+
+test("explicit scripted setup accepts full agent access for networked work", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-setup-agent-access-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+
+  const result = await runCli([
+    "setup",
+    "--config",
+    configPath,
+    "--workspace-repo",
+    dir,
+    "--mode",
+    "create-starter",
+    "--api-url",
+    "https://fizzy.example.test",
+    "--token",
+    "token-from-cli",
+    "--agent-access",
+    "full"
+  ], {
+    env: { TERM: "dumb" },
+    clientFactories: {
+      createFizzyClient() {
+        return fakeStarterSetupFizzy();
+      },
+      createRunner() {
+        return fakeRunner();
+      }
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  const generatedConfig = await readFile(configPath, "utf8");
+  assert.match(generatedConfig, /turn_sandbox_policy:\n      type: dangerFullAccess/u);
 });
 
 test("explicit scripted setup can adopt an existing starter route in non-TTY", async () => {

@@ -259,6 +259,7 @@ export function generateAnnotatedConfig(options = {}) {
     botUserId = "",
     defaultModel = DEFAULT_CODEX_MODEL,
     reasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
+    agentAccess = "protected",
     webhook = {},
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
@@ -293,6 +294,12 @@ export function generateAnnotatedConfig(options = {}) {
   template = template.replace(/fallback: cli_app_server/u, `fallback: ${yamlScalar(runnerFallback)}`);
   template = template.replace(/package: ""/u, `package: ${yamlScalar(sdkPackage)}`);
   template = template.replace(/contract: ""/u, `contract: ${yamlScalar(sdkContract)}`);
+  if (agentAccess === "full") {
+    template = template.replace(
+      /    turn_sandbox_policy:\n      type: workspaceWrite/u,
+      "    turn_sandbox_policy:\n      type: dangerFullAccess"
+    );
+  }
   template = template.replace(/secret: \$FIZZY_WEBHOOK_SECRET/u, `secret: ${yamlScalar(webhook.secret_env ? `$${webhook.secret_env}` : "")}`);
   if (remoteWorkspaceRepo) {
     template = template.replace(/default_repo: \./u, `default_repo: ${yamlScalar(".")}`);
@@ -349,6 +356,7 @@ export function generateOperatorConfig(options = {}) {
     botUserId = "",
     defaultModel = DEFAULT_CODEX_MODEL,
     reasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
+    agentAccess = "protected",
     webhook = {},
     managedWebhookIdsByBoard = webhook.managed_webhook_ids_by_board ?? {},
     configDir = ".",
@@ -390,6 +398,12 @@ export function generateOperatorConfig(options = {}) {
     "",
     "runner:",
     `  preferred: ${yamlScalar(runnerPreferred)}`,
+    ...(agentAccess === "full" ? [
+      "  codex:",
+      "    # Full access lets unattended agents use networked tools like ghx/gh.",
+      "    turn_sandbox_policy:",
+      "      type: dangerFullAccess"
+    ] : []),
     ...compactWebhookLines(webhook, managedWebhookIdsByBoard),
     "",
     "polling:",

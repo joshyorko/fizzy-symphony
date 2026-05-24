@@ -179,12 +179,18 @@ class SetupWizardPromptProvider {
       choices: workspaceModeChoices(defaults),
       defaultValue: defaults.workspaceMode ?? "protected_worktree"
     }, "defaults");
+    const agentAccess = await this.menuValue({
+      message: "Agent access",
+      choices: agentAccessChoices(defaults),
+      defaultValue: defaults.agentAccess ?? "protected"
+    }, "defaults");
 
     return {
       defaultModel,
       reasoningEffort,
       maxAgents: numericOrRaw(maxAgents),
-      workspaceMode
+      workspaceMode,
+      agentAccess
     };
   }
 
@@ -594,6 +600,27 @@ function workspaceModeChoices(defaults = {}) {
         value: mode,
         label: "Watch only",
         hint: "no agents run until config changes"
+      };
+    }
+    return { value: mode, label: mode, hint: "" };
+  });
+}
+
+function agentAccessChoices(defaults = {}) {
+  const allowed = defaults.agentAccessModes ?? ["protected", "full"];
+  return allowed.map((mode) => {
+    if (mode === "protected") {
+      return {
+        value: mode,
+        label: "Protected",
+        hint: "workspace writes only; no network in unattended turns"
+      };
+    }
+    if (mode === "full") {
+      return {
+        value: mode,
+        label: "Full access",
+        hint: "allows networked commands like ghx/gh"
       };
     }
     return { value: mode, label: mode, hint: "" };

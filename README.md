@@ -88,6 +88,11 @@ Maximum active agents stays on the existing concurrency contract: use `--max-age
 or edit `agent.max_concurrent` in `.fizzy-symphony/config.yml`. Starter-board setup defaults it to
 `1`.
 
+Agent access is explicit during setup. The default `protected` mode keeps Codex turns in a
+workspace-write sandbox without network access. Use `--agent-access full` when unattended agents
+must run networked commands such as `ghx` or `gh`; setup writes `dangerFullAccess` into
+`runner.codex.turn_sandbox_policy`.
+
 Source protection ignores setup-owned `.fizzy-symphony/` dirt so generated config, status, and
 workspace metadata do not block dispatch. Real changes in the source repo still block when the
 clean-source policy is enabled; commit, stash, or change the policy deliberately before retrying.

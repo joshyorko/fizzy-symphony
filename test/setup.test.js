@@ -375,6 +375,28 @@ test("runSetup lets setup choose the Codex model and maximum active agents", asy
   assert.match(written, /max_concurrent: 3/u);
 });
 
+test("runSetup lets setup choose full agent access for networked unattended commands", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-starter-agent-access-"));
+  const configPath = join(dir, ".fizzy-symphony", "config.yml");
+  const fizzy = fakeStarterFizzy();
+
+  const result = await runSetup({
+    configPath,
+    fizzy,
+    runner: fakeRunner(),
+    account: "acct_1",
+    setupMode: "create_starter",
+    starterBoardName: "Agent Playground: repo",
+    workspaceRepo: dir,
+    agentAccess: "full",
+    env: { FIZZY_API_TOKEN: "token" }
+  });
+
+  assert.equal(result.agent_access, "full");
+  const written = await readFile(configPath, "utf8");
+  assert.match(written, /turn_sandbox_policy:\n      type: dangerFullAccess/u);
+});
+
 test("runSetup rejects invalid max agents before creating remote starter resources", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-invalid-max-agents-"));
   const fizzy = fakeStarterFizzy();

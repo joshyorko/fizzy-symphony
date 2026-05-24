@@ -74,6 +74,7 @@ export async function runSetup(options = {}) {
   const defaultModel = setupDefaults.defaultModel;
   const reasoningEffort = setupDefaults.reasoningEffort;
   const workspaceMode = setupDefaults.workspaceMode;
+  const agentAccess = setupDefaults.agentAccess;
   const noDispatch = workspaceMode === "no_dispatch";
   const workflowPlan = await planWorkflow(workspaceRepo, workflowPolicyFromOptions(options));
   const webhookWarnings = webhook.manage ? validateWebhookSetup(webhook) : [];
@@ -153,6 +154,7 @@ export async function runSetup(options = {}) {
     runnerFallback: "cli_app_server",
     defaultModel,
     reasoningEffort,
+    agentAccess,
     sdkPackage: runnerReport.kind === "sdk" ? runnerReport.package : "",
     sdkContract: runnerReport.kind === "sdk" ? runnerReport.contract : "",
     apiUrl,
@@ -179,6 +181,7 @@ export async function runSetup(options = {}) {
     default_model: defaultModel,
     reasoning_effort: reasoningEffort,
     workspace_mode: workspaceMode,
+    agent_access: agentAccess,
     no_dispatch: noDispatch,
     max_agents: maxAgents,
     runner: runnerReport,
@@ -598,13 +601,15 @@ async function selectSetupDefaults(options, prompts, setupMode) {
     defaultModel: options.defaultModel ?? DEFAULT_CODEX_MODEL,
     reasoningEffort: options.reasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT,
     maxAgents: setupMaxAgents(options.maxAgents, setupMode),
-    workspaceMode: options.workspaceMode ?? "protected_worktree"
+    workspaceMode: options.workspaceMode ?? "protected_worktree",
+    agentAccess: normalizeAgentAccess(options.agentAccess ?? "protected")
   };
 
   const prompted = await prompts?.configureSetupDefaults?.({
     ...defaults,
     reasoningEfforts: ALLOWED_CODEX_REASONING_EFFORTS,
-    workspaceModes: ["protected_worktree", "no_dispatch"]
+    workspaceModes: ["protected_worktree", "no_dispatch"],
+    agentAccessModes: ["protected", "full"]
   });
   if (!prompted) return defaults;
 
@@ -612,7 +617,8 @@ async function selectSetupDefaults(options, prompts, setupMode) {
     defaultModel: nonEmptyString(prompted.defaultModel) ? String(prompted.defaultModel).trim() : defaults.defaultModel,
     reasoningEffort: nonEmptyString(prompted.reasoningEffort) ? String(prompted.reasoningEffort).trim() : defaults.reasoningEffort,
     maxAgents: setupMaxAgents(prompted.maxAgents ?? defaults.maxAgents, setupMode),
-    workspaceMode: nonEmptyString(prompted.workspaceMode) ? String(prompted.workspaceMode).trim() : defaults.workspaceMode
+    workspaceMode: nonEmptyString(prompted.workspaceMode) ? String(prompted.workspaceMode).trim() : defaults.workspaceMode,
+    agentAccess: normalizeAgentAccess(prompted.agentAccess ?? defaults.agentAccess)
   };
 
   if (!ALLOWED_CODEX_REASONING_EFFORTS.includes(selected.reasoningEffort)) {
@@ -626,8 +632,19 @@ async function selectSetupDefaults(options, prompts, setupMode) {
       value: selected.workspaceMode
     });
   }
+  if (!["protected", "full"].includes(selected.agentAccess)) {
+    throw new FizzySymphonyError("INVALID_AGENT_ACCESS", "Setup agent access must be protected or full.", {
+      value: selected.agentAccess
+    });
+  }
 
   return selected;
+}
+
+function normalizeAgentAccess(value) {
+  if (value === "dangerFullAccess") return "full";
+  if (value === "workspaceWrite") return "protected";
+  return String(value ?? "protected").trim();
 }
 
 function setupMaxAgents(value, setupMode) {

@@ -54,6 +54,10 @@ agent:
 
 Maximum active agents stays on `--max-agents` and `agent.max_concurrent`; starter-board setup defaults it to `1`.
 
+Agent access is a separate setup choice. `protected` is the default: workspace writes are allowed,
+but unattended turns do not get network access. Use `--agent-access full` when cards need read-only
+GitHub commands such as `ghx issue view` or other networked tooling without an approval prompt.
+
 Generated setup state under `.fizzy-symphony/` is ignored by source protection, so config/status/workspace metadata dirt does not block dispatch. Real user edits elsewhere in the repo still block when the clean-source policy is enabled.
 
 `start` runs the local daemon.
@@ -113,7 +117,7 @@ still need a human decision. Use `worktrees --json` for machine-readable triage 
 If you want to use a different env file, Codex model, or reasoning effort:
 
 ```sh
-fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model> --reasoning medium
+fizzy-symphony setup --dotenv path/to/.env --api-url https://fizzy.example.com --model <codex-model> --reasoning medium --agent-access protected
 ```
 
 If you already built a Fizzy board route yourself, use the explicit scripted path:

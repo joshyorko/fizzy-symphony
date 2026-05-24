@@ -175,6 +175,7 @@ async function setupCommandWithOptions(args, io, commandOptions = {}) {
       reasoningEffort: reasoningEffortForArgs(args, env),
       maxAgents: maxAgentsForArgs(args, env),
       workspaceMode: workspaceModeForArgs(args),
+      agentAccess: agentAccessForArgs(args),
       workspaceRepo,
       workspaceRepoRef: workspaceRepoRefForArgs(args, env),
       sourceCacheRoot: sourceCacheRootForArgs(args, env),
@@ -502,6 +503,20 @@ function workspaceModeForArgs(args) {
   if (args.includes("--no-dispatch")) return "no_dispatch";
   if (args.includes("--worktree") || args.includes("--protected-worktree")) return "protected_worktree";
   return undefined;
+}
+
+function agentAccessForArgs(args) {
+  const raw = optionValue(args, "--agent-access") ?? optionValue(args, "--access");
+  if (!nonEmpty(raw)) return undefined;
+  const value = String(raw).trim();
+  if (value === "dangerFullAccess") return "full";
+  if (value === "workspaceWrite") return "protected";
+  if (["protected", "full"].includes(value)) return value;
+  throw new FizzySymphonyError("INVALID_AGENT_ACCESS", "--agent-access must be protected or full.", {
+    value,
+    allowed: ["protected", "full"],
+    remediation: "Use `--agent-access protected` for default no-network sandboxing or `--agent-access full` for unattended networked commands."
+  });
 }
 
 function maxAgentsForArgs(args, env = process.env) {
@@ -846,7 +861,7 @@ function usage(exitCode, io) {
     "Usage:",
     "  fizzy-symphony setup",
     "  fizzy-symphony setup --template-only [--config path]",
-    "  fizzy-symphony setup --mode create-starter [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--worktree|--no-dispatch] [--create-starter-workflow|--no-workflow-change]",
+    "  fizzy-symphony setup --mode create-starter [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--agent-access protected|full] [--worktree|--no-dispatch] [--create-starter-workflow|--no-workflow-change]",
     "  fizzy-symphony setup --mode existing [--config path] [--account id] [--board id] [--boards id,id] [--repo url|--git-repo url|--workspace-repo path-or-url] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony setup --adopt-starter --board id [--config path] [--account id] [--repo url|--git-repo url|--workspace-repo path-or-url] [--augment-workflow|--no-workflow-change]",
     "  fizzy-symphony validate [--parse-only] [--config path]",

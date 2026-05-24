@@ -31,6 +31,7 @@ test("setup wizard returns create-starter choices without mutating setup state",
     ["menu", "high"],
     ["input", "1"],
     ["menu", "protected_worktree"],
+    ["menu", "full"],
     ["menu", "create"],
     ["confirm", true]
   ]);
@@ -49,12 +50,15 @@ test("setup wizard returns create-starter choices without mutating setup state",
     reasoningEfforts: ["low", "medium", "high", "xhigh"],
     maxAgents: 1,
     workspaceMode: "protected_worktree",
-    workspaceModes: ["protected_worktree", "no_dispatch"]
+    workspaceModes: ["protected_worktree", "no_dispatch"],
+    agentAccess: "protected",
+    agentAccessModes: ["protected", "full"]
   }), {
     defaultModel: "gpt-5.5",
     reasoningEffort: "high",
     maxAgents: 1,
-    workspaceMode: "protected_worktree"
+    workspaceMode: "protected_worktree",
+    agentAccess: "full"
   });
   assert.deepEqual(await provider.confirmWorkflowPolicy({ exists: false, path: "/repo/WORKFLOW.md" }), { action: "create" });
   assert.equal(await provider.confirmSetupMutations({
@@ -80,6 +84,7 @@ test("setup wizard returns create-starter choices without mutating setup state",
     "input",
     "menu",
     "input",
+    "menu",
     "menu",
     "section",
     "menu",
