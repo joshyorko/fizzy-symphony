@@ -529,7 +529,6 @@ export async function scanWorkspaceMetadata({ config, fs = nodeFs, exec = defaul
 export function validateExistingWorkspaceMetadata(existing, identity) {
   const expected = {
     workspace_identity_digest: identity.workspace_identity_digest,
-    route_fingerprint: identity.route_fingerprint,
     canonical_source_repository_path: identity.canonical_source_repository_path,
     source_identity: identity.source_identity,
     board_id: identity.board_id,
@@ -555,6 +554,7 @@ export function validateExistingWorkspaceMetadata(existing, identity) {
         mismatches,
         workspace_key: expected.workspace_key,
         workspace_path: identity.workspace_path,
+        existing_route_fingerprint: existing?.route_fingerprint,
         route_fingerprint: identity.route_fingerprint
       }
     );

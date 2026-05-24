@@ -740,7 +740,7 @@ test("cleanupWorkspace preserves when proof resolves inside the workspace throug
   await access(proofFile);
 });
 
-test("metadata mismatch preserves existing workspace metadata and fails dispatch", async () => {
+test("workspace reuse permits route fingerprint changes for the same card workspace", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-metadata-mismatch-"));
   await initSourceRepo(dir);
   const config = baseConfig(dir);
@@ -750,27 +750,21 @@ test("metadata mismatch preserves existing workspace metadata and fails dispatch
     identity,
     metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
   });
-  const existing = JSON.parse(await readFile(prepared.metadata_path, "utf8"));
-  const mismatched = {
-    ...existing,
-    route_fingerprint: "sha256:different-route"
-  };
-  await writeFile(prepared.metadata_path, `${JSON.stringify(mismatched, null, 2)}\n`, "utf8");
+  const nextRoute = route({
+    id: "board:board_1:column:working:golden:golden_2",
+    fingerprint: "sha256:different-route"
+  });
+  const nextIdentity = resolveWorkspaceIdentity({ config, route: nextRoute, card: card() });
 
-  await assert.rejects(
-    () => prepareWorkspace({
-      config,
-      identity,
-      metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
-    }),
-    (error) => error.code === "WORKSPACE_METADATA_MISMATCH" &&
-      error.details.preserve_workspace === true &&
-      error.details.mismatches.includes("route_fingerprint")
-  );
+  await prepareWorkspace({
+    config,
+    identity: nextIdentity,
+    metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+  });
 
-  const preserved = JSON.parse(await readFile(prepared.metadata_path, "utf8"));
-  assert.equal(preserved.route_fingerprint, "sha256:different-route");
-  assert.equal(preserved.run_attempt_id, "attempt_1");
+  const reused = JSON.parse(await readFile(prepared.metadata_path, "utf8"));
+  assert.equal(reused.route_fingerprint, nextIdentity.route_fingerprint);
+  assert.equal(reused.run_attempt_id, "attempt_2");
 });
 
 test("validateExistingWorkspaceMetadata rejects identity and canonical repository mismatches", async () => {
