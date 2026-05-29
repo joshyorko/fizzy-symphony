@@ -226,6 +226,7 @@ export function createCodexCliAppServerRunner(options = {}) {
       }
 
       const emitted = [];
+      let output = "";
       let timeout;
       try {
         const streamTimeoutMs = timeoutValue(context.runnerConfig, "streamTimeoutMs");
@@ -260,13 +261,13 @@ export function createCodexCliAppServerRunner(options = {}) {
               emitted.push(event);
               onEvent?.(event);
               if (event.type === "assistant.delta" && event.text) {
-                context.output += event.text;
+                output += event.text;
               }
               if (event.final) {
                 if (context.streamFailure?.failure_kind === "timed_out") {
                   context.streamFailure = null;
                 }
-                return turnResultFromFinal(turn, event, emitted, context.output);
+                return turnResultFromFinal(turn, event, emitted, output);
               }
               continue;
             }
@@ -458,7 +459,6 @@ function createSessionContext({ transport, runnerConfig, now }) {
     now,
     session: null,
     notifications: [],
-    output: "",
     waiters: [],
     inputRequired: null,
     streamFailure: null

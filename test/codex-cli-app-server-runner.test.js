@@ -183,8 +183,47 @@ test("Codex CLI app-server runner streams normalized activity and final turn res
   assert.equal(result.session_id, "thread_1");
   assert.equal(result.thread_id, "thread_1");
   assert.equal(result.turn_id, "turn_1");
+  assert.equal(result.output_summary, "done");
   assert.deepEqual(streamed.map((event) => event.type), ["turn.started", "assistant.delta", "turn.completed"]);
   assert.equal(streamed[1].text, "done");
+});
+
+test("Codex CLI app-server runner keeps output summaries isolated by turn", async () => {
+  let turnCount = 0;
+  const transport = new FakeTransport({}, {
+    "initialize": () => initializeResult(),
+    "thread/start": () => threadStartResult(),
+    "turn/start": () => turnStartResult({ id: `turn_${++turnCount}` })
+  });
+  const runner = createCodexCliAppServerRunner({ transportFactory: () => transport });
+  const session = await runner.startSession("/tmp/card-workspace", { config: runnerConfig() }, { run_id: "run_1" });
+  const firstTurn = await runner.startTurn(session, "first prompt", { run_id: "run_1", attempt_number: 1 });
+  const secondTurn = await runner.startTurn(session, "second prompt", { run_id: "run_1", attempt_number: 2 });
+
+  const firstResultPromise = runner.stream(firstTurn);
+  transport.emitNotification({ method: "item/agentMessage/delta", params: { threadId: "thread_1", turnId: "turn_1", delta: "first" } });
+  transport.emitNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread_1",
+      turn: { id: "turn_1", status: "completed", items: [], error: null, startedAt: 1, completedAt: 2, durationMs: 1000 }
+    }
+  });
+  const firstResult = await firstResultPromise;
+
+  const secondResultPromise = runner.stream(secondTurn);
+  transport.emitNotification({ method: "item/agentMessage/delta", params: { threadId: "thread_1", turnId: "turn_2", delta: "second" } });
+  transport.emitNotification({
+    method: "turn/completed",
+    params: {
+      threadId: "thread_1",
+      turn: { id: "turn_2", status: "completed", items: [], error: null, startedAt: 3, completedAt: 4, durationMs: 1000 }
+    }
+  });
+  const secondResult = await secondResultPromise;
+
+  assert.equal(firstResult.output_summary, "first");
+  assert.equal(secondResult.output_summary, "second");
 });
 
 test("Codex CLI app-server runner interrupts timed-out streams before reporting failure", async () => {
@@ -362,7 +401,7 @@ function threadStartResult() {
   };
 }
 
-function turnStartResult() {
+function turnStartResult(overrides = {}) {
   return {
     turn: {
       id: "turn_1",
@@ -371,7 +410,8 @@ function turnStartResult() {
       error: null,
       startedAt: 1,
       completedAt: null,
-      durationMs: null
+      durationMs: null,
+      ...overrides
     }
   };
 }
