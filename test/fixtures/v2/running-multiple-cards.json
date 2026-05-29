@@ -1,0 +1,52 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [
+      { "id": "board_42", "name": "Agents", "routeIds": ["route_ready", "route_review"], "activeCardCount": 3, "goldenCardCount": 2 }
+    ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden_a", "backend": "codex", "model": "gpt-5.5", "enabled": true },
+      { "id": "route_review", "boardId": "board_42", "name": "Auto Review", "sourceColumnId": "col_review", "sourceColumnName": "In Review", "goldenCardId": "card_golden_b", "backend": "codex", "model": "gpt-5.5", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden_a", "number": 1, "title": "Build agent (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_golden_b", "number": 2, "title": "Review agent (golden ticket)", "boardId": "board_42", "routeId": "route_review", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "running", "golden": false, "runId": "run_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" },
+      { "id": "card_427", "number": 427, "title": "Add cockpit help screen", "boardId": "board_42", "routeId": "route_ready", "state": "queued", "golden": false, "runId": "run_427" },
+      { "id": "card_500", "number": 500, "title": "Review PR for card 426", "boardId": "board_42", "routeId": "route_review", "state": "running", "golden": false, "runId": "run_500", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-500" }
+    ],
+    "runs": {
+      "queued": [
+        { "id": "run_427", "state": "queued", "boardId": "board_42", "cardId": "card_427", "cardNumber": 427, "cardTitle": "Add cockpit help screen", "routeId": "route_ready" }
+      ],
+      "running": [
+        { "id": "run_426", "attemptId": "attempt_1", "state": "running", "boardId": "board_42", "cardId": "card_426", "cardNumber": 426, "cardTitle": "Fix terminal output", "routeId": "route_ready", "sessionId": "session_9", "turnId": "turn_3", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426", "startedAt": "2026-05-29T08:01:00.000Z", "stalled": false },
+        { "id": "run_500", "attemptId": "attempt_1", "state": "running", "boardId": "board_42", "cardId": "card_500", "cardNumber": 500, "cardTitle": "Review PR for card 426", "routeId": "route_review", "sessionId": "session_10", "turnId": "turn_1", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-500", "startedAt": "2026-05-29T08:03:00.000Z", "stalled": true, "recommendedAction": "Check runner; turn has been idle past stall_timeout_ms." }
+      ],
+      "completed": [], "failed": [], "cancelled": [], "preempted": []
+    },
+    "claims": [
+      { "id": "claim_426", "cardId": "card_426", "runId": "run_426", "state": "claimed", "workspaceKey": "ws_426" },
+      { "id": "claim_500", "cardId": "card_500", "runId": "run_500", "state": "renewed", "workspaceKey": "ws_500" }
+    ],
+    "worktrees": [
+      { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "runId": "run_426", "branch": "fizzy/board42-card-426", "dirty": false, "preserved": false },
+      { "workspaceKey": "ws_500", "path": "/work/repo/.fizzy-symphony/worktrees/card-500", "cardId": "card_500", "runId": "run_500", "branch": "fizzy/board42-card-500", "dirty": false, "preserved": false }
+    ],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "RUNS_IN_FLIGHT", "message": "2 runs still in motion." }] },
+    "warnings": [
+      { "code": "RUN_STALLED", "message": "run_500 has been idle past the stall timeout.", "severity": "warning", "runId": "run_500" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:03:30.000Z"
+  },
+  "events": [
+    { "id": "evt_a", "type": "run.started", "severity": "info", "message": "Machine in motion for card 426.", "at": "2026-05-29T08:01:00.000Z", "runId": "run_426" },
+    { "id": "evt_b", "type": "run.started", "severity": "info", "message": "Machine in motion for card 500.", "at": "2026-05-29T08:03:00.000Z", "runId": "run_500" },
+    { "id": "evt_c", "type": "run.stalled", "severity": "warning", "message": "run_500 stalled past timeout.", "at": "2026-05-29T08:03:25.000Z", "runId": "run_500" }
+  ]
+}

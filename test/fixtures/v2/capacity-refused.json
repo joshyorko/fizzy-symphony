@@ -1,0 +1,38 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 2, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "running", "golden": false, "runId": "run_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" },
+      { "id": "card_427", "number": 427, "title": "Add cockpit help screen", "boardId": "board_42", "routeId": "route_ready", "state": "blocked", "golden": false, "attention": "Capacity refused: agent.max_concurrent reached (1)." }
+    ],
+    "runs": {
+      "queued": [],
+      "running": [
+        { "id": "run_426", "attemptId": "attempt_1", "state": "running", "boardId": "board_42", "cardId": "card_426", "cardNumber": 426, "cardTitle": "Fix terminal output", "routeId": "route_ready", "sessionId": "session_9", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426", "startedAt": "2026-05-29T08:01:00.000Z", "stalled": false }
+      ],
+      "completed": [], "failed": [], "cancelled": [], "preempted": []
+    },
+    "claims": [ { "id": "claim_426", "cardId": "card_426", "runId": "run_426", "state": "claimed", "workspaceKey": "ws_426" } ],
+    "worktrees": [ { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "runId": "run_426", "branch": "fizzy/board42-card-426", "dirty": false, "preserved": false } ],
+    "retryQueue": [],
+    "capacityRefusals": [
+      { "cardId": "card_427", "routeId": "route_ready", "reason": "agent.max_concurrent reached (1)", "refusedAt": "2026-05-29T08:02:00.000Z" }
+    ],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "RUN_IN_FLIGHT", "message": "A run is still in motion for card 426." }] },
+    "warnings": [
+      { "code": "CAPACITY_REFUSED", "message": "Queued on the line: card 427 refused, max_concurrent reached.", "severity": "info", "cardId": "card_427" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:02:01.000Z"
+  },
+  "events": [
+    { "id": "evt_cap_1", "type": "capacity.refused", "severity": "info", "message": "Capacity refusal: card 427 not dispatched (max_concurrent=1).", "at": "2026-05-29T08:02:00.000Z", "cardId": "card_427", "cardNumber": 427 }
+  ]
+}

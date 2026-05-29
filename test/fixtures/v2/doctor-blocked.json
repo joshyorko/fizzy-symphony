@@ -1,0 +1,45 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 1, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "completed", "golden": false, "runId": "run_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" }
+    ],
+    "runs": {
+      "queued": [],
+      "running": [],
+      "completed": [
+        { "id": "run_426", "attemptId": "attempt_1", "state": "completed", "boardId": "board_42", "cardId": "card_426", "cardNumber": 426, "cardTitle": "Fix terminal output", "routeId": "route_ready", "sessionId": "session_9", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426", "startedAt": "2026-05-29T08:01:00.000Z", "updatedAt": "2026-05-29T08:08:00.000Z" }
+      ],
+      "failed": [], "cancelled": [], "preempted": []
+    },
+    "claims": [ { "id": "claim_426", "cardId": "card_426", "runId": "run_426", "state": "completed", "workspaceKey": "ws_426" } ],
+    "worktrees": [
+      { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "runId": "run_426", "branch": "fizzy/board42-card-426", "dirty": true, "preserved": true, "dirtyPaths": [".fizzy-symphony/notes.md"], "recommendedAction": "Proof written; goal still blocked until dirty worktree is triaged." }
+    ],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": {
+      "goalClosable": false,
+      "blockers": [
+        { "code": "DIRTY_WORKTREE", "message": "Completed run left a dirty worktree.", "workspaceKey": "ws_426", "recommendedAction": "fizzy-symphony worktrees --card 426 --dirty-only" }
+      ],
+      "checkedAt": "2026-05-29T08:08:30.000Z"
+    },
+    "warnings": [
+      { "code": "GOAL_NOT_CLOSABLE", "message": "Factory cannot close: dirty worktree remains after completion.", "severity": "warning", "cardId": "card_426" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:08:31.000Z"
+  },
+  "events": [
+    { "id": "evt_done_1", "type": "run.completed", "severity": "info", "message": "Wrapped candy: run_426 completed with proof.", "at": "2026-05-29T08:08:00.000Z", "runId": "run_426", "cardId": "card_426" },
+    { "id": "evt_doctor_1", "type": "doctor.blocked", "severity": "warning", "message": "Factory cannot close: dirty worktree ws_426.", "at": "2026-05-29T08:08:30.000Z", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" }
+  ]
+}

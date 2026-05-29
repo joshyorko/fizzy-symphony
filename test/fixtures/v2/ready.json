@@ -1,0 +1,69 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": {
+      "id": "instance-local",
+      "label": "operator-laptop",
+      "pid": 4242,
+      "startedAt": "2026-05-29T08:00:00.000Z",
+      "endpoint": "http://127.0.0.1:4567",
+      "daemonVersion": "0.2.0-spike"
+    },
+    "readiness": {
+      "state": "ready",
+      "ready": true,
+      "blockers": [],
+      "dispatchPaused": false,
+      "runnerStatus": "ready"
+    },
+    "boards": [
+      { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 0, "goldenCardCount": 1 }
+    ],
+    "routes": [
+      {
+        "id": "route_ready",
+        "boardId": "board_42",
+        "name": "Ready for Agents",
+        "sourceColumnId": "col_ready",
+        "sourceColumnName": "Ready for Agents",
+        "goldenCardId": "card_golden",
+        "goldenCardNumber": 1,
+        "backend": "codex",
+        "model": "gpt-5.5",
+        "enabled": true
+      }
+    ],
+    "cards": [
+      {
+        "id": "card_golden",
+        "number": 1,
+        "title": "Agent instructions (golden ticket)",
+        "boardId": "board_42",
+        "routeId": "route_ready",
+        "columnId": "col_ready",
+        "columnName": "Ready for Agents",
+        "state": "idle",
+        "golden": true
+      }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": true, "blockers": [], "checkedAt": "2026-05-29T08:00:00.000Z" },
+    "warnings": [],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:00:05.000Z"
+  },
+  "events": [
+    {
+      "id": "evt_ready_1",
+      "type": "daemon.ready",
+      "severity": "info",
+      "message": "Factory open: runner ready, dispatch enabled.",
+      "at": "2026-05-29T08:00:05.000Z",
+      "boardId": "board_42"
+    }
+  ]
+}

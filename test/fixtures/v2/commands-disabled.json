@@ -1,0 +1,35 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": {
+      "state": "locked",
+      "ready": true,
+      "dispatchPaused": true,
+      "runnerStatus": "ready",
+      "blockers": [{ "code": "DISPATCH_PAUSED", "message": "Operator paused dispatch." }]
+    },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 1, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": false, "disabledReason": "Dispatch paused" }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "queued", "golden": false, "attention": "Dispatch paused by operator; will not start." }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": true, "blockers": [] },
+    "warnings": [
+      { "code": "DISPATCH_PAUSED", "message": "Factory locked: dispatch is paused; cancel/stop need an active run.", "severity": "info" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:09:00.000Z"
+  },
+  "events": [
+    { "id": "evt_pause_1", "type": "command.accepted.dispatch.pause", "severity": "info", "message": "Factory locked: operator paused dispatch.", "at": "2026-05-29T08:08:55.000Z" }
+  ]
+}

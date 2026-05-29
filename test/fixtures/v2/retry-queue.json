@@ -1,0 +1,36 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 2, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "queued", "golden": false, "runId": "run_426", "attention": "Awaiting retry attempt 2 of 3." },
+      { "id": "card_430", "number": 430, "title": "Update docs", "boardId": "board_42", "routeId": "route_ready", "state": "queued", "golden": false, "runId": "run_430", "attention": "Awaiting retry attempt 3 of 3." }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [
+      { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "runId": "run_426", "branch": "fizzy/board42-card-426", "dirty": false, "preserved": true }
+    ],
+    "retryQueue": [
+      { "runId": "run_426", "cardId": "card_426", "attempt": 2, "maxAttempts": 3, "nextRetryAt": "2026-05-29T08:10:00.000Z", "reason": "RUNNER_ERROR" },
+      { "runId": "run_430", "cardId": "card_430", "attempt": 3, "maxAttempts": 3, "nextRetryAt": "2026-05-29T08:15:00.000Z", "reason": "TURN_TIMEOUT" }
+    ],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "RETRIES_PENDING", "message": "2 runs queued for retry." }] },
+    "warnings": [
+      { "code": "RETRY_SCHEDULED", "message": "Repair queue: 2 runs scheduled for retry.", "severity": "warning" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:06:00.000Z"
+  },
+  "events": [
+    { "id": "evt_retry_1", "type": "retry.scheduled", "severity": "warning", "message": "Repair queue: run_426 scheduled for retry (attempt 2/3).", "at": "2026-05-29T08:05:30.000Z", "runId": "run_426", "cardId": "card_426" },
+    { "id": "evt_retry_2", "type": "retry.scheduled", "severity": "warning", "message": "Repair queue: run_430 scheduled for retry (attempt 3/3).", "at": "2026-05-29T08:05:45.000Z", "runId": "run_430", "cardId": "card_430" }
+  ]
+}

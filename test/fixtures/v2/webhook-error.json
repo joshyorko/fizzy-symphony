@@ -1,0 +1,29 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 0, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": true, "blockers": [] },
+    "warnings": [
+      { "code": "WEBHOOK_DELIVERY_FAILED", "message": "Caution light: webhook callback returned 500 for board_42.", "severity": "error" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:00:30.000Z"
+  },
+  "events": [
+    { "id": "evt_wh_1", "type": "webhook.delivery_error", "severity": "error", "message": "Webhook delivery failed: callback http 500 for board_42.", "at": "2026-05-29T08:00:25.000Z", "boardId": "board_42", "data": { "code": "DELIVERY_FAILED", "httpStatus": 500 } },
+    { "id": "evt_wh_2", "type": "webhook.filtered", "severity": "info", "message": "Filtered stale webhook event (age > max_event_age_seconds).", "at": "2026-05-29T08:00:20.000Z", "boardId": "board_42" }
+  ]
+}

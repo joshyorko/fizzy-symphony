@@ -62,6 +62,22 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
       return runWorktreesCommand(commandArgs, io);
     } else if (command === "doctor") {
       return runDoctorCommand(commandArgs, io);
+    } else if (command === "cockpit") {
+      const { runCockpitCommand } = await import("../src/v2/cli/cockpit.ts");
+      return runCockpitCommand(commandArgs, {
+        stdout: io.stdout,
+        stderr: io.stderr,
+        env: io.env ?? process.env,
+        fetch: io.fetch,
+        stdoutIsTTY: Boolean(io.stdout?.isTTY)
+      });
+    } else if (command === "capabilities") {
+      const { runCapabilitiesCommand } = await import("../src/v2/cli/capabilities.ts");
+      return runCapabilitiesCommand(commandArgs, {
+        stdout: io.stdout,
+        stderr: io.stderr,
+        fetch: io.fetch
+      });
     } else {
       return usage(1, io);
     }
@@ -872,7 +888,9 @@ function usage(exitCode, io) {
     "  fizzy-symphony status [--config path] [--instance id]",
     "  fizzy-symphony status [--registry-dir path] [--endpoint url]",
     "  fizzy-symphony worktrees [--config path] [--json] [--dirty-only] [--card number]",
-    "  fizzy-symphony doctor --goal [--config path] [--json]"
+    "  fizzy-symphony doctor --goal [--config path] [--json]",
+    "  fizzy-symphony cockpit [--fixture path] [--endpoint url] [--once] [--json] [--select id]",
+    "  fizzy-symphony capabilities [--fixture path] [--endpoint url] [--json]"
   ].join("\n");
   io.stdout.write(`${text}\n`);
   return exitCode;

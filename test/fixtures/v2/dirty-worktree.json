@@ -1,0 +1,48 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 1, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "failed", "golden": false, "runId": "run_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426", "attention": "Worktree preserved with uncommitted changes; triage before rerun." }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [
+      {
+        "workspaceKey": "ws_426",
+        "path": "/work/repo/.fizzy-symphony/worktrees/card-426",
+        "cardId": "card_426",
+        "cardNumber": 426,
+        "runId": "run_426",
+        "branch": "fizzy/board42-card-426",
+        "dirty": true,
+        "preserved": true,
+        "dirtyPaths": ["src/terminal-renderer.js", ".fizzy-symphony/notes.md"],
+        "lastError": { "code": "RUNNER_ERROR", "message": "Codex turn failed mid-edit." },
+        "recommendedAction": "Inspect dirty paths, commit or discard, then rerun card 426."
+      }
+    ],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": {
+      "goalClosable": false,
+      "blockers": [
+        { "code": "DIRTY_WORKTREE", "message": "Worktree ws_426 has uncommitted changes.", "workspaceKey": "ws_426", "recommendedAction": "fizzy-symphony worktrees --card 426" }
+      ]
+    },
+    "warnings": [
+      { "code": "WORKTREE_DIRTY", "message": "Spill on the line: card 426 worktree is dirty.", "severity": "warning", "cardId": "card_426" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:05:00.000Z"
+  },
+  "events": [
+    { "id": "evt_dirty_1", "type": "worktree.preserved", "severity": "warning", "message": "Spill / hazard: preserved dirty worktree for card 426.", "at": "2026-05-29T08:04:59.000Z", "cardId": "card_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" }
+  ]
+}
