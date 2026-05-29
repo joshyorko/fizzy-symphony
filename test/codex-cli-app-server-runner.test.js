@@ -187,6 +187,30 @@ test("Codex CLI app-server runner streams normalized activity and final turn res
   assert.equal(streamed[1].text, "done");
 });
 
+test("Codex CLI app-server runner interrupts timed-out streams before reporting failure", async () => {
+  const transport = new FakeTransport({}, {
+    "initialize": () => initializeResult(),
+    "thread/start": () => threadStartResult(),
+    "turn/start": () => turnStartResult(),
+    "turn/interrupt": () => ({})
+  });
+  const runner = createCodexCliAppServerRunner({ transportFactory: () => transport });
+  const config = runnerConfig({ runner: { stream_timeout_ms: 5 } });
+  const session = await runner.startSession("/tmp/card-workspace", { config }, { run_id: "run_1" });
+  const turn = await runner.startTurn(session, "prompt", { run_id: "run_1" });
+
+  const result = await runner.stream(turn);
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure_kind, "timed_out");
+  assert.equal(result.error.code, "APP_SERVER_STREAM_TIMEOUT");
+  assert.equal(result.cancel_result.status, "cancelled");
+  assert.deepEqual(transport.requests.at(-1), {
+    method: "turn/interrupt",
+    params: { threadId: "thread_1", turnId: "turn_1" }
+  });
+});
+
 test("Codex CLI app-server runner treats approval and input requests as controlled unattended failures", async () => {
   const transport = new FakeTransport({}, {
     "initialize": () => initializeResult(),

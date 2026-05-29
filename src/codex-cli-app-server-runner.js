@@ -251,20 +251,38 @@ export function createCodexCliAppServerRunner(options = {}) {
             return turnFailure(turn, "input_required", context.inputRequired.error, emitted);
           }
 
-          if (context.streamFailure) {
-            return turnFailure(turn, context.streamFailure.failure_kind, context.streamFailure.error, emitted);
+          const shouldReadNotification = !context.streamFailure ||
+            (context.streamFailure.failure_kind === "timed_out" && hasMatchingFinalNotification(context, turn));
+          if (shouldReadNotification) {
+            const next = shiftMatchingNotification(context, turn);
+            if (next) {
+              const event = normalizeNotification(next, turn, now);
+              emitted.push(event);
+              onEvent?.(event);
+              if (event.type === "assistant.delta" && event.text) {
+                context.output += event.text;
+              }
+              if (event.final) {
+                if (context.streamFailure?.failure_kind === "timed_out") {
+                  context.streamFailure = null;
+                }
+                return turnResultFromFinal(turn, event, emitted, context.output);
+              }
+              continue;
+            }
           }
 
-          const next = shiftMatchingNotification(context, turn);
-          if (next) {
-            const event = normalizeNotification(next, turn, now);
-            emitted.push(event);
-            onEvent?.(event);
-            if (event.type === "assistant.delta" && event.text) {
-              context.output += event.text;
-            }
-            if (event.final) return turnResultFromFinal(turn, event, emitted, context.output);
-            continue;
+          if (context.streamFailure) {
+            const cancelResult = context.streamFailure.failure_kind === "timed_out"
+              ? await this.cancel(turn, "timed_out")
+              : undefined;
+            return turnFailure(
+              turn,
+              context.streamFailure.failure_kind,
+              context.streamFailure.error,
+              emitted,
+              { cancel_result: cancelResult }
+            );
           }
 
           await waitForContext(context);
@@ -629,8 +647,8 @@ function turnResultFromFinal(turn, event, events, output) {
   });
 }
 
-function turnFailure(turn, failureKind, error, events = []) {
-  return {
+function turnFailure(turn, failureKind, error, events = [], details = {}) {
+  return omitUndefined({
     type: "TurnResult",
     success: false,
     status: "failed",
@@ -639,8 +657,9 @@ function turnFailure(turn, failureKind, error, events = []) {
     turn_id: turn.turn_id,
     failure_kind: failureKind,
     events,
-    error
-  };
+    error,
+    ...details
+  });
 }
 
 function cancelFailure(turn, reason, code, message) {
@@ -668,6 +687,16 @@ function shiftMatchingNotification(context, turn) {
   });
   if (index === -1) return null;
   return context.notifications.splice(index, 1)[0];
+}
+
+function hasMatchingFinalNotification(context, turn) {
+  return context.notifications.some((message) => {
+    const params = message.params ?? {};
+    const threadId = params.threadId ?? params.conversationId;
+    const turnId = params.turnId ?? params.turn?.id;
+    const final = message.method === "turn/completed" || message.method === "error";
+    return final && (!threadId || threadId === turn.thread_id) && (!turnId || turnId === turn.turn_id);
+  });
 }
 
 function waitForContext(context) {
