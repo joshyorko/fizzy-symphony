@@ -15,6 +15,7 @@ import {
 } from "../core/commands.ts";
 import { createEventLog } from "../core/events.ts";
 import { normalizeStatus } from "../core/status.ts";
+import { applyCommandToStatus } from "./apply-command.ts";
 import type { EventLog } from "../core/events.ts";
 import type {
   Capability,
@@ -49,7 +50,8 @@ export interface SymphonyRuntime {
 
 export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
   const applyCommands = options.applyCommands ?? false;
-  const status = normalizeStatus(options.status);
+  const now = options.now ?? (() => new Date());
+  let status = normalizeStatus(options.status);
   const eventLog: EventLog = createEventLog({ now: options.now });
   for (const event of options.events ?? status.recentEvents ?? []) {
     eventLog.append({
@@ -66,10 +68,12 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
     });
   }
 
-  const capabilities =
-    options.capabilities && options.capabilities.length > 0
-      ? options.capabilities
-      : deriveCapabilities(status);
+  const explicitCapabilities =
+    options.capabilities && options.capabilities.length > 0 ? options.capabilities : null;
+
+  function currentCapabilities(): Capability[] {
+    return explicitCapabilities ?? deriveCapabilities(status);
+  }
 
   function allRuns() {
     return [
@@ -115,22 +119,29 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
       };
     }
 
-    // Production wiring would dispatch to FizzyPort / CodexRunnerPort here.
+    // Apply the command to the in-memory status model. Live FizzyPort /
+    // CodexRunnerPort side-effects (deferred) would be layered on top of this.
+    const applied = applyCommandToStatus(status, command, now().toISOString());
+    status = applied.status;
     const event = eventLog.append({
       type: `command.accepted.${command.type}`,
       severity: "info",
-      message: `Accepted command ${command.type}`,
+      message: applied.summary,
+      runId: "runId" in command ? command.runId : undefined,
+      sessionId: "sessionId" in command ? command.sessionId : undefined,
+      cardId: "cardId" in command ? command.cardId : undefined,
+      workspacePath: "workspaceKey" in command ? command.workspaceKey : undefined,
       data: command
     });
-    return { outcome: "accepted", commandType: command.type, message: `Command ${command.type} accepted.`, event };
+    return { outcome: "accepted", commandType: command.type, message: applied.summary, event };
   }
 
   return {
     getStatus() {
-      return { ...status, recentEvents: eventLog.recent(20), capabilities };
+      return { ...status, recentEvents: eventLog.recent(20), capabilities: currentCapabilities() };
     },
     getCapabilities() {
-      return capabilities.map((capability) => ({ ...capability }));
+      return currentCapabilities().map((capability) => ({ ...capability }));
     },
     getEvents(count = 20) {
       return eventLog.recent(count);
