@@ -20,7 +20,10 @@
     "setup": "node bin/fizzy-symphony.js setup",
     "start": "node bin/fizzy-symphony.js start",
     "dashboard": "node bin/fizzy-symphony.js dashboard",
-    "test": "for file in test/*.test.js; do node --test \"$file\" || exit $?; done",
+    "cockpit": "node bin/fizzy-symphony.js cockpit",
+    "capabilities": "node bin/fizzy-symphony.js capabilities",
+    "test": "for file in test/*.test.js test/v2/*.test.js; do node --test \"$file\" || exit $?; done",
+    "test:v2": "for file in test/v2/*.test.js; do node --test \"$file\" || exit $?; done",
     "test:live:e2e": "node --test test/live-e2e-smoke.test.js"
   },
   "engines": {

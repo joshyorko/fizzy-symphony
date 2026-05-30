@@ -1,0 +1,37 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": {
+      "state": "blocked",
+      "ready": false,
+      "dispatchPaused": false,
+      "runnerStatus": "unavailable",
+      "blockers": [
+        { "code": "RUNNER_NOT_READY", "message": "Codex runner health is unavailable.", "detail": { "kind": "cli_app_server", "failureCode": "CODEX_NOT_FOUND", "remediation": "Install the Codex CLI or set runner.cli_app_server.command." } }
+      ]
+    },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 0, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": false, "disabledReason": "Runner unavailable" }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "blocked", "golden": false, "attention": "Runner unavailable; card cannot be dispatched." }
+    ],
+    "runs": { "queued": [], "running": [], "completed": [], "failed": [], "cancelled": [], "preempted": [] },
+    "claims": [],
+    "worktrees": [],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "RUNNER_UNAVAILABLE", "message": "Cannot close goal: runner is not ready." }] },
+    "warnings": [
+      { "code": "RUNNER_NOT_READY", "message": "Codex runner is unavailable; dispatch is blocked.", "severity": "error" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:00:10.000Z"
+  },
+  "events": [
+    { "id": "evt_block_1", "type": "runner.health", "severity": "error", "message": "Factory cannot close: Codex runner unavailable (CODEX_NOT_FOUND).", "at": "2026-05-29T08:00:09.000Z" }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": { "id": "instance-local", "label": "operator-laptop", "endpoint": "http://127.0.0.1:4567" },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [ { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 1, "goldenCardCount": 1 } ],
+    "routes": [
+      { "id": "route_ready", "boardId": "board_42", "name": "Ready for Agents", "sourceColumnId": "col_ready", "sourceColumnName": "Ready for Agents", "goldenCardId": "card_golden", "backend": "codex", "enabled": true }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "state": "failed", "golden": false, "runId": "run_426_attempt2", "attention": "Run failed with RUNNER_ERROR; see retry queue." }
+    ],
+    "runs": {
+      "queued": [],
+      "running": [],
+      "completed": [],
+      "failed": [
+        {
+          "id": "run_426_attempt2",
+          "attemptId": "attempt_2",
+          "state": "failed",
+          "boardId": "board_42",
+          "cardId": "card_426",
+          "cardNumber": 426,
+          "cardTitle": "Fix terminal output",
+          "routeId": "route_ready",
+          "sessionId": "session_12",
+          "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426",
+          "startedAt": "2026-05-29T08:04:00.000Z",
+          "updatedAt": "2026-05-29T08:04:45.000Z",
+          "error": { "code": "RUNNER_ERROR", "message": "Codex turn exited non-zero.", "remediation": "Inspect worktree and retry; attempt 2 of 3." },
+          "recommendedAction": "Review failure, then allow retry or cancel."
+        }
+      ],
+      "cancelled": [], "preempted": []
+    },
+    "claims": [
+      { "id": "claim_426", "cardId": "card_426", "runId": "run_426_attempt2", "state": "failed", "workspaceKey": "ws_426" }
+    ],
+    "worktrees": [
+      { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "runId": "run_426_attempt2", "branch": "fizzy/board42-card-426", "dirty": false, "preserved": true, "lastError": { "code": "RUNNER_ERROR", "message": "Codex turn exited non-zero." }, "recommendedAction": "Awaiting retry attempt 3." }
+    ],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "FAILED_RUN", "message": "Untriaged failed run for card 426." }] },
+    "warnings": [
+      { "code": "RUN_FAILED", "message": "Jammed machine: run_426_attempt2 failed (RUNNER_ERROR).", "severity": "error", "runId": "run_426_attempt2", "cardId": "card_426" }
+    ],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:04:46.000Z"
+  },
+  "events": [
+    { "id": "evt_fail_1", "type": "run.failed", "severity": "error", "message": "Jammed machine: run_426_attempt2 failed (RUNNER_ERROR).", "at": "2026-05-29T08:04:45.000Z", "runId": "run_426_attempt2", "cardId": "card_426", "cardNumber": 426 }
+  ]
+}

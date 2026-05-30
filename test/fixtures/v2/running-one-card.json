@@ -1,0 +1,72 @@
+{
+  "status": {
+    "schemaVersion": "fizzy-symphony-status-v2",
+    "instance": {
+      "id": "instance-local",
+      "label": "operator-laptop",
+      "pid": 4242,
+      "startedAt": "2026-05-29T08:00:00.000Z",
+      "endpoint": "http://127.0.0.1:4567"
+    },
+    "readiness": { "state": "ready", "ready": true, "blockers": [], "dispatchPaused": false, "runnerStatus": "ready" },
+    "boards": [
+      { "id": "board_42", "name": "Agents", "routeIds": ["route_ready"], "activeCardCount": 1, "goldenCardCount": 1 }
+    ],
+    "routes": [
+      {
+        "id": "route_ready",
+        "boardId": "board_42",
+        "name": "Ready for Agents",
+        "sourceColumnId": "col_ready",
+        "sourceColumnName": "Ready for Agents",
+        "goldenCardId": "card_golden",
+        "goldenCardNumber": 1,
+        "backend": "codex",
+        "model": "gpt-5.5",
+        "enabled": true
+      }
+    ],
+    "cards": [
+      { "id": "card_golden", "number": 1, "title": "Agent instructions (golden ticket)", "boardId": "board_42", "routeId": "route_ready", "columnId": "col_ready", "state": "idle", "golden": true },
+      { "id": "card_426", "number": 426, "title": "Fix terminal output", "boardId": "board_42", "routeId": "route_ready", "columnId": "col_ready", "state": "running", "golden": false, "runId": "run_426", "claimId": "claim_426", "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426" }
+    ],
+    "runs": {
+      "queued": [],
+      "running": [
+        {
+          "id": "run_426",
+          "attemptId": "attempt_1",
+          "state": "running",
+          "boardId": "board_42",
+          "cardId": "card_426",
+          "cardNumber": 426,
+          "cardTitle": "Fix terminal output",
+          "routeId": "route_ready",
+          "claimId": "claim_426",
+          "sessionId": "session_9",
+          "turnId": "turn_3",
+          "workspacePath": "/work/repo/.fizzy-symphony/worktrees/card-426",
+          "startedAt": "2026-05-29T08:01:00.000Z",
+          "updatedAt": "2026-05-29T08:02:30.000Z",
+          "stalled": false
+        }
+      ],
+      "completed": [], "failed": [], "cancelled": [], "preempted": []
+    },
+    "claims": [
+      { "id": "claim_426", "cardId": "card_426", "boardId": "board_42", "routeId": "route_ready", "runId": "run_426", "state": "claimed", "expiresAt": "2026-05-29T08:10:00.000Z", "workspaceKey": "ws_426" }
+    ],
+    "worktrees": [
+      { "workspaceKey": "ws_426", "path": "/work/repo/.fizzy-symphony/worktrees/card-426", "cardId": "card_426", "cardNumber": 426, "runId": "run_426", "branch": "fizzy/board42-card-426", "dirty": false, "preserved": false }
+    ],
+    "retryQueue": [],
+    "capacityRefusals": [],
+    "doctor": { "goalClosable": false, "blockers": [{ "code": "RUN_IN_FLIGHT", "message": "A Codex run is still in motion for card 426.", "workspaceKey": "ws_426" }], "checkedAt": "2026-05-29T08:02:30.000Z" },
+    "warnings": [],
+    "recentEvents": [],
+    "lastUpdatedAt": "2026-05-29T08:02:31.000Z"
+  },
+  "events": [
+    { "id": "evt_run_1", "type": "run.started", "severity": "info", "message": "Machine in motion: Codex turn started for card 426.", "at": "2026-05-29T08:01:00.000Z", "boardId": "board_42", "cardId": "card_426", "cardNumber": 426, "runId": "run_426", "sessionId": "session_9" }
+  ]
+}
