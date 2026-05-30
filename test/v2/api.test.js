@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { handleApiRequest, createApiServer } from "../../src/v2/daemon/api.ts";
 import { createRuntime } from "../../src/v2/daemon/runtime.ts";
 
+import { createFakeCodexRunner } from "../../src/v2/codex/fake.ts";
 function runtimeWithRun() {
   return createRuntime({
     status: {
@@ -70,6 +71,47 @@ test("createApiServer serves over a real socket", async () => {
     assert.equal(cmdRes.status, 202);
     const cmd = await cmdRes.json();
     assert.equal(cmd.outcome, "dry-run");
+  } finally {
+    await api.close();
+  }
+});
+
+
+
+test("live command endpoint drives the codex runner when apply is enabled", async () => {
+  const calls = [];
+  const base = createFakeCodexRunner();
+  const codex = {
+    ...base,
+    async cancelTurn(input) {
+      calls.push(input);
+      return base.cancelTurn(input);
+    }
+  };
+  const runtime = createRuntime({
+    status: {
+      instance: { id: "instance-test" },
+      readiness: { state: "ready", ready: true, runnerStatus: "ready" },
+      runs: { running: [{ id: "run_1", state: "running", sessionId: "s_1", turnId: "turn_1", cardId: "card_1" }] },
+      cards: [{ id: "card_1", title: "c", boardId: "b", state: "running", golden: false, runId: "run_1" }]
+    },
+    codex,
+    applyCommands: true
+  });
+  const api = createApiServer(runtime);
+  const { url } = await api.listen();
+  try {
+    const res = await fetch(`${url}/v2/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "run.cancel", runId: "run_1", reason: "operator" })
+    });
+    assert.equal(res.status, 202);
+    const body = await res.json();
+    assert.equal(body.outcome, "accepted");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].turn.turnId, "turn_1");
+    assert.ok(runtime.getEvents(20).some((e) => e.type === "command.effect.run.cancel"));
   } finally {
     await api.close();
   }

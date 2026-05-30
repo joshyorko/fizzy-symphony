@@ -70,16 +70,17 @@ export function handleApiRequest(
 
   if (method === "POST" && pathname === "/v2/commands") {
     const result = runtime.submitCommand(body);
-    const code =
-      result.outcome === "accepted" || result.outcome === "dry-run"
-        ? 202
-        : result.outcome === "unavailable"
-          ? 409
-          : 400;
-    return { statusCode: code, body: result };
+    return { statusCode: commandHttpStatus(result), body: result };
   }
 
   return { statusCode: 404, body: { error: "NOT_FOUND", path: pathname, method } };
+}
+
+// Map a command outcome to its HTTP status code.
+export function commandHttpStatus(result: { outcome: string }): number {
+  if (result.outcome === "accepted" || result.outcome === "dry-run") return 202;
+  if (result.outcome === "unavailable") return 409;
+  return 400;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -114,7 +115,14 @@ export function createApiServer(runtime: SymphonyRuntime, options: ApiServerOpti
     let result: ApiHandlerResult;
     try {
       const body = method === "POST" ? await readJsonBody(req) : undefined;
-      result = handleApiRequest(runtime, method, url.pathname, body);
+      if (method === "POST" && url.pathname === "/v2/commands") {
+        // The live server awaits port side effects (cancel/stop) via the async
+        // command path; the pure router stays model-only for deterministic tests.
+        const commandResult = await runtime.submitCommandAsync(body);
+        result = { statusCode: commandHttpStatus(commandResult), body: commandResult };
+      } else {
+        result = handleApiRequest(runtime, method, url.pathname, body);
+      }
     } catch (error) {
       result = { statusCode: 400, body: { error: "BAD_REQUEST", message: (error as Error).message } };
     }
