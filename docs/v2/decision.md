@@ -43,9 +43,17 @@
 ## 4. Commands are dry-run by default
 
 - **Decision:** `createRuntime` accepts `applyCommands` (default **`false`**).
-  In the spike, every operator command is **validated**, **availability-checked**,
+  With the default, every operator command is **validated**, **availability-checked**,
   and then **recorded as a dry-run event** (`command.dry-run.<type>`) with outcome
-  `"dry-run"`. No real side effect is performed.
+  `"dry-run"`. No state changes.
+- **With `applyCommands: true`** (CLI `--apply`), the same validated command is run
+  through the pure reducer `applyCommandToStatus`
+  ([src/v2/daemon/apply-command.ts](../../src/v2/daemon/apply-command.ts)), which
+  mutates the **in-memory `SymphonyStatus` model** (pause/resume, run cancel,
+  session stop, card rerun/move, worktree preserve/cleanup) and emits a
+  `command.accepted.<type>` event. Capabilities re-derive from the new state.
+  *Live* FizzyPort / CodexRunnerPort side-effects remain deferred — the reducer is
+  the deterministic model layer those adapters will sit beneath.
 - **Why:** The brief forbids fake controls. A button that *pretends* to cancel a
   run is a fake control. A button that honestly reports "validated, would dispatch
   `run.cancel run_426` — not wired in spike" is not. Dry-run is the honest middle:

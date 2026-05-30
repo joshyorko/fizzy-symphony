@@ -74,15 +74,26 @@ async function loadEndpointBundle(endpoint: string, io: CockpitIo): Promise<Fixt
 async function buildRuntime(args: string[], io: CockpitIo): Promise<{ runtime: SymphonyRuntime; source: string }> {
   const endpoint = optionValue(args, "--endpoint");
   const fixture = optionValue(args, "--fixture");
+  // --apply makes operator commands mutate the in-memory status model instead
+  // of being recorded as dry-runs. Off by default to keep the cockpit read-only.
+  const applyCommands = hasFlag(args, "--apply");
   if (endpoint) {
     const bundle = await loadEndpointBundle(endpoint, io);
-    return { runtime: createRuntime({ status: bundle.status, events: bundle.events }), source: `endpoint ${endpoint}` };
+    return {
+      runtime: createRuntime({ status: bundle.status, events: bundle.events, applyCommands }),
+      source: `endpoint ${endpoint}`
+    };
   }
   const fixturePath = fixture ?? DEFAULT_FIXTURE;
   const bundle = await loadFixtureBundle(fixturePath);
   return {
-    runtime: createRuntime({ status: bundle.status, events: bundle.events, capabilities: bundle.capabilities }),
-    source: `fixture ${fixturePath}`
+    runtime: createRuntime({
+      status: bundle.status,
+      events: bundle.events,
+      capabilities: bundle.capabilities,
+      applyCommands
+    }),
+    source: `fixture ${fixturePath}${applyCommands ? " [apply]" : ""}`
   };
 }
 

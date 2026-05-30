@@ -35,6 +35,7 @@ export { createCodexAdapter } from "./codex/adapter.ts";
 
 export { createRuntime } from "./daemon/runtime.ts";
 export type { SymphonyRuntime } from "./daemon/runtime.ts";
+export { applyCommandToStatus } from "./daemon/apply-command.ts";
 export {
   handleApiRequest,
   createApiServer

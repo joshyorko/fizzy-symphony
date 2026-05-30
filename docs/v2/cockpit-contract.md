@@ -99,9 +99,13 @@ worktree.cleanup { workspaceKey, reason }
    current status. Codes: `NO_ACTIVE_RUN`, `NO_ACTIVE_SESSION`, `ALREADY_PAUSED`,
    `NOT_PAUSED`, `UNKNOWN_CARD`, `CARD_RUNNING`, `UNKNOWN_WORKTREE`.
    Failure → `outcome: "unavailable"`.
-3. **Apply.** If `applyCommands` is `false` (spike default), the command is
+3. **Apply.** If `applyCommands` is `false` (default), the command is
    recorded as a `command.dry-run.<type>` event and returns `outcome: "dry-run"`.
-   If `true`, it emits `command.accepted.<type>` and returns `outcome: "accepted"`.
+   If `true` (CLI `--apply`), the command is run through the pure reducer
+   `applyCommandToStatus` (`src/v2/daemon/apply-command.ts`), which mutates the
+   in-memory `SymphonyStatus` (pause/resume, run cancel, session stop, card
+   rerun/move, worktree preserve/cleanup); capabilities re-derive from the new
+   state. It emits `command.accepted.<type>` and returns `outcome: "accepted"`.
 
 `CommandResult.outcome` ∈ `accepted | rejected | unavailable | dry-run`.
 
