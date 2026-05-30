@@ -16,12 +16,14 @@ import {
 import { createEventLog } from "../core/events.ts";
 import { normalizeStatus } from "../core/status.ts";
 import { applyCommandToStatus } from "./apply-command.ts";
+import { dispatchPortEffects } from "./port-effects.ts";
 import type { EventLog } from "../core/events.ts";
 import type {
   Capability,
   CodexRunnerPort,
   CommandResult,
   FizzyPort,
+  OperatorCommand,
   RuntimeEvent,
   SymphonyStatus
 } from "../core/types.ts";
@@ -45,6 +47,7 @@ export interface SymphonyRuntime {
   getRun(runId: string): SymphonyStatus["runs"]["running"][number] | undefined;
   getWorktrees(): SymphonyStatus["worktrees"];
   submitCommand(payload: unknown): CommandResult;
+  submitCommandAsync(payload: unknown): Promise<CommandResult>;
   describePorts(): { fizzy: ReturnType<FizzyPort["describe"]> | null; codex: ReturnType<CodexRunnerPort["describe"]> | null };
 }
 
@@ -102,25 +105,62 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
     }
 
     if (!applyCommands) {
-      const event = eventLog.append({
-        type: `command.dry-run.${command.type}`,
-        severity: "info",
-        message: `Dry-run accepted command ${command.type}`,
-        runId: "runId" in command ? command.runId : undefined,
-        sessionId: "sessionId" in command ? command.sessionId : undefined,
-        cardId: "cardId" in command ? command.cardId : undefined,
-        data: command
-      });
-      return {
-        outcome: "dry-run",
-        commandType: command.type,
-        message: `Command ${command.type} accepted as dry-run (spike build).`,
-        event
-      };
+      return dryRunResult(command);
+    }
+    return applyToModel(command);
+  }
+
+  // Async variant: applies the command to the model, then awaits any live
+  // CodexRunnerPort side effects (cancel/stop). The synchronous submitCommand
+  // stays model-only so the pure API router and the interactive loop remain
+  // synchronous; the HTTP server uses this path when a runner is wired.
+  async function submitCommandAsync(payload: unknown): Promise<CommandResult> {
+    const validation = validateCommand(payload);
+    if (!validation.ok || !validation.command) {
+      return rejectedResult(validation.code ?? "INVALID_COMMAND", validation.message ?? "Invalid command.");
+    }
+    const command = validation.command;
+    const availability = checkCommandAvailability(command, status);
+    if (!availability.available) {
+      return unavailableResult(
+        command.type,
+        availability.code ?? "UNAVAILABLE",
+        availability.reason ?? "Command unavailable."
+      );
     }
 
-    // Apply the command to the in-memory status model. Live FizzyPort /
-    // CodexRunnerPort side-effects (deferred) would be layered on top of this.
+    if (!applyCommands) {
+      return dryRunResult(command);
+    }
+
+    const preStatus = status;
+    const result = applyToModel(command);
+    const effects = await dispatchPortEffects(command, preStatus, { codex: options.codex });
+    for (const effect of effects) {
+      eventLog.append(effect);
+    }
+    return result;
+  }
+
+  function dryRunResult(command: OperatorCommand): CommandResult {
+    const event = eventLog.append({
+      type: `command.dry-run.${command.type}`,
+      severity: "info",
+      message: `Dry-run accepted command ${command.type}`,
+      runId: "runId" in command ? command.runId : undefined,
+      sessionId: "sessionId" in command ? command.sessionId : undefined,
+      cardId: "cardId" in command ? command.cardId : undefined,
+      data: command
+    });
+    return {
+      outcome: "dry-run",
+      commandType: command.type,
+      message: `Command ${command.type} accepted as dry-run (spike build).`,
+      event
+    };
+  }
+
+  function applyToModel(command: OperatorCommand): CommandResult {
     const applied = applyCommandToStatus(status, command, now().toISOString());
     status = applied.status;
     const event = eventLog.append({
@@ -153,6 +193,7 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
       return status.worktrees.map((worktree) => ({ ...worktree }));
     },
     submitCommand,
+    submitCommandAsync,
     describePorts() {
       return {
         fizzy: options.fizzy ? options.fizzy.describe() : null,
