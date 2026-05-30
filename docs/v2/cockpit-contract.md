@@ -112,12 +112,12 @@ worktree.cleanup { workspaceKey, reason }
 > No render or model path ever submits a command or mutates state. Commands flow
 > only through `submitCommand`.
 
-### Port effects — driving the live runner (`submitCommandAsync`)
+### Port effects — driving the live ports (`submitCommandAsync`)
 
 `submitCommand` is synchronous and model-only (it keeps the pure API router and
 the interactive loop deterministic). The live HTTP server instead calls
 `submitCommandAsync`, which performs the same validate → availability → reducer
-steps and then awaits runner side effects via
+steps and then awaits port side effects via
 `dispatchPortEffects` (`src/v2/daemon/port-effects.ts`):
 
 - **`run.cancel`** → `codex.cancelTurn({ turn, reason })` for the run's active
@@ -126,12 +126,16 @@ steps and then awaits runner side effects via
 - **`session.stop`** → `codex.stopSession({ session, reason })` then
   `codex.terminateOwnedProcess` (when implemented) for every running run in the
   session; failures yield `RUNNER_STOP_FAILED`.
+- **`card.move`** → `fizzy.moveCard({ cardId, targetColumnId })`; failures yield
+  an `error` event with code `FIZZY_MOVE_FAILED`.
+- **`card.rerun`** → `fizzy.createComment(...)` recording the rerun request on the
+  card as a board-visible audit note; failures yield `FIZZY_RERUN_FAILED`.
 
 The dispatcher receives the status snapshot taken *before* the reducer ran (so
 the affected run is still `running`), never mutates status itself, and appends
-`command.effect.<type>` events describing what the runner did. When no codex port
-is wired (or `applyCommands` is `false`), `submitCommandAsync` is model-only and
-emits no effect events. The `FizzyPort` side effects remain deferred.
+`command.effect.<type>` events describing what each port did. When the relevant
+port is not wired (or `applyCommands` is `false`), `submitCommandAsync` is
+model-only and emits no effect events for that command.
 
 ---
 

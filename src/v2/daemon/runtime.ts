@@ -110,10 +110,11 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
     return applyToModel(command);
   }
 
-  // Async variant: applies the command to the model, then awaits any live
-  // CodexRunnerPort side effects (cancel/stop). The synchronous submitCommand
-  // stays model-only so the pure API router and the interactive loop remain
-  // synchronous; the HTTP server uses this path when a runner is wired.
+  // Async variant: applies the command to the model, then awaits any live port
+  // side effects (CodexRunnerPort cancel/stop, FizzyPort card move/rerun). The
+  // synchronous submitCommand stays model-only so the pure API router and the
+  // interactive loop remain synchronous; the HTTP server uses this path when a
+  // port is wired.
   async function submitCommandAsync(payload: unknown): Promise<CommandResult> {
     const validation = validateCommand(payload);
     if (!validation.ok || !validation.command) {
@@ -135,7 +136,10 @@ export function createRuntime(options: RuntimeOptions): SymphonyRuntime {
 
     const preStatus = status;
     const result = applyToModel(command);
-    const effects = await dispatchPortEffects(command, preStatus, { codex: options.codex });
+    const effects = await dispatchPortEffects(command, preStatus, {
+      codex: options.codex,
+      fizzy: options.fizzy
+    });
     for (const effect of effects) {
       eventLog.append(effect);
     }
