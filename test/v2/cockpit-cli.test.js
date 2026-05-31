@@ -30,29 +30,144 @@ test("cockpit --once prints a static frame (non-TTY safe)", async () => {
   const { io, out } = bufferIo({ stdoutIsTTY: false });
   const code = await runCockpitCommand(["--fixture", join(FIXTURE_DIR, "running-one-card.json"), "--once"], io);
   assert.equal(code, 0);
+  assert.match(out(), /Mode: DEMO/);
   assert.match(out(), /FIZZY-SYMPHONY COCKPIT/);
   assert.match(out(), /Machine in motion/);
   assert.match(out(), /run_426/);
 });
 
-test("cockpit --once works from the packaged default fixture", async () => {
+test("cockpit --fixture packaged ready data stays DEMO", async () => {
   assert.equal(existsSync(PACKAGED_READY_FIXTURE), true);
   const { io, out } = bufferIo({
     stdoutIsTTY: false,
     fetch: async () => ({ ok: false, status: 404 })
   });
-  const code = await runCockpitCommand(["--once"], io);
+  const code = await runCockpitCommand(["--fixture", PACKAGED_READY_FIXTURE, "--once"], io);
   assert.equal(code, 0);
+  assert.match(out(), /Mode: DEMO/);
   assert.match(out(), /Factory open/);
 });
 
-test("cockpit with no explicit source discovers a live v2 daemon from the registry", async () => {
+test("cockpit without config enters setup without external clients", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-"));
+  const requested = [];
+  const { io, out } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async (url) => {
+      requested.push(String(url));
+      return { ok: true, json: async () => ({}) };
+    }
+  });
+
+  const code = await runCockpitCommand(["--config", join(dir, "config.yml"), "--once"], io);
+  assert.equal(code, 0);
+  assert.equal(requested.length, 0);
+  assert.match(out(), /Mode: SETUP/);
+  assert.match(out(), /setup/);
+});
+
+test("cockpit with config exists but no daemon/default disabled enters OFFLINE", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-offline-"));
+  const configPath = join(dir, "config.json");
+  await writeFile(configPath, `${JSON.stringify({
+    server: { registry_dir: dir, host: "127.0.0.1", port: 4567 }
+  })}\n`, "utf8");
+  const { io, out } = bufferIo({
+    stdoutIsTTY: false
+  });
+  const code = await runCockpitCommand([
+    "--config",
+    configPath,
+    "--registry-dir",
+    dir,
+    "--no-default-endpoint",
+    "--once"
+  ], io);
+  assert.equal(code, 0);
+  assert.match(out(), /Mode: OFFLINE/);
+  assert.match(out(), /start.*daemon/i);
+});
+
+test("cockpit with config can reach LIVE through default endpoint fallback without secrets", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-default-live-"));
+  const configPath = join(dir, "config.json");
+  await writeFile(configPath, `${JSON.stringify({
+    server: { registry_dir: join(dir, "empty-registry"), host: "127.0.0.1", port: 4567 }
+  })}\n`, "utf8");
+  const bundle = JSON.parse(await readFile(join(FIXTURE_DIR, "running-one-card.json"), "utf8"));
+  const requested = [];
+  const { io, out } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async (url) => {
+      requested.push(String(url));
+      return {
+        ok: true,
+        json: async () => String(url).endsWith("/v2/events") ? { events: bundle.events ?? [] } : bundle.status
+      };
+    }
+  });
+
+  const code = await runCockpitCommand(["--config", configPath, "--once"], io);
+
+  assert.equal(code, 0);
+  assert.deepEqual(requested, [
+    "http://127.0.0.1:4567/v2/status",
+    "http://127.0.0.1:4567/v2/events"
+  ]);
+  assert.match(out(), /Mode: LIVE/);
+  assert.match(out(), /run_426/);
+});
+
+test("cockpit with config enters OFFLINE when default endpoint is unreachable", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-default-offline-"));
+  const configPath = join(dir, "config.json");
+  await writeFile(configPath, `${JSON.stringify({
+    server: { registry_dir: join(dir, "empty-registry"), host: "127.0.0.1", port: 4567 }
+  })}\n`, "utf8");
+  const requested = [];
+  const { io, out } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async (url) => {
+      requested.push(String(url));
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+  });
+
+  const code = await runCockpitCommand(["--config", configPath, "--once"], io);
+
+  assert.equal(code, 0);
+  assert.deepEqual(requested, ["http://127.0.0.1:4567/v2/status"]);
+  assert.match(out(), /Mode: OFFLINE/);
+  assert.match(out(), /start.*daemon/i);
+});
+
+test("cockpit --endpoint strict failure exits nonzero and does not fall back", async () => {
+  const requested = [];
+  const { io, err } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async (url) => {
+      requested.push(String(url));
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+  });
+
+  const code = await runCockpitCommand(["--endpoint", "http://127.0.0.1:49203", "--once"], io);
+  assert.equal(code, 1);
+  assert.match(err(), /failed to load source/);
+  assert.deepEqual(requested, ["http://127.0.0.1:49203/v2/status"]);
+});
+
+test("cockpit with config discovers a live v2 daemon from the registry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-"));
+  const configPath = join(dir, "config.json");
   const endpoint = "http://127.0.0.1:49177";
+  const now = new Date().toISOString();
+  await writeFile(configPath, `${JSON.stringify({ server: { registry_dir: dir } })}\n`, "utf8");
   await writeFile(join(dir, "instance-a.json"), `${JSON.stringify({
     instance_id: "instance-a",
     endpoint: { base_url: endpoint },
-    updated_at: "2026-04-29T12:00:00.000Z"
+    heartbeat_at: now,
+    updated_at: now
   })}\n`, "utf8");
   const bundle = JSON.parse(await readFile(join(FIXTURE_DIR, "running-one-card.json"), "utf8"));
   const requested = [];
@@ -67,10 +182,18 @@ test("cockpit with no explicit source discovers a live v2 daemon from the regist
     }
   });
 
-  const code = await runCockpitCommand(["--registry-dir", dir, "--no-default-endpoint", "--once"], io);
+  const code = await runCockpitCommand([
+    "--config",
+    configPath,
+    "--registry-dir",
+    dir,
+    "--no-default-endpoint",
+    "--once"
+  ], io);
 
   assert.equal(code, 0);
   assert.deepEqual(requested, [`${endpoint}/v2/status`, `${endpoint}/v2/events`]);
+  assert.match(out(), /Mode: LIVE/);
   assert.match(out(), /run_426/);
   assert.equal(err(), "");
 });
@@ -80,16 +203,19 @@ test("cockpit falls back to static text in non-TTY without --once", async () => 
   const code = await runCockpitCommand(["--fixture", join(FIXTURE_DIR, "blocked-runner.json")], io);
   assert.equal(code, 0);
   assert.match(err(), /non-TTY detected/);
+  assert.match(out(), /Mode: DEMO/);
   assert.match(out(), /Factory cannot close|blocked/);
 });
 
-test("cockpit --json emits the cockpit model", async () => {
+test("cockpit --json emits a wrapped response with mode", async () => {
   const { io, out } = bufferIo({ stdoutIsTTY: false });
   const code = await runCockpitCommand(["--fixture", join(FIXTURE_DIR, "dirty-worktree.json"), "--json"], io);
   assert.equal(code, 0);
-  const model = JSON.parse(out());
-  assert.ok(model.header);
-  assert.ok(model.panels.worktrees.some((w) => w.dirty));
+  const payload = JSON.parse(out());
+  assert.equal(payload.app, "cockpit");
+  assert.equal(payload.mode, "DEMO");
+  assert.ok(payload.model.header);
+  assert.ok(payload.model.panels.worktrees.some((w) => w.dirty));
 });
 
 test("cockpit reports a clear error for a missing fixture", async () => {

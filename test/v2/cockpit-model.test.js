@@ -36,9 +36,46 @@ test("cockpit model is pure: frozen input does not throw and is not mutated", ()
 test("ready fixture renders factory open with no active runs", () => {
   const { status, events } = loadFixture("ready.json");
   const model = createCockpitModel({ status, events });
+  assert.equal(model.app.mode, "DEMO");
+  assert.equal(model.app.configPath, process.cwd());
+  assert.equal(model.sections.map((section) => section.id).join(","), "factory,runs,worktrees,doctor,manual,events,settings,advanced");
+  assert.equal(model.selectedSectionId, "factory");
+  assert.equal(model.commandPaletteOpen, false);
   assert.equal(model.factoryState, "open");
   assert.equal(model.header.counts.running, 0);
   assert.equal(model.panels.activeRuns.length, 0);
+});
+
+test("next actions and app metadata change with mode", () => {
+  const { status } = loadFixture("ready.json");
+  const setupMode = createCockpitModel({
+    status,
+    app: { mode: "SETUP", source: "config missing", configPath: "/tmp/fizzy-symphony/config.yml" }
+  });
+  assert.equal(setupMode.nextActions.length, 1);
+  assert.equal(setupMode.nextActions[0].command, "fizzy-symphony setup --config /tmp/fizzy-symphony/config.yml");
+  assert.equal(setupMode.nextActions[0].enabled, false);
+  assert.match(setupMode.nextActions[0].disabledReason, /Guidance only/u);
+
+  const offlineMode = createCockpitModel({
+    status,
+    app: { mode: "OFFLINE", source: "config", configPath: "/tmp/fizzy-symphony/config.yml" }
+  });
+  assert.equal(offlineMode.nextActions.length, 1);
+  assert.equal(offlineMode.nextActions[0].mutates, true);
+  assert.equal(offlineMode.nextActions[0].enabled, false);
+  assert.ok(offlineMode.advancedCommands.some((command) =>
+    command.id === "dashboard" &&
+    command.command === "fizzy-symphony dashboard --config /tmp/fizzy-symphony/config.yml" &&
+    command.enabled === false
+  ));
+
+  const demoMode = createCockpitModel({
+    status,
+    app: { mode: "DEMO", source: "fixture", configPath: "/tmp/fizzy-symphony/config.yml" }
+  });
+  assert.equal(demoMode.nextActions.length, 1);
+  assert.equal(demoMode.nextActions[0].enabled, false);
 });
 
 test("running fixture surfaces a machine in motion", () => {
@@ -99,7 +136,11 @@ test("actions reflect enabled/disabled with reasons", () => {
   const model = createCockpitModel({ status });
   const cancel = model.actions.find((a) => a.id === "run.cancel");
   assert.equal(cancel.enabled, false);
+  assert.equal(cancel.commandType, "run.cancel");
   assert.equal(cancel.disabledReason, "No run selected");
+  const cancelPaletteRow = model.commandPalette.find((row) => row.id === "action.run.cancel");
+  assert.equal(cancelPaletteRow.enabled, false);
+  assert.equal(cancelPaletteRow.mutates, true);
 
   const running = loadFixture("running-one-card.json");
   const runModel = createCockpitModel({ status: running.status, selectedId: "run_426" });
@@ -122,4 +163,6 @@ test("help is generated from capabilities, not hardcoded", () => {
   const model = createCockpitModel({ status });
   assert.ok(model.help.capabilities.length > 0);
   assert.ok(model.help.keys.some((k) => k.key === "?"));
+  assert.ok(model.commandPalette.some((row) => row.section === "factory"));
+  assert.ok(model.commandPalette.some((row) => row.id.startsWith("action.")));
 });

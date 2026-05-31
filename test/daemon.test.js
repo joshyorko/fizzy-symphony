@@ -339,6 +339,8 @@ test("daemon serves v2 status for live cockpit and capabilities discovery", asyn
     let stdout = "";
     let stderr = "";
     const exitCode = await runCockpitCommand([
+      "--config",
+      configPath,
       "--registry-dir",
       daemon.config.server.registry_dir,
       "--no-default-endpoint",

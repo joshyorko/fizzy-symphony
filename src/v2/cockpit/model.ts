@@ -28,7 +28,14 @@ import {
 import type {
   Capability,
   CapabilitySummary,
+  CockpitAdvancedCommand,
+  CockpitApp,
+  CockpitMode,
+  CockpitNextAction,
+  CockpitPaletteRow,
   CockpitAction,
+  CockpitSection,
+  CockpitSectionId,
   CockpitEventSummary,
   CockpitLane,
   CockpitLaneCard,
@@ -38,11 +45,24 @@ import type {
   CockpitSelection,
   CockpitWorktreeSummary,
   OperatorCommand,
+  OperatorCommandType,
   RuntimeEvent,
   SymphonyStatus
 } from "../core/types.ts";
 
 const CARD_HAZARD_STATES = new Set(["failed", "blocked"]);
+const DEFAULT_SECTION_ID: CockpitSectionId = "factory";
+
+const DEFAULT_SECTIONS: CockpitSection[] = [
+  { id: "factory", label: "Factory", key: "f" },
+  { id: "runs", label: "Runs", key: "2" },
+  { id: "worktrees", label: "Worktrees", key: "w" },
+  { id: "doctor", label: "Doctor", key: "d" },
+  { id: "manual", label: "Manual", key: "m" },
+  { id: "events", label: "Events", key: "e" },
+  { id: "settings", label: "Settings", key: "S" },
+  { id: "advanced", label: "Advanced", key: "8" }
+];
 
 function matchesFilter(text: string, filter?: string): boolean {
   if (!filter) return true;
@@ -189,6 +209,178 @@ function buildSelection(status: SymphonyStatus, selectedId?: string): CockpitSel
   return { kind: "none", raw: { selectedId } };
 }
 
+function appShell(input: CockpitModelInput["app"]): CockpitApp {
+  return (
+    input ?? {
+      mode: "DEMO",
+      source: "unknown",
+      configPath: process.cwd(),
+      endpoint: undefined
+    }
+  );
+}
+
+function nextActions(mode: CockpitMode, app: CockpitApp): CockpitNextAction[] {
+  if (mode !== "SETUP" && mode !== "OFFLINE" && mode !== "DEMO") return [];
+  if (mode === "SETUP") {
+    return [
+      {
+        id: "setup",
+        label: "Run setup wizard",
+        command: `fizzy-symphony setup --config ${app.configPath}`,
+        enabled: false,
+        mutates: true,
+        disabledReason: "Guidance only; run this command in your shell."
+      }
+    ];
+  }
+  return [
+    {
+      id: "start",
+      label: mode === "OFFLINE"
+        ? "Start daemon"
+        : "Start daemon for demo data",
+      command: `fizzy-symphony start --config ${app.configPath}`,
+      enabled: false,
+      mutates: true,
+      disabledReason: "Guidance only; run this command in your shell."
+    }
+  ];
+}
+
+function settingsSummary(mode: CockpitMode, app: CockpitApp, status: SymphonyStatus) {
+  const workspaceCount = status.worktrees.length;
+  return {
+    configPath: app.configPath,
+    source: app.source,
+    mode,
+    endpoint: app.endpoint,
+    runnerStatus: status.readiness.runnerStatus,
+    readiness: status.readiness.state,
+    readinessBlockers: status.readiness.blockers.length,
+    workspaceCount,
+    dirtyWorktrees: status.worktrees.filter((worktree) => worktree.dirty).length,
+    boardCount: status.boards.length,
+    routeCount: status.routes.length,
+    hasLiveEndpoint: Boolean(app.endpoint)
+  };
+}
+
+function advancedCommands(input: CockpitModelInput): CockpitAdvancedCommand[] {
+  const app = appShell(input.app);
+  return [
+    {
+      id: "setup",
+      key: "x",
+      label: "setup",
+      command: `fizzy-symphony setup --config ${app.configPath}`,
+      enabled: false,
+      mutates: true,
+      disabledReason: "Guidance only; run this command in your shell."
+    },
+    {
+      id: "start",
+      key: "y",
+      label: "start",
+      command: `fizzy-symphony start --config ${app.configPath}`,
+      enabled: false,
+      mutates: true,
+      disabledReason: "Guidance only; run this command in your shell."
+    },
+    {
+      id: "status",
+      key: "z",
+      label: "status",
+      command: `fizzy-symphony status --config ${app.configPath}`,
+      enabled: true,
+      mutates: false
+    },
+    {
+      id: "dashboard",
+      key: "q",
+      label: "dashboard",
+      command: app.endpoint ? `${app.endpoint}/dashboard` : `fizzy-symphony dashboard --config ${app.configPath}`,
+      enabled: Boolean(app.endpoint),
+      mutates: false,
+      disabledReason: app.endpoint ? undefined : "No live endpoint connected."
+    },
+    {
+      id: "capabilities",
+      key: "c",
+      label: "capabilities",
+      command: `fizzy-symphony capabilities --config ${app.configPath}`,
+      enabled: true,
+      mutates: false
+    },
+    {
+      id: "worktrees",
+      key: "t",
+      label: "worktrees",
+      command: `fizzy-symphony worktrees --config ${app.configPath}`,
+      enabled: true,
+      mutates: false
+    },
+    {
+      id: "doctor",
+      key: "D",
+      label: "doctor",
+      command: `fizzy-symphony doctor --goal --config ${app.configPath}`,
+      enabled: true,
+      mutates: false
+    },
+    {
+      id: "cockpit-fixture",
+      key: "f",
+      label: "cockpit fixture",
+      command: "fizzy-symphony cockpit --fixture src/v2/fixtures/ready.json --once",
+      enabled: true,
+      mutates: false
+    }
+  ];
+}
+
+function commandPaletteRows(
+  input: CockpitModelInput,
+  sections: CockpitSection[],
+  actions: CockpitAction[]
+): CockpitPaletteRow[] {
+  const rows: CockpitPaletteRow[] = sections.map((section) => ({
+    id: `section.${section.id}`,
+    key: section.key,
+    label: `Open ${section.label} section`,
+    section: section.id,
+    enabled: true,
+    mutates: false,
+    disabledReason: undefined
+  }));
+
+  for (const action of actions) {
+    rows.push({
+      id: `action.${action.id}`,
+      key: `A:${action.key ?? "?"}`,
+      label: action.label,
+      enabled: action.enabled,
+      disabledReason: action.disabledReason,
+      mutates: Boolean(action.commandType),
+      command: action.commandType
+    });
+  }
+
+  for (const command of advancedCommands(input)) {
+    rows.push({
+      id: `advanced.${command.id}`,
+      key: `V:${command.key}`,
+      label: `${command.label} command`,
+      enabled: command.enabled,
+      disabledReason: command.disabledReason,
+      mutates: command.mutates,
+      endpoint: command.command
+    });
+  }
+
+  return rows;
+}
+
 function activeRunSummaries(status: SymphonyStatus): CockpitRunSummary[] {
   const summaries: CockpitRunSummary[] = [];
   for (const run of [...status.runs.running, ...status.runs.queued]) {
@@ -249,6 +441,7 @@ function capabilitySummaries(capabilities: Capability[]): CapabilitySummary[] {
 
 interface ActionSpec {
   id: string;
+  commandType: OperatorCommandType;
   key: string;
   label: string;
   command: (selection?: CockpitSelection) => OperatorCommand | undefined;
@@ -257,18 +450,21 @@ interface ActionSpec {
 const ACTION_SPECS: ActionSpec[] = [
   {
     id: "dispatch.pause",
+    commandType: "dispatch.pause",
     key: "p",
     label: "Lock factory (pause dispatch)",
     command: () => ({ type: "dispatch.pause" })
   },
   {
     id: "dispatch.resume",
+    commandType: "dispatch.resume",
     key: "u",
     label: "Unlock factory (resume dispatch)",
     command: () => ({ type: "dispatch.resume" })
   },
   {
     id: "run.cancel",
+    commandType: "run.cancel",
     key: "c",
     label: "Cancel selected run",
     command: (selection) =>
@@ -278,6 +474,7 @@ const ACTION_SPECS: ActionSpec[] = [
   },
   {
     id: "session.stop",
+    commandType: "session.stop",
     key: "s",
     label: "Stop selected session",
     command: (selection) =>
@@ -287,6 +484,7 @@ const ACTION_SPECS: ActionSpec[] = [
   },
   {
     id: "card.rerun",
+    commandType: "card.rerun",
     key: "R",
     label: "Request rerun of selected card",
     command: (selection) =>
@@ -302,6 +500,7 @@ function buildActions(status: SymphonyStatus, selection?: CockpitSelection): Coc
     if (!command) {
       return {
         id: spec.id,
+        commandType: spec.commandType,
         key: spec.key,
         label: spec.label,
         enabled: false,
@@ -311,7 +510,7 @@ function buildActions(status: SymphonyStatus, selection?: CockpitSelection): Coc
     const availability = checkCommandAvailability(command, status);
     return {
       id: spec.id,
-      commandType: command.type,
+      commandType: spec.commandType,
       key: spec.key,
       label: spec.label,
       enabled: availability.available,
@@ -350,7 +549,15 @@ const HELP_KEYS: Array<{ key: string; description: string }> = [
   { key: "c", description: "cancel selected run (if available)" },
   { key: "s", description: "stop selected session (if available)" },
   { key: "R", description: "request rerun (if available)" },
-  { key: "m", description: "move selected card (if available)" }
+  { key: "m", description: "move selected card (if available)" },
+  { key: "1 / f", description: "factory section" },
+  { key: "2", description: "runs section" },
+  { key: "3 / w", description: "worktrees section" },
+  { key: "4 / d", description: "doctor section" },
+  { key: "5 / m", description: "manual section" },
+  { key: "6 / e", description: "events section" },
+  { key: "7 / S", description: "settings section" },
+  { key: "8", description: "advanced section" }
 ];
 
 export function createCockpitModel(input: CockpitModelInput): CockpitModel {
@@ -367,6 +574,11 @@ export function createCockpitModel(input: CockpitModelInput): CockpitModel {
   const lanes = buildLanes(status, input.filter);
   const selection = buildSelection(status, input.selectedId);
   const actions = buildActions(status, selection);
+  const sections = input.sections && input.sections.length > 0 ? input.sections : DEFAULT_SECTIONS;
+  const selectedSectionId = input.selectedSectionId ?? DEFAULT_SECTION_ID;
+  const paletteOpen = input.commandPaletteOpen ?? false;
+  const app = appShell(input.app);
+  const mode = app.mode;
 
   const dirtyWorktrees = status.worktrees.filter((worktree) => worktree.dirty).length;
 
@@ -390,6 +602,14 @@ export function createCockpitModel(input: CockpitModelInput): CockpitModel {
   };
 
   return {
+    app,
+    sections,
+    selectedSectionId,
+    nextActions: nextActions(mode, app),
+    settings: settingsSummary(mode, app, status),
+    commandPaletteOpen: paletteOpen,
+    commandPalette: commandPaletteRows(input, sections, actions),
+    advancedCommands: advancedCommands(input),
     header,
     factoryState,
     lanes,

@@ -49,6 +49,8 @@ events, capabilities, selection, filter) it returns a fully resolved view:
 
 - `header` — instance, endpoint, readiness, factory state, counts.
 - `lanes[]` — one per route; each lane carries themed cards with a `hazard` flag.
+  Lane enablement mirrors the route `enabled` field and surfaces `disabledReason` from the backend-aware
+  route parser (for example, non-Codex routes are visible but not dispatchable in MVP).
 - `selected` — the selected item; `raw` holds the unembellished truth
   (`boardId/cardId/runId/sessionId/workspacePath/error`) used to build commands.
 - `panels` — `activeRuns`, `worktrees`, `doctor`, `events`, `capabilities`.
@@ -173,10 +175,11 @@ wraps it in a real `http` server.
 | `GET /v2/worktrees` | Worktree summaries. |
 | `POST /v2/commands` | `202` dry-run/accepted, `409` unavailable, `400` rejected. |
 
-The cockpit CLI can drive itself from a discovered local daemon, a required live
-endpoint (`--endpoint`), or a fixture (`--fixture`), proving the same model
-renders identically from either source. If no local daemon is reachable, the
-no-source command falls back to the packaged fixture.
+The cockpit CLI resolves an explicit app mode before rendering: `SETUP` when no
+config exists, `OFFLINE` when config exists but no daemon is reachable, `LIVE`
+when a discovered or required endpoint answers `/v2/status`, and `DEMO` only
+when a fixture is explicitly requested with `--fixture`. The no-source command
+never silently falls back to the packaged fixture.
 
 ---
 

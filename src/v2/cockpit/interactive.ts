@@ -11,10 +11,11 @@
 import { createCockpitModel } from "./model.ts";
 import { renderCockpitText } from "./renderer.ts";
 import type { SymphonyRuntime } from "../daemon/runtime.ts";
-import type { CockpitModel, SymphonyStatus } from "../core/types.ts";
+import type { CockpitAdvancedCommand, CockpitApp, CockpitModel, CockpitSectionId, SymphonyStatus } from "../core/types.ts";
 
 export interface InteractiveCockpitOptions {
   runtime: SymphonyRuntime;
+  app?: CockpitApp;
   // Injected for tests; defaults to dynamically importing terminal-kit.
   terminalFactory?: () => Promise<TerminalLike>;
 }
@@ -47,6 +48,25 @@ const ACTION_KEY_TO_ID: Record<string, string> = {
   R: "card.rerun"
 };
 
+const SECTION_BY_KEY: Record<string, string> = {
+  f: "factory",
+  "1": "factory",
+  "2": "runs",
+  w: "worktrees",
+  "3": "worktrees",
+  d: "doctor",
+  "4": "doctor",
+  m: "manual",
+  "5": "manual",
+  e: "events",
+  "6": "events",
+  S: "settings",
+  "7": "settings",
+  "8": "advanced"
+};
+
+type PalettePrefix = "action" | "advanced";
+
 async function defaultTerminalFactory(): Promise<TerminalLike> {
   const mod = await import("terminal-kit");
   return (mod.terminal ?? (mod as { default?: { terminal: TerminalLike } }).default?.terminal) as TerminalLike;
@@ -71,6 +91,9 @@ export async function startInteractiveCockpit(
   let selectedIndex = 0;
   let filter: string | undefined;
   let statusLine = "Ready. Press ? for the Factory Manual, q to quit.";
+  let selectedSectionId: CockpitSectionId = "factory";
+  let commandPaletteOpen = false;
+  let palettePrefix: PalettePrefix | undefined;
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -85,7 +108,10 @@ export async function startInteractiveCockpit(
       events: runtime.getEvents(20),
       capabilities: runtime.getCapabilities(),
       selectedId,
-      filter
+      filter,
+      selectedSectionId,
+      commandPaletteOpen,
+      app: options.app
     });
   }
 
@@ -117,10 +143,99 @@ export async function startInteractiveCockpit(
     statusLine = `${result.outcome.toUpperCase()}: ${result.message}`;
   }
 
+  function showAdvancedCommand(command: CockpitAdvancedCommand): void {
+    if (!command.enabled) {
+      statusLine = `${command.label} disabled: ${command.disabledReason ?? "unavailable"}`;
+      return;
+    }
+    statusLine = `${command.label}: ${command.command}`;
+  }
+
+  function dispatchPalette(prefix: PalettePrefix, key: string): void {
+    const current = model();
+    if (prefix === "action") {
+      const action = current.actions.find((entry) => entry.key === key);
+      if (!action) {
+        statusLine = `Palette action ${key} not available.`;
+        return;
+      }
+      submit(action.id);
+      return;
+    }
+
+    const command = current.advancedCommands.find((entry) => entry.key === key);
+    if (!command) {
+      statusLine = `Palette command ${key} not available.`;
+      return;
+    }
+    showAdvancedCommand(command);
+  }
+
+  function handlePaletteKey(name: string): boolean {
+    const directPaletteKey = /^([AV]):(.+)$/u.exec(name);
+    if (directPaletteKey) {
+      dispatchPalette(directPaletteKey[1] === "A" ? "action" : "advanced", directPaletteKey[2]);
+      palettePrefix = undefined;
+      commandPaletteOpen = false;
+      draw();
+      return true;
+    }
+
+    if (palettePrefix) {
+      const prefix = palettePrefix;
+      palettePrefix = undefined;
+      dispatchPalette(prefix, name);
+      commandPaletteOpen = false;
+      draw();
+      return true;
+    }
+
+    if (name === "A") {
+      palettePrefix = "action";
+      statusLine = "Palette action prefix: press an action key.";
+      draw();
+      return true;
+    }
+
+    if (name === "V") {
+      palettePrefix = "advanced";
+      statusLine = "Palette advanced prefix: press a command key.";
+      draw();
+      return true;
+    }
+
+    const sectionRow = model().commandPalette.find((row) => row.key === name && row.section);
+    if (sectionRow?.section) {
+      selectedSectionId = sectionRow.section;
+      commandPaletteOpen = false;
+      statusLine = `Section: ${selectedSectionId}`;
+      draw();
+      return true;
+    }
+
+    return false;
+  }
+
   function handleKey(name: string): void {
     const ids = selectableIds(runtime.getStatus());
+    if (commandPaletteOpen && handlePaletteKey(name)) {
+      return;
+    }
     if (name === "q" || name === "ESCAPE" || name === "CTRL_C") {
       cleanup();
+      return;
+    }
+    if (name === "CTRL_P") {
+      commandPaletteOpen = !commandPaletteOpen;
+      palettePrefix = undefined;
+      statusLine = commandPaletteOpen ? "Command palette open." : "Command palette closed.";
+      draw();
+      return;
+    }
+    if (name in SECTION_BY_KEY) {
+      selectedSectionId = SECTION_BY_KEY[name] as typeof selectedSectionId;
+      statusLine = `Section: ${selectedSectionId}`;
+      draw();
       return;
     }
     if (name === "r") {

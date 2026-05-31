@@ -166,8 +166,10 @@ agent:
   max_retry_backoff_ms: 300000
 
   # Required: no. Default: codex.
-  # MVP valid value: codex. This field exists so route records are explicit; it is not an arbitrary
-  # backend plugin surface in MVP.
+  # Valid: claude, codex, opencode, anthropic, openai, command.
+  # Use route tags `#codex` or `#backend-codex` to force a route to Codex.
+  # Non-codex route backends are parsed and shown as disabled until runtime harnesses land.
+  # This field exists so route records are explicit; it is not an arbitrary runtime plugin surface.
   default_backend: codex
 
   # Required: no. Default: gpt-5.5.

@@ -137,8 +137,10 @@ function projectRoute(snapshot: Record<string, any>) {
     goldenCardNumber: route.golden_card_number ?? route.goldenCardNumber,
     backend: route.backend,
     model: route.model,
-    enabled: runnerStatus !== "unavailable",
-    disabledReason: runnerStatus === "unavailable" ? "Runner unavailable" : undefined
+    enabled: route.enabled === undefined ? runnerStatus !== "unavailable" : Boolean(route.enabled),
+    disabledReason: route.enabled === false
+      ? route.disabledReason ?? "Route disabled"
+      : runnerStatus === "unavailable" ? "Runner unavailable" : undefined
   });
 }
 
