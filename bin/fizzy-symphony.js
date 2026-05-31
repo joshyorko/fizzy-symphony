@@ -612,7 +612,9 @@ const BARE_ENTRY_VALUE_FLAGS = new Set([
 ]);
 const BARE_ENTRY_BOOLEAN_FLAGS = new Set([
   "--once",
-  "--no-default-endpoint"
+  "--no-default-endpoint",
+  "--color",
+  "--no-color"
 ]);
 
 function bareEntryArgsAllowed(args) {

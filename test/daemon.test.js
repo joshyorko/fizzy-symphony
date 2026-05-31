@@ -351,7 +351,7 @@ test("daemon serves v2 status for live cockpit and capabilities discovery", asyn
       stdoutIsTTY: false
     });
     assert.equal(exitCode, 0);
-    assert.match(stdout, /FIZZY-SYMPHONY COCKPIT/);
+    assert.match(stdout, /FIZZY-SYMPHONY/);
     assert.match(stdout, /board_1|Agents/);
     assert.equal(stderr, "");
 

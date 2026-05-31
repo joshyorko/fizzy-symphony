@@ -30,10 +30,12 @@ test("cockpit --once prints a static frame (non-TTY safe)", async () => {
   const { io, out } = bufferIo({ stdoutIsTTY: false });
   const code = await runCockpitCommand(["--fixture", join(FIXTURE_DIR, "running-one-card.json"), "--once"], io);
   assert.equal(code, 0);
-  assert.match(out(), /Mode: DEMO/);
-  assert.match(out(), /FIZZY-SYMPHONY COCKPIT/);
+  assert.match(out(), /\[ DEMO \]/);
+  assert.match(out(), /FIZZY-SYMPHONY/);
   assert.match(out(), /Machine in motion/);
   assert.match(out(), /run_426/);
+  // non-TTY output is ANSI-free by default
+  assert.doesNotMatch(out(), /\x1b\[/);
 });
 
 test("cockpit --fixture packaged ready data stays DEMO", async () => {
@@ -44,7 +46,7 @@ test("cockpit --fixture packaged ready data stays DEMO", async () => {
   });
   const code = await runCockpitCommand(["--fixture", PACKAGED_READY_FIXTURE, "--once"], io);
   assert.equal(code, 0);
-  assert.match(out(), /Mode: DEMO/);
+  assert.match(out(), /\[ DEMO \]/);
   assert.match(out(), /Factory open/);
 });
 
@@ -62,8 +64,9 @@ test("cockpit without config enters setup without external clients", async () =>
   const code = await runCockpitCommand(["--config", join(dir, "config.yml"), "--once"], io);
   assert.equal(code, 0);
   assert.equal(requested.length, 0);
-  assert.match(out(), /Mode: SETUP/);
-  assert.match(out(), /setup/);
+  assert.match(out(), /\[ SETUP \]/);
+  assert.match(out(), /Setup needed/);
+  assert.match(out(), /fizzy-symphony setup --config/);
 });
 
 test("cockpit with config exists but no daemon/default disabled enters OFFLINE", async () => {
@@ -84,7 +87,8 @@ test("cockpit with config exists but no daemon/default disabled enters OFFLINE",
     "--once"
   ], io);
   assert.equal(code, 0);
-  assert.match(out(), /Mode: OFFLINE/);
+  assert.match(out(), /\[ OFFLINE \]/);
+  assert.match(out(), /Daemon offline/);
   assert.match(out(), /start.*daemon/i);
 });
 
@@ -114,7 +118,7 @@ test("cockpit with config can reach LIVE through default endpoint fallback witho
     "http://127.0.0.1:4567/v2/status",
     "http://127.0.0.1:4567/v2/events"
   ]);
-  assert.match(out(), /Mode: LIVE/);
+  assert.match(out(), /\[ LIVE \]/);
   assert.match(out(), /run_426/);
 });
 
@@ -137,7 +141,7 @@ test("cockpit with config enters OFFLINE when default endpoint is unreachable", 
 
   assert.equal(code, 0);
   assert.deepEqual(requested, ["http://127.0.0.1:4567/v2/status"]);
-  assert.match(out(), /Mode: OFFLINE/);
+  assert.match(out(), /\[ OFFLINE \]/);
   assert.match(out(), /start.*daemon/i);
 });
 
@@ -193,7 +197,7 @@ test("cockpit with config discovers a live v2 daemon from the registry", async (
 
   assert.equal(code, 0);
   assert.deepEqual(requested, [`${endpoint}/v2/status`, `${endpoint}/v2/events`]);
-  assert.match(out(), /Mode: LIVE/);
+  assert.match(out(), /\[ LIVE \]/);
   assert.match(out(), /run_426/);
   assert.equal(err(), "");
 });
@@ -203,7 +207,7 @@ test("cockpit falls back to static text in non-TTY without --once", async () => 
   const code = await runCockpitCommand(["--fixture", join(FIXTURE_DIR, "blocked-runner.json")], io);
   assert.equal(code, 0);
   assert.match(err(), /non-TTY detected/);
-  assert.match(out(), /Mode: DEMO/);
+  assert.match(out(), /\[ DEMO \]/);
   assert.match(out(), /Factory cannot close|blocked/);
 });
 
