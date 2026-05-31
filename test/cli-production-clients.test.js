@@ -710,8 +710,8 @@ test("bare command opens cockpit LIVE when config exists", async () => {
     "http://127.0.0.1:4567/v2/status",
     "http://127.0.0.1:4567/v2/events"
   ]);
-  assert.match(result.stdout, /Mode: LIVE/u);
-  assert.match(result.stdout, /FIZZY-SYMPHONY COCKPIT/u);
+  assert.match(result.stdout, /\[ LIVE \]/u);
+  assert.match(result.stdout, /FIZZY-SYMPHONY/u);
 });
 
 test("bare command with missing config enters cockpit SETUP without constructing clients", async () => {
@@ -732,7 +732,7 @@ test("bare command with missing config enters cockpit SETUP without constructing
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(result.stdout, /Mode: SETUP/u);
+  assert.match(result.stdout, /\[ SETUP \]/u);
   assert.match(result.stdout, /fizzy-symphony setup/u);
 });
 

@@ -36,6 +36,10 @@ export async function runCockpitCommand(args: string[], io: CockpitIo): Promise<
   const wantJson = args.includes("--json");
   const wantOnce = args.includes("--once");
   const isTty = io.stdoutIsTTY ?? Boolean((io.stdout as { isTTY?: boolean }).isTTY);
+  const env = io.env ?? process.env;
+  const colorEnabled = resolveColor(args, env, isTty);
+  const width = Number((io.stdout as { columns?: number }).columns) || 100;
+  const renderOptions = { color: colorEnabled, width };
 
   const app = {
     mode,
@@ -61,18 +65,27 @@ export async function runCockpitCommand(args: string[], io: CockpitIo): Promise<
     if (!isTty && !wantOnce) {
       io.stderr.write(`cockpit: non-TTY detected, printing static frame (${source}).\n`);
     }
-    io.stdout.write(`${renderCockpitText(model)}\n`);
+    io.stdout.write(`${renderCockpitText(model, renderOptions)}\n`);
     return 0;
   }
 
   // Interactive TTY mode.
   try {
-    const session = await startInteractiveCockpit({ runtime, app });
+    const session = await startInteractiveCockpit({ runtime, app, color: colorEnabled, width });
     await session.done;
     return 0;
   } catch (error) {
     io.stderr.write(`cockpit: interactive renderer unavailable (${(error as Error).message}); static frame:\n`);
-    io.stdout.write(`${renderCockpitText(model)}\n`);
+    io.stdout.write(`${renderCockpitText(model, renderOptions)}\n`);
     return 0;
   }
+}
+
+// Color is opt-in and respects the usual terminal contracts: explicit
+// --color/--no-color override, otherwise enabled only for a real TTY with
+// NO_COLOR unset, CI unset, and TERM other than "dumb".
+function resolveColor(args: string[], env: Record<string, string | undefined>, isTty: boolean): boolean {
+  if (args.includes("--no-color")) return false;
+  if (args.includes("--color")) return true;
+  return isTty && env.NO_COLOR === undefined && env.CI === undefined && env.TERM !== "dumb";
 }

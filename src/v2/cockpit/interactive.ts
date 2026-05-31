@@ -16,6 +16,10 @@ import type { CockpitAdvancedCommand, CockpitApp, CockpitModel, CockpitSectionId
 export interface InteractiveCockpitOptions {
   runtime: SymphonyRuntime;
   app?: CockpitApp;
+  // Render styling for the live frames. Color defaults to on (interactive mode
+  // only runs on a real TTY); width defaults to the terminal width.
+  color?: boolean;
+  width?: number;
   // Injected for tests; defaults to dynamically importing terminal-kit.
   terminalFactory?: () => Promise<TerminalLike>;
 }
@@ -29,6 +33,7 @@ export interface TerminalLike {
   grabInput(options: boolean | Record<string, unknown>): void;
   on(event: "key", handler: (name: string) => void): void;
   off?(event: "key", handler: (name: string) => void): void;
+  width?: number;
   (text: string): void;
 }
 
@@ -90,6 +95,11 @@ export async function startInteractiveCockpit(
 
   let selectedIndex = 0;
   let filter: string | undefined;
+  // While capturing, keystrokes edit `filterDraft` instead of triggering
+  // navigation/actions; the draft is applied to `filter` live as you type.
+  // Enter keeps the applied filter and exits capture; Esc clears it.
+  let filterCapturing = false;
+  let filterDraft = "";
   let statusLine = "Ready. Press ? for the Factory Manual, q to quit.";
   let selectedSectionId: CockpitSectionId = "factory";
   let commandPaletteOpen = false;
@@ -118,7 +128,11 @@ export async function startInteractiveCockpit(
   function draw(): void {
     term.clear();
     term.moveTo(1, 1);
-    term(renderCockpitText(model()));
+    const renderOptions = {
+      color: options.color ?? true,
+      width: options.width ?? term.width ?? 100
+    };
+    term(renderCockpitText(model(), renderOptions));
     term(`\n\n> ${statusLine}\n`);
   }
 
@@ -127,6 +141,13 @@ export async function startInteractiveCockpit(
     const action = current.actions.find((entry) => entry.id === actionId);
     if (!action) {
       statusLine = `Action ${actionId} not available in this build.`;
+      return;
+    }
+    // DEMO is fixture data, not a live daemon. Refuse to dispatch any mutating
+    // action — never enqueue a command, never emit a dry-run event. This is the
+    // behavioral half of DEMO honesty; the renderer is the visual half.
+    if (current.app.mode === "DEMO" && action.commandType) {
+      statusLine = `${action.label} disabled: fixture data (DEMO) — connect a live daemon to act.`;
       return;
     }
     if (!action.enabled || !action.commandType) {
@@ -172,6 +193,15 @@ export async function startInteractiveCockpit(
   }
 
   function handlePaletteKey(name: string): boolean {
+    // Esc dismisses the palette overlay (consistent with Esc clearing the
+    // filter overlay) rather than falling through to the global quit branch.
+    if (name === "ESCAPE") {
+      commandPaletteOpen = false;
+      palettePrefix = undefined;
+      statusLine = "Command palette closed.";
+      draw();
+      return true;
+    }
     const directPaletteKey = /^([AV]):(.+)$/u.exec(name);
     if (directPaletteKey) {
       dispatchPalette(directPaletteKey[1] === "A" ? "action" : "advanced", directPaletteKey[2]);
@@ -216,13 +246,70 @@ export async function startInteractiveCockpit(
     return false;
   }
 
+  // Live count of cards that survive the current filter, for the status line.
+  function filteredCardCount(): number {
+    return model().lanes.reduce((total, lane) => total + lane.cards.length, 0);
+  }
+
+  // Minimal filter input. While capturing, every key edits the draft (which is
+  // applied live so the lanes narrow as you type); Enter keeps it, Esc clears.
+  // This only touches the status line + the model's existing `filter` input, so
+  // the pure renderer and non-TTY output are unaffected.
+  function handleFilterKey(name: string): void {
+    // Ctrl-C always quits, even mid-filter — it is the universal escape hatch.
+    if (name === "CTRL_C") {
+      cleanup();
+      return;
+    }
+    if (name === "ENTER") {
+      filterCapturing = false;
+      filter = filterDraft.length > 0 ? filterDraft : undefined;
+      const count = filteredCardCount();
+      statusLine = filter
+        ? `filter "${filter}" — ${count} card${count === 1 ? "" : "s"} match. Press / to edit, Esc to clear.`
+        : "filter cleared.";
+      draw();
+      return;
+    }
+    if (name === "ESCAPE") {
+      filterCapturing = false;
+      filterDraft = "";
+      filter = undefined;
+      statusLine = "filter cleared.";
+      draw();
+      return;
+    }
+    if (name === "BACKSPACE") {
+      filterDraft = filterDraft.slice(0, -1);
+    } else if (name === "SPACE") {
+      filterDraft += " ";
+    } else if ([...name].length === 1) {
+      filterDraft += name;
+    }
+    // Apply the draft live so the visible card count reflects what you typed.
+    filter = filterDraft.length > 0 ? filterDraft : undefined;
+    statusLine = `filter: ${filterDraft}▏  (${filteredCardCount()} match · Enter to keep · Esc to clear)`;
+    draw();
+  }
+
   function handleKey(name: string): void {
+    if (filterCapturing) {
+      handleFilterKey(name);
+      return;
+    }
     const ids = selectableIds(runtime.getStatus());
     if (commandPaletteOpen && handlePaletteKey(name)) {
       return;
     }
     if (name === "q" || name === "ESCAPE" || name === "CTRL_C") {
       cleanup();
+      return;
+    }
+    if (name === "/" && !commandPaletteOpen) {
+      filterCapturing = true;
+      filterDraft = filter ?? "";
+      statusLine = `filter: ${filterDraft}▏  (type to narrow · Enter to keep · Esc to clear)`;
+      draw();
       return;
     }
     if (name === "CTRL_P") {
