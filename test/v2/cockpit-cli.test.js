@@ -1,12 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { runCockpitCommand } from "../../src/v2/cli/cockpit.ts";
 import { runCapabilitiesCommand } from "../../src/v2/cli/capabilities.ts";
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "v2");
+const PACKAGED_READY_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "v2", "fixtures", "ready.json");
 
 function bufferIo(extra = {}) {
   const out = [];
@@ -29,6 +33,46 @@ test("cockpit --once prints a static frame (non-TTY safe)", async () => {
   assert.match(out(), /FIZZY-SYMPHONY COCKPIT/);
   assert.match(out(), /Machine in motion/);
   assert.match(out(), /run_426/);
+});
+
+test("cockpit --once works from the packaged default fixture", async () => {
+  assert.equal(existsSync(PACKAGED_READY_FIXTURE), true);
+  const { io, out } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async () => ({ ok: false, status: 404 })
+  });
+  const code = await runCockpitCommand(["--once"], io);
+  assert.equal(code, 0);
+  assert.match(out(), /Factory open/);
+});
+
+test("cockpit with no explicit source discovers a live v2 daemon from the registry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-cockpit-"));
+  const endpoint = "http://127.0.0.1:49177";
+  await writeFile(join(dir, "instance-a.json"), `${JSON.stringify({
+    instance_id: "instance-a",
+    endpoint: { base_url: endpoint },
+    updated_at: "2026-04-29T12:00:00.000Z"
+  })}\n`, "utf8");
+  const bundle = JSON.parse(await readFile(join(FIXTURE_DIR, "running-one-card.json"), "utf8"));
+  const requested = [];
+  const { io, out, err } = bufferIo({
+    stdoutIsTTY: false,
+    fetch: async (url) => {
+      requested.push(url);
+      return {
+        ok: true,
+        json: async () => url.endsWith("/v2/events") ? { events: bundle.events ?? [] } : bundle.status
+      };
+    }
+  });
+
+  const code = await runCockpitCommand(["--registry-dir", dir, "--no-default-endpoint", "--once"], io);
+
+  assert.equal(code, 0);
+  assert.deepEqual(requested, [`${endpoint}/v2/status`, `${endpoint}/v2/events`]);
+  assert.match(out(), /run_426/);
+  assert.equal(err(), "");
 });
 
 test("cockpit falls back to static text in non-TTY without --once", async () => {
@@ -56,8 +100,9 @@ test("cockpit reports a clear error for a missing fixture", async () => {
 });
 
 test("capabilities prints the registry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-static-capabilities-"));
   const { io, out } = bufferIo();
-  const code = await runCapabilitiesCommand([], io);
+  const code = await runCapabilitiesCommand(["--registry-dir", dir, "--no-default-endpoint"], io);
   assert.equal(code, 0);
   assert.match(out(), /codex.run/);
   assert.match(out(), /worktree.preserve/);
@@ -71,4 +116,31 @@ test("capabilities --json against a fixture reflects live disabled reasons", asy
   const cancel = capabilities.find((c) => c.id === "codex.cancel");
   assert.equal(cancel.enabled, false);
   assert.equal(cancel.disabledReason, "No active run");
+});
+
+test("capabilities with no explicit source discovers a live v2 daemon from the registry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-v2-capabilities-"));
+  const endpoint = "http://127.0.0.1:49178";
+  await writeFile(join(dir, "instance-a.json"), `${JSON.stringify({
+    instance_id: "instance-a",
+    endpoint: { base_url: endpoint },
+    updated_at: "2026-04-29T12:00:00.000Z"
+  })}\n`, "utf8");
+  const bundle = JSON.parse(await readFile(join(FIXTURE_DIR, "blocked-runner.json"), "utf8"));
+  const requested = [];
+  const { io, out } = bufferIo({
+    fetch: async (url) => {
+      requested.push(url);
+      return { ok: true, json: async () => bundle.status };
+    }
+  });
+
+  const code = await runCapabilitiesCommand(["--registry-dir", dir, "--no-default-endpoint", "--json"], io);
+
+  assert.equal(code, 0);
+  assert.deepEqual(requested, [`${endpoint}/v2/status`]);
+  const { capabilities } = JSON.parse(out());
+  const run = capabilities.find((c) => c.id === "codex.run");
+  assert.equal(run.enabled, false);
+  assert.match(run.disabledReason, /runner/i);
 });

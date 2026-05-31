@@ -33,14 +33,14 @@ Legend for **Disposition**:
 | 17 | Webhook filtering | `src/listener.js` | `test/listener.test.js` | listener | `webhook.filter` capability, `FizzyPort.verifyWebhook` | Defer | Capability advertised; adapter not wired. |
 | 18 | Managed webhooks | `src/listener.js`, `src/fizzy-http-client.js` | `test/listener.test.js` | listener | `FizzyPort.listWebhooks` (optional) | Defer | Optional port method; not wired. |
 | 19 | Runner health monitoring | `src/runner-health.js`, `src/runner-contract.js` | `test/runner-contract.test.js` | observed | `CodexRunnerPort.health`, `runner.health` capability | Keep | Health drives `codex.run` enablement. |
-| 20 | Codex CLI runner | `src/codex-cli-app-server-runner.js` | `test/codex-cli-app-server-runner.test.js` | start | `createCodexAdapter({mode:"cli-app-server"})` | Defer | Boundary; contract `codex-runner-cli-app-server-v1`. |
-| 21 | Codex app-server transport | `src/codex-app-server-transport.js` | `test/codex-app-server-transport.test.js` | start | `CodexRunnerPort` streaming shape | Defer | Mirrored by fake's streaming. |
-| 22 | Codex SDK compatibility | `src/client-factories.js`, `src/fizzy-sdk-adapter.js` | `test/fizzy-sdk-adapter.test.js` | start | `createCodexAdapter({mode:"sdk"})` | Defer | Contract `codex-runner-sdk-v1`. |
-| 23 | Run cancellation | `src/run-registry.js`, `src/operator.js` | `test/run-registry.test.js` | operator | `run.cancel` command, `CodexRunnerPort.cancelTurn` | Defer | Validated + dry-run; fake supports cancel. |
-| 24 | Session stop | `src/operator.js` | covered | operator | `session.stop` command, `stopSession` | Defer | Validated + dry-run. |
-| 25 | Process termination | `src/codex-cli-app-server-runner.js` | covered | operator | `CodexRunnerPort.terminateOwnedProcess` (optional) | Defer | Optional port method. |
+| 20 | Codex CLI runner | `src/codex-cli-app-server-runner.js` | `test/codex-cli-app-server-runner.test.js`, `test/v2/ports.test.js` | start, `/v2/commands` | `createCodexAdapter({mode:"cli-app-server"})` | Keep | Delegates to the v1 app-server runner behind `CodexRunnerPort`. |
+| 21 | Codex app-server transport | `src/codex-app-server-transport.js` | `test/codex-app-server-transport.test.js`, `test/v2/ports.test.js` | start | `CodexRunnerPort` streaming shape | Keep | The v2 adapter translates the live runner lifecycle into camelCase port values. |
+| 22 | Codex SDK compatibility | `src/v2/codex/adapter.ts`, `@openai/codex-sdk` | `test/v2/ports.test.js` | start, `/v2/commands` | `createCodexAdapter({mode:"sdk"})` | Keep | Delegates to `Codex.startThread()` / `resumeThread()` and `thread.runStreamed()` behind contract `codex-runner-sdk-v1`. |
+| 23 | Run cancellation | `src/run-registry.js`, `src/operator.js`, `src/v2/daemon/port-effects.ts` | `test/run-registry.test.js`, `test/v2/runner-commands.test.js` | operator, `/v2/commands` | `run.cancel` command, `CodexRunnerPort.cancelTurn` | Keep | Dry-run by default; `applyCommands` dispatches through the runner port. |
+| 24 | Session stop | `src/operator.js`, `src/v2/daemon/port-effects.ts` | `test/v2/runner-commands.test.js`, `test/v2/ports.test.js` | operator, `/v2/commands` | `session.stop` command, `stopSession` | Keep | Async runtime path stops live runner sessions and avoids double termination after clean app-server close. |
+| 25 | Process termination | `src/codex-cli-app-server-runner.js`, `src/v2/codex/adapter.ts` | `test/codex-cli-app-server-runner.test.js`, `test/v2/ports.test.js` | operator | `CodexRunnerPort.terminateOwnedProcess` (optional) | Keep | Optional escalation path remains available when stop did not already close the owned process. |
 | 26 | Dispatch pause / resume | `src/operator.js`, `src/scheduler.js` | covered | operator | `dispatch.pause` / `dispatch.resume`, `control.dispatch` | Keep | "Lock / unlock factory" actions; dry-run in spike. |
-| 27 | Card rerun / move | `src/operator.js`, `src/router.js` | covered | operator | `card.rerun` / `card.move` commands | Defer | Validated + dry-run; `card.move` needs target column. |
+| 27 | Card rerun / move | `src/operator.js`, `src/router.js`, `src/v2/daemon/port-effects.ts` | `test/v2/fizzy-commands.test.js`, `test/daemon.test.js` | operator, `/v2/commands` | `card.rerun` / `card.move` commands | Keep | Dry-run by default; live daemon `applyCommands` writes rerun comments and moves cards through `FizzyPort`. |
 | 28 | Completion proof | `src/completion.js` | `test/completion.test.js` | observed | `CardRuntimeState: completed`, run state | Keep (model) | Completion reflected in card/run state. |
 | 29 | Event / activity log | `src/logger.js`, polling events | `test/logger.test.js` | dashboard | `RuntimeEvent[]`, `/v2/events`, `diagnostics.events` | Keep | v2 event log with JSONL export. |
 | 30 | Non-TTY behavior | `src/cli-opener.js`, `src/dashboard.js` | `test/cli-opener.test.js` | all | `renderCockpitText`, `--once`, `--json` | Keep | Static frame + machine output; no terminal grab. |
@@ -52,10 +52,10 @@ Legend for **Disposition**:
 - **Keep (modelled now):** status schema, boards/routes/cards, runs, worktrees,
   doctor, capabilities, dispatch pause/resume, events, non-TTY rendering — the
   observable cockpit surface.
-- **Defer (boundary / dry-run):** all *mutating* operations (run cancel, session
-  stop, card rerun/move, worktree preserve/cleanup) and all *live* integrations
-  (Fizzy SDK/HTTP, Codex SDK/CLI, webhooks, polling). These have honest contract
-  surfaces but are not wired — no fake controls.
+- **Defer (boundary / dry-run):** worktree preserve/cleanup, webhook management,
+  and polling/etag behavior inside the v2 runtime. Mutating run/session/card
+  commands are dry-run by default but dispatch through live ports when the daemon
+  enables `applyCommands`.
 - **Drop (out of cockpit scope):** setup/onboarding.
 
 The v2 cockpit therefore gives an operator a truthful, read-mostly view of the

@@ -497,14 +497,18 @@ export interface ListCommentsInput {
 }
 export interface CreateCommentInput {
   cardId: string;
+  cardNumber?: number | string;
   body: string;
 }
 export interface UpdateCommentInput {
   commentId: string;
+  cardId?: string;
+  cardNumber?: number | string;
   body: string;
 }
 export interface MoveCardInput {
   cardId: string;
+  cardNumber?: number | string;
   targetColumnId: string;
 }
 export interface ListWebhooksInput {

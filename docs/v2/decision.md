@@ -52,38 +52,43 @@
   mutates the **in-memory `SymphonyStatus` model** (pause/resume, run cancel,
   session stop, card rerun/move, worktree preserve/cleanup) and emits a
   `command.accepted.<type>` event. Capabilities re-derive from the new state.
-  *Live* FizzyPort / CodexRunnerPort side-effects remain deferred — the reducer is
-  the deterministic model layer those adapters will sit beneath.
+  Live FizzyPort and CodexRunnerPort side-effects are dispatched only from the
+  async runtime path; the reducer remains the deterministic model layer those
+  adapters sit beneath.
 - **Why:** The brief forbids fake controls. A button that *pretends* to cancel a
-  run is a fake control. A button that honestly reports "validated, would dispatch
-  `run.cancel run_426` — not wired in spike" is not. Dry-run is the honest middle:
-  the full validation/availability path is real, only the final effect is stubbed.
+  run is a fake control. The v2 runtime therefore has two explicit modes:
+  dry-run records the validated operator intent, while `applyCommands` dispatches
+  through wired ports and records the real effect events.
 - **Single choke point:** `runtime.submitCommand` is the *only* place a command is
-  evaluated or applied. Render and model code never mutate state.
+  evaluated synchronously; `runtime.submitCommandAsync` is the only path that
+  dispatches live port side-effects. Render and model code never mutate state.
 
-## 5. Fizzy and Codex adapters are boundaries, not fakes
+## 5. Fizzy and Codex adapters sit behind ports
 
-- **Decision:** `createFizzyAdapter` and `createCodexAdapter` implement the real
-  port interfaces but **throw on live operations** with explicit codes
-  (`FIZZY_ADAPTER_NOT_WIRED`, `CODEX_ADAPTER_NOT_WIRED`). Their `describe()` /
-  `health()` honestly advertise "not wired."
-- **Why:** The spike must prove the *shape* of the ports without pretending to
-  talk to a real Fizzy or Codex. The fakes (`createFakeFizzyPort`,
-  `createFakeCodexRunner`) are the deterministic, fixture-backed implementations
-  used by tests and the cockpit.
+- **Decision:** `createFizzyAdapter` delegates to the existing v1 Fizzy client,
+  `createCodexAdapter({ mode: "sdk" })` delegates to `@openai/codex-sdk`, and
+  `createCodexAdapter({ mode: "cli-app-server" })` delegates to the existing v1
+  Codex CLI app-server runner.
+- **Why:** The v2 core still depends only on `FizzyPort` and `CodexRunnerPort`,
+  while the daemon can now drive real board comments/moves, native SDK
+  threads/turns, and app-server session/turn/cancel/stop calls. The fakes
+  (`createFakeFizzyPort`, `createFakeCodexRunner`) remain deterministic
+  fixture-backed implementations for tests and isolated cockpit models.
 - **FizzyPort is independent of the SDK.** The port types are hand-written in
   `core/types.ts` and do not import or re-export `@37signals/fizzy` types. The SDK
   is one possible adapter `mode`, not the contract.
 - **CodexRunnerPort is SDK-compatible.** Its method set
   (`detect/health/startSession/startTurn/streamTurn/cancelTurn/stopSession/terminateOwnedProcess`)
-  mirrors the Codex app-server/SDK lifecycle so a real adapter can be dropped in.
+  mirrors the Codex app-server/SDK lifecycle. Both SDK and app-server modes are
+  live adapters behind the same port contract.
 
 ## 6. Default cockpit fixture
 
 - **Decision:** `fizzy-symphony cockpit` with no source flags loads
-  `test/fixtures/v2/ready.json`.
-- **Why:** A spike needs a zero-arg happy path for demos. Documented here so it is
-  not mistaken for production behavior.
+  `src/v2/fixtures/ready.json`.
+- **Why:** A spike needs a zero-arg happy path for demos, and the default fixture
+  must be present after npm/Homebrew packaging. Test fixtures remain under
+  `test/fixtures/v2/`.
 
 ## 7. Non-TTY behavior preserved
 
@@ -100,9 +105,19 @@
 - **Why:** It is a CJS dependency; lazy import keeps v1 startup and all non-TTY /
   test paths free of it, and lets tests inject a fake terminal.
 
+## 9. Live daemon bridge
+
+- **Decision:** The existing daemon now serves `/v2/*` from the same local HTTP
+  listener as `/status`, projecting the v1 status snapshot into
+  `SymphonyStatus` on demand. The v2 CLIs use the existing instance registry and
+  default endpoint for no-source live discovery, while explicit `--fixture`
+  remains fixture-only.
+- **Why:** This keeps fixture mode intact while letting `cockpit` and
+  `capabilities` observe a real local daemon without starting a second server or
+  making operators paste the endpoint for the common local case.
+
 ## Reversal notes
 
-The entire spike is contained in `src/v2/`, `test/v2/`, `test/fixtures/v2/`,
-`docs/v2/`, and two additive edits (`bin/fizzy-symphony.js`, `package.json`).
-Deleting those directories and reverting the two edits removes v2 with zero impact
-on v1.
+The spike is mostly contained in `src/v2/`, `test/v2/`, `test/fixtures/v2/`,
+and `docs/v2/`, with additive CLI/package wiring and the daemon/server bridge
+that exposes `/v2/*` from the existing local listener.

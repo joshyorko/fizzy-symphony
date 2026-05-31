@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { main as cliMain } from "../bin/fizzy-symphony.js";
 import { createCompletionMarker } from "../src/completion.js";
 import { startDaemon } from "../src/daemon.js";
+import { runCockpitCommand } from "../src/v2/cli/cockpit.ts";
+import { runCapabilitiesCommand } from "../src/v2/cli/capabilities.ts";
 
 test("CLI daemon reports config load errors as structured failures", async () => {
   const result = await runCli(["daemon", "--config", "/tmp/fizzy-symphony-missing-config.json"]);
@@ -306,6 +308,75 @@ test("startDaemon wires startup, HTTP status, scheduler ticks, recovery, and sta
     assert.equal(snapshot.instance.id, "instance-a");
     assert.equal(snapshot.runs.completed[0].card_id, "card_1");
     assert.ok(calls.includes("startupRecovery"));
+  } finally {
+    await daemon.stop("test");
+  }
+});
+
+test("daemon serves v2 status for live cockpit and capabilities discovery", async () => {
+  const root = await tempProject("fizzy-symphony-daemon-v2-");
+  const configPath = await writeConfig(root);
+  const calls = [];
+  const daemon = await startDaemon({
+    configPath,
+    env: { ...process.env, FIZZY_API_TOKEN: "token" },
+    schedulerOptions: { immediate: false },
+    dependencies: daemonDependencies({
+      calls,
+      cards: [{ id: "card_1", number: 1, board_id: "board_1", column_id: "col_ready", title: "Ready" }]
+    })
+  });
+
+  try {
+    await daemon.scheduler.tickNow("test");
+    const v2Status = await fetchJson(`${daemon.endpoint.base_url}/v2/status`);
+    assert.equal(v2Status.response.status, 200);
+    assert.equal(v2Status.body.schemaVersion, "fizzy-symphony-status-v2");
+    assert.equal(v2Status.body.instance.id, "instance-a");
+    assert.deepEqual(v2Status.body.boards.map((board) => board.id), ["board_1"]);
+    assert.deepEqual(v2Status.body.runs.completed.map((run) => run.cardId), ["card_1"]);
+
+    let stdout = "";
+    let stderr = "";
+    const exitCode = await runCockpitCommand([
+      "--registry-dir",
+      daemon.config.server.registry_dir,
+      "--no-default-endpoint",
+      "--once"
+    ], {
+      stdout: { write: (chunk) => { stdout += chunk; }, isTTY: false },
+      stderr: { write: (chunk) => { stderr += chunk; } },
+      stdoutIsTTY: false
+    });
+    assert.equal(exitCode, 0);
+    assert.match(stdout, /FIZZY-SYMPHONY COCKPIT/);
+    assert.match(stdout, /board_1|Agents/);
+    assert.equal(stderr, "");
+
+    let capabilitiesStdout = "";
+    let capabilitiesStderr = "";
+    const capabilitiesExitCode = await runCapabilitiesCommand([
+      "--registry-dir",
+      daemon.config.server.registry_dir,
+      "--no-default-endpoint",
+      "--json"
+    ], {
+      stdout: { write: (chunk) => { capabilitiesStdout += chunk; } },
+      stderr: { write: (chunk) => { capabilitiesStderr += chunk; } }
+    });
+    assert.equal(capabilitiesExitCode, 0);
+    assert.equal(capabilitiesStderr, "");
+    const { capabilities } = JSON.parse(capabilitiesStdout);
+    assert.equal(capabilities.find((entry) => entry.id === "codex.run").enabled, true);
+
+    const rerun = await fetchJson(`${daemon.endpoint.base_url}/v2/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "card.rerun", cardId: "card_1", reason: "operator smoke" })
+    });
+    assert.equal(rerun.response.status, 202);
+    assert.equal(rerun.body.outcome, "accepted");
+    assert.ok(calls.some((call) => call === "createComment:1"));
   } finally {
     await daemon.stop("test");
   }
@@ -671,6 +742,14 @@ function daemonDependencies({ calls, cards = [], runner = fakeRunner() } = {}) {
       async postResultComment() {
         calls?.push("postResult");
         return { id: "comment_1" };
+      },
+      async createComment(input = {}) {
+        calls?.push(`createComment:${input.cardNumber ?? input.card_number ?? input.card?.number}`);
+        return { id: "comment_v2", body: input.body };
+      },
+      async moveCardToColumn(input = {}) {
+        calls?.push(`moveCardToColumn:${input.cardNumber ?? input.card_number ?? input.card?.number}:${input.column_id}`);
+        return { id: input.card?.id ?? "card_1", number: input.cardNumber ?? input.card?.number, column_id: input.column_id };
       },
       async recordCompletionMarker() {
         calls?.push("completionMarker");

@@ -2,6 +2,9 @@ import { verifyWebhookRequest } from "./fizzy-client.js";
 
 import { normalizeTag } from "./domain.js";
 import { cardBoardId, commentBody } from "./fizzy-normalize.js";
+import { commandHttpStatus, handleApiRequest } from "./v2/daemon/api.ts";
+import { createRuntime } from "./v2/daemon/runtime.ts";
+import { projectV1StatusToV2 } from "./v2/daemon/status-bridge.ts";
 
 const DEFAULT_WEBHOOK_PATH = "/webhook";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -31,6 +34,7 @@ export function createLocalHttpHandler(deps = {}) {
     enqueueWebhookHint = () => null,
     now = () => new Date(),
     logger,
+    v2 = {},
     maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
     seenWebhookEventIds = createRecentWebhookEventCache({ now })
   } = deps;
@@ -54,6 +58,14 @@ export function createLocalHttpHandler(deps = {}) {
       if (pathname === "/status") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         return writeJson(response, 200, callStatus(status, "status", {}));
+      }
+
+      if (pathname.startsWith("/v2/")) {
+        return await handleV2Request(request, response, {
+          status,
+          v2,
+          maxBodyBytes
+        });
       }
 
       const cardStatusMatch = pathname.match(/^\/status\/cards\/([^/]+)$/u);
@@ -83,6 +95,30 @@ export function createLocalHttpHandler(deps = {}) {
       return writeError(response, 500, "HTTP_HANDLER_ERROR", "Local HTTP handler failed.");
     }
   };
+}
+
+async function handleV2Request(request, response, options = {}) {
+  const { status, v2 = {}, maxBodyBytes } = options;
+  const pathname = requestPathname(request);
+  const runtime = createRuntime({
+    status: projectV1StatusToV2(callStatus(status, "status", {})),
+    fizzy: typeof v2.fizzy === "function" ? v2.fizzy() : v2.fizzy,
+    codex: typeof v2.codex === "function" ? v2.codex() : v2.codex,
+    applyCommands: v2.applyCommands ?? true
+  });
+
+  let result;
+  if ((request.method ?? "GET") === "POST" && pathname === "/v2/commands") {
+    const rawBody = await readRawBody(request, { maxBodyBytes });
+    const text = rawBody.toString("utf8").trim();
+    const command = text ? JSON.parse(text) : undefined;
+    const body = await runtime.submitCommandAsync(command);
+    result = { statusCode: commandHttpStatus(body), body };
+  } else {
+    result = handleApiRequest(runtime, request.method ?? "GET", pathname);
+  }
+
+  return writeJson(response, result.statusCode, result.body);
 }
 
 export function createWebhookHintQueue(options = {}) {

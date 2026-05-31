@@ -22,8 +22,8 @@ status snapshots, live Fizzy HTTP client wiring, live-comment and rich-text mark
 live account-slug and tag-title normalization, verify-before-renew claim leases, workspace
 preparation failure release, proof-verified cleanup guards, canonical workspace/proof path containment,
 workflow cache fallback, visible capacity refusals, webhook freshness/self-event filtering,
-non-looping runner failure markers, runner session stop, and a real Codex CLI app-server runner
-behind the SDK-shaped runner interface.
+non-looping runner failure markers, runner session stop, a real Codex CLI app-server runner, and a
+`@openai/codex-sdk` adapter behind the SDK-shaped runner interface.
 
 Fizzy API calls now go through an SDK-backed adapter boundary: the daemon-facing contract stays in
 `src/fizzy-client.js`, while the default live implementation uses the official Fizzy TypeScript SDK
@@ -49,6 +49,8 @@ node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js status
 node bin/fizzy-symphony.js worktrees
 node bin/fizzy-symphony.js doctor --goal
+node bin/fizzy-symphony.js cockpit --once
+node bin/fizzy-symphony.js capabilities
 npm test
 ```
 
@@ -100,6 +102,12 @@ clean-source policy is enabled; commit, stash, or change the policy deliberately
 `dashboard` observes the daemon's existing `/status` truth. Interactive TTY output refreshes by
 default, `--once` prints a static snapshot, and non-TTY, CI, or dumb terminals use the same text
 fallback. It does not define a separate workflow model.
+
+`cockpit` and `capabilities` are the v2 operator spike. With no source flags they first look for a
+local daemon through the instance registry and default endpoint. If none is reachable, `cockpit`
+falls back to its packaged demo fixture and `capabilities` prints the static catalogue. Use
+`--endpoint URL` to require a specific live daemon or `--fixture PATH` to force fixture mode; the
+daemon serves `/status` and `/v2/status` from the same base URL used by `dashboard`.
 
 `worktrees` inspects Symphony-created worktrees and their metadata, including dirty file paths,
 branch, run id, last error, and recommended action. Use `--dirty-only`, `--card 426`, or `--json`

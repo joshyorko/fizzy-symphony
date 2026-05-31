@@ -18,6 +18,8 @@ import { createWorkspaceManager } from "./workspace.js";
 import { createCodexCliAppServerRunner } from "./codex-cli-app-server-runner.js";
 import { createFakeCodexRunner } from "./runner-contract.js";
 import { commentBody } from "./fizzy-normalize.js";
+import { createCodexAdapter } from "./v2/codex/adapter.ts";
+import { createFizzyAdapter } from "./v2/fizzy/adapter.ts";
 
 export async function startDaemon(options = {}) {
   const {
@@ -34,6 +36,8 @@ export async function startDaemon(options = {}) {
   let scheduler = null;
   let runnerHealth = null;
   let status = null;
+  let v2Fizzy = null;
+  let v2Codex = null;
   const statusProxy = {
     health: () => status?.health?.() ?? { live: true, status: "live", ready: false },
     ready: () => status?.ready?.() ?? { ready: false, status: "not_ready", blockers: [] },
@@ -45,7 +49,12 @@ export async function startDaemon(options = {}) {
     status: statusProxy,
     enqueueWebhookHint: (hint) => scheduler?.enqueueWebhookHint?.(hint) ?? webhookHints.enqueue(hint),
     now,
-    logger: dependencies.logger
+    logger: dependencies.logger,
+    v2: {
+      fizzy: () => v2Fizzy,
+      codex: () => v2Codex,
+      applyCommands: true
+    }
   });
   const instance = await startLocalInstance(config, {
     configPath,
@@ -78,6 +87,8 @@ export async function startDaemon(options = {}) {
     const fizzy = await callFactory(dependencies.fizzyFactory, { config, status }) ?? createDefaultFizzy(config, dependencies);
     const rawRunner = await callFactory(dependencies.runnerFactory, { config, status }) ?? createDefaultRunner(config, dependencies);
     const runner = createCancellableRunner(rawRunner);
+    v2Fizzy = dependencies.v2Fizzy ?? createFizzyAdapter({ mode: "sdk", client: fizzy, config });
+    v2Codex = dependencies.v2Codex ?? createCodexAdapter({ mode: "cli-app-server", runner, config });
     const validation = await validateStartup({ config, fizzy, runner });
     status.recordStartupValidation(validation);
     status.updateRunnerHealth(validation.runnerHealth ?? { status: "unknown", kind: config.runner?.preferred ?? "unknown" });

@@ -64,6 +64,10 @@ Generated setup state under `.fizzy-symphony/` is ignored by source protection, 
 
 `dashboard` reads the daemon's existing `/status` endpoint and renders that status. In a TTY it refreshes by default; use `--once` for a static snapshot. In non-TTY, CI, or dumb terminals it prints the same information as text. It is not a clickable workflow editor and does not keep a separate workflow model.
 
+`cockpit` is the v2 operator spike. With no source flags it first looks for a local daemon through the instance registry and default endpoint. If none is reachable, it renders a packaged demo fixture so the command works after install. Use `--endpoint URL` to require a specific live daemon or `--fixture PATH` to force fixture mode; `start` serves both the v1 `/status` endpoint and the v2 `/v2/status` cockpit endpoint.
+
+`capabilities` prints the v2 capability catalogue. With no source flags it uses a discovered live daemon when one is reachable, otherwise it shows the static feature list. With `--fixture` or `--endpoint`, it derives disabled reasons from that status snapshot.
+
 ## What You Do In Fizzy
 
 After `setup`, open the starter board it created or adopted.
@@ -104,6 +108,10 @@ node bin/fizzy-symphony.js status
 node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js dashboard
 node bin/fizzy-symphony.js dashboard --once
+node bin/fizzy-symphony.js cockpit --once
+node bin/fizzy-symphony.js cockpit --endpoint http://127.0.0.1:4567 --once
+node bin/fizzy-symphony.js cockpit --fixture src/v2/fixtures/ready.json --once
+node bin/fizzy-symphony.js capabilities
 node bin/fizzy-symphony.js worktrees --dirty-only
 node bin/fizzy-symphony.js doctor --goal
 node bin/fizzy-symphony.js validate

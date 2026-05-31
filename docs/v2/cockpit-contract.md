@@ -173,8 +173,10 @@ wraps it in a real `http` server.
 | `GET /v2/worktrees` | Worktree summaries. |
 | `POST /v2/commands` | `202` dry-run/accepted, `409` unavailable, `400` rejected. |
 
-The cockpit CLI can drive itself from a live endpoint (`--endpoint`) or a fixture
-(`--fixture`), proving the same model renders identically from either source.
+The cockpit CLI can drive itself from a discovered local daemon, a required live
+endpoint (`--endpoint`), or a fixture (`--fixture`), proving the same model
+renders identically from either source. If no local daemon is reachable, the
+no-source command falls back to the packaged fixture.
 
 ---
 
@@ -184,8 +186,9 @@ The cockpit CLI can drive itself from a live endpoint (`--endpoint`) or a fixtur
 
 Hand-written board/card/comment/webhook interface. Implementations:
 - `createFakeFizzyPort(seed)` — deterministic, fixture-backed (`sdk: false`).
-- `createFizzyAdapter({ mode: "sdk" | "http" })` — boundary; live ops throw
-  `FIZZY_ADAPTER_NOT_WIRED` in the spike. `describe()` advertises the mode.
+- `createFizzyAdapter({ mode: "sdk" | "http" })` — delegates to the existing v1
+  Fizzy client and normalizes snake_case live client shapes into the v2 port
+  vocabulary. `describe()` advertises the mode.
 
 ### `CodexRunnerPort` — SDK-compatible lifecycle
 
@@ -193,9 +196,12 @@ Hand-written board/card/comment/webhook interface. Implementations:
 stopSession / terminateOwnedProcess`. Implementations:
 - `createFakeCodexRunner({ mode })` — deterministic streaming
   (`completed | failed | input_required`), contract `codex-runner-fake-v2`.
-- `createCodexAdapter({ mode: "sdk" | "cli-app-server" })` — boundary; contracts
-  `codex-runner-sdk-v1` / `codex-runner-cli-app-server-v1`; live ops throw
-  `CODEX_ADAPTER_NOT_WIRED`; `health()` reports `ADAPTER_NOT_WIRED`.
+- `createCodexAdapter({ mode: "cli-app-server" })` — delegates to the existing v1
+  Codex CLI app-server runner, translating snake_case sessions/turns into the v2
+  port vocabulary.
+- `createCodexAdapter({ mode: "sdk" })` — delegates to `@openai/codex-sdk`,
+  using `Codex.startThread()` / `resumeThread()` and `thread.runStreamed()`
+  behind contract `codex-runner-sdk-v1`.
 
 ---
 

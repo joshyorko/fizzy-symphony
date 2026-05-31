@@ -8,18 +8,13 @@ import { isAbsolute, resolve } from "node:path";
 
 import { deriveCapabilities, listCapabilities } from "../core/capabilities.ts";
 import { normalizeStatus } from "../core/status.ts";
+import { discoverV2StatusSource, fetchV2Status, optionValue } from "./status-source.ts";
 import type { Capability, FixtureBundle, SymphonyStatus } from "../core/types.ts";
 
 export interface CapabilitiesIo {
   stdout: { write(text: string): void };
   stderr: { write(text: string): void };
   fetch?: typeof fetch;
-}
-
-function optionValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index === -1) return undefined;
-  return args[index + 1];
 }
 
 async function statusFromArgs(args: string[], io: CapabilitiesIo): Promise<SymphonyStatus | undefined> {
@@ -32,12 +27,10 @@ async function statusFromArgs(args: string[], io: CapabilitiesIo): Promise<Symph
     return normalizeStatus(status);
   }
   if (endpoint) {
-    const doFetch = io.fetch ?? fetch;
-    const res = await doFetch(`${endpoint.replace(/\/$/, "")}/v2/status`);
-    if (!res.ok) throw new Error(`GET /v2/status failed: ${res.status}`);
-    return normalizeStatus((await res.json()) as SymphonyStatus);
+    return normalizeStatus(await fetchV2Status(endpoint, io));
   }
-  return undefined;
+  const discovered = await discoverV2StatusSource(args, io);
+  return discovered ? normalizeStatus(discovered.status) : undefined;
 }
 
 export async function runCapabilitiesCommand(args: string[], io: CapabilitiesIo): Promise<number> {

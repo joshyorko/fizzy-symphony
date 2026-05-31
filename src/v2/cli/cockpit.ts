@@ -18,6 +18,7 @@ import { createCockpitModel } from "../cockpit/model.ts";
 import { renderCockpitText } from "../cockpit/renderer.ts";
 import { startInteractiveCockpit } from "../cockpit/interactive.ts";
 import { createRuntime } from "../daemon/runtime.ts";
+import { discoverV2StatusSource, hasFlag, optionValue, trimEndpoint } from "./status-source.ts";
 import type { SymphonyRuntime } from "../daemon/runtime.ts";
 import type { FixtureBundle, SymphonyStatus } from "../core/types.ts";
 
@@ -30,17 +31,7 @@ export interface CockpitIo {
 }
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const DEFAULT_FIXTURE = join(PACKAGE_ROOT, "test", "fixtures", "v2", "ready.json");
-
-function optionValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index === -1) return undefined;
-  return args[index + 1];
-}
-
-function hasFlag(args: string[], name: string): boolean {
-  return args.includes(name);
-}
+const DEFAULT_FIXTURE = join(PACKAGE_ROOT, "src", "v2", "fixtures", "ready.json");
 
 function asBundle(raw: unknown): FixtureBundle {
   if (raw && typeof raw === "object" && "status" in (raw as Record<string, unknown>)) {
@@ -57,7 +48,7 @@ async function loadFixtureBundle(path: string): Promise<FixtureBundle> {
 
 async function loadEndpointBundle(endpoint: string, io: CockpitIo): Promise<FixtureBundle> {
   const doFetch = io.fetch ?? fetch;
-  const base = endpoint.replace(/\/$/, "");
+  const base = trimEndpoint(endpoint);
   const statusRes = await doFetch(`${base}/v2/status`);
   if (!statusRes.ok) throw new Error(`GET /v2/status failed: ${statusRes.status}`);
   const status = (await statusRes.json()) as SymphonyStatus;
@@ -69,6 +60,17 @@ async function loadEndpointBundle(endpoint: string, io: CockpitIo): Promise<Fixt
     // events are optional
   }
   return { status, events };
+}
+
+async function loadEndpointEvents(endpoint: string, io: CockpitIo): Promise<FixtureBundle["events"]> {
+  const doFetch = io.fetch ?? fetch;
+  try {
+    const eventsRes = await doFetch(`${trimEndpoint(endpoint)}/v2/events`);
+    if (eventsRes.ok) return ((await eventsRes.json()) as { events?: unknown }).events as FixtureBundle["events"];
+  } catch {
+    // events are optional
+  }
+  return undefined;
 }
 
 async function buildRuntime(args: string[], io: CockpitIo): Promise<{ runtime: SymphonyRuntime; source: string }> {
@@ -84,6 +86,20 @@ async function buildRuntime(args: string[], io: CockpitIo): Promise<{ runtime: S
       source: `endpoint ${endpoint}`
     };
   }
+  if (!fixture) {
+    const live = await discoverV2StatusSource(args, io);
+    if (live) {
+      return {
+        runtime: createRuntime({
+          status: live.status,
+          events: await loadEndpointEvents(live.endpoint, io),
+          applyCommands
+        }),
+        source: `endpoint ${live.endpoint}`
+      };
+    }
+  }
+
   const fixturePath = fixture ?? DEFAULT_FIXTURE;
   const bundle = await loadFixtureBundle(fixturePath);
   return {

@@ -1,6 +1,6 @@
 // Port effects: translate accepted operator commands into live port calls. This
-// is the layer the deferred adapters sit beneath — given the status snapshot
-// taken *before* the model reducer ran (so the affected run is still in
+// is the layer the live adapters sit beneath — given the status snapshot taken
+// *before* the model reducer ran (so the affected run is still in
 // `running`), it dispatches cancel/stop to the CodexRunnerPort and card
 // move/rerun to the FizzyPort, returning audit events describing what each port
 // did. It never mutates status; the reducer owns that.
@@ -114,6 +114,7 @@ export async function dispatchPortEffects(
       try {
         const moved = await fizzy.moveCard({
           cardId: command.cardId,
+          cardNumber: card?.number,
           targetColumnId: command.targetColumnId
         });
         return [
@@ -145,6 +146,7 @@ export async function dispatchPortEffects(
       try {
         const comment = await fizzy.createComment({
           cardId: command.cardId,
+          cardNumber: card?.number,
           body: `Rerun requested by operator: ${command.reason}`
         });
         return [
