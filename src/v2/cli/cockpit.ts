@@ -1,26 +1,19 @@
 // `fizzy-symphony cockpit` command.
 //
 // Modes:
-//   cockpit                         interactive (TTY) or static (non-TTY)
-//   cockpit --endpoint URL          read snapshot from a running v2 daemon
-//   cockpit --fixture PATH          read a fixture bundle
+//   cockpit --endpoint URL          read a snapshot from a running v2 daemon (strict)
+//   cockpit --fixture PATH          read a fixture bundle (demo mode)
 //   cockpit --once                  print one static frame and exit
-//   cockpit --json                  print the cockpit model as JSON and exit
+//   cockpit                        auto-resolve mode from config/daemon/fixtures
 //
-// Layering rule: this command builds a runtime (fixture or snapshot), derives
-// the pure cockpit model, then renders. It never reaches into Fizzy/Codex.
-
-import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+// Layering rule: resolve source/mode in app-state, then derive runtime and render.
 
 import { createCockpitModel } from "../cockpit/model.ts";
 import { renderCockpitText } from "../cockpit/renderer.ts";
 import { startInteractiveCockpit } from "../cockpit/interactive.ts";
-import { createRuntime } from "../daemon/runtime.ts";
-import { discoverV2StatusSource, hasFlag, optionValue, trimEndpoint } from "./status-source.ts";
-import type { SymphonyRuntime } from "../daemon/runtime.ts";
-import type { FixtureBundle, SymphonyStatus } from "../core/types.ts";
+import { optionValue } from "./status-source.ts";
+import { resolveCockpitApp } from "../cockpit/app-state.ts";
+import type { CockpitAppState } from "../cockpit/app-state.ts";
 
 export interface CockpitIo {
   stdout: { write(text: string): void };
@@ -30,112 +23,37 @@ export interface CockpitIo {
   stdoutIsTTY?: boolean;
 }
 
-const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const DEFAULT_FIXTURE = join(PACKAGE_ROOT, "src", "v2", "fixtures", "ready.json");
-
-function asBundle(raw: unknown): FixtureBundle {
-  if (raw && typeof raw === "object" && "status" in (raw as Record<string, unknown>)) {
-    return raw as FixtureBundle;
-  }
-  return { status: raw as Partial<SymphonyStatus> as SymphonyStatus };
-}
-
-async function loadFixtureBundle(path: string): Promise<FixtureBundle> {
-  const resolved = isAbsolute(path) ? path : resolve(process.cwd(), path);
-  const text = await readFile(resolved, "utf8");
-  return asBundle(JSON.parse(text));
-}
-
-async function loadEndpointBundle(endpoint: string, io: CockpitIo): Promise<FixtureBundle> {
-  const doFetch = io.fetch ?? fetch;
-  const base = trimEndpoint(endpoint);
-  const statusRes = await doFetch(`${base}/v2/status`);
-  if (!statusRes.ok) throw new Error(`GET /v2/status failed: ${statusRes.status}`);
-  const status = (await statusRes.json()) as SymphonyStatus;
-  let events;
-  try {
-    const eventsRes = await doFetch(`${base}/v2/events`);
-    if (eventsRes.ok) events = ((await eventsRes.json()) as { events?: unknown }).events as FixtureBundle["events"];
-  } catch {
-    // events are optional
-  }
-  return { status, events };
-}
-
-async function loadEndpointEvents(endpoint: string, io: CockpitIo): Promise<FixtureBundle["events"]> {
-  const doFetch = io.fetch ?? fetch;
-  try {
-    const eventsRes = await doFetch(`${trimEndpoint(endpoint)}/v2/events`);
-    if (eventsRes.ok) return ((await eventsRes.json()) as { events?: unknown }).events as FixtureBundle["events"];
-  } catch {
-    // events are optional
-  }
-  return undefined;
-}
-
-async function buildRuntime(args: string[], io: CockpitIo): Promise<{ runtime: SymphonyRuntime; source: string }> {
-  const endpoint = optionValue(args, "--endpoint");
-  const fixture = optionValue(args, "--fixture");
-  // --apply makes operator commands mutate the in-memory status model instead
-  // of being recorded as dry-runs. Off by default to keep the cockpit read-only.
-  const applyCommands = hasFlag(args, "--apply");
-  if (endpoint) {
-    const bundle = await loadEndpointBundle(endpoint, io);
-    return {
-      runtime: createRuntime({ status: bundle.status, events: bundle.events, applyCommands }),
-      source: `endpoint ${endpoint}`
-    };
-  }
-  if (!fixture) {
-    const live = await discoverV2StatusSource(args, io);
-    if (live) {
-      return {
-        runtime: createRuntime({
-          status: live.status,
-          events: await loadEndpointEvents(live.endpoint, io),
-          applyCommands
-        }),
-        source: `endpoint ${live.endpoint}`
-      };
-    }
-  }
-
-  const fixturePath = fixture ?? DEFAULT_FIXTURE;
-  const bundle = await loadFixtureBundle(fixturePath);
-  return {
-    runtime: createRuntime({
-      status: bundle.status,
-      events: bundle.events,
-      capabilities: bundle.capabilities,
-      applyCommands
-    }),
-    source: `fixture ${fixturePath}${applyCommands ? " [apply]" : ""}`
-  };
-}
-
 export async function runCockpitCommand(args: string[], io: CockpitIo): Promise<number> {
-  let runtime: SymphonyRuntime;
-  let source: string;
+  let appState: CockpitAppState;
   try {
-    ({ runtime, source } = await buildRuntime(args, io));
+    appState = await resolveCockpitApp(args, io);
   } catch (error) {
     io.stderr.write(`cockpit: failed to load source: ${(error as Error).message}\n`);
     return 1;
   }
 
-  const wantJson = hasFlag(args, "--json");
-  const wantOnce = hasFlag(args, "--once");
+  const { runtime, source, mode, configPath } = appState;
+  const wantJson = args.includes("--json");
+  const wantOnce = args.includes("--once");
   const isTty = io.stdoutIsTTY ?? Boolean((io.stdout as { isTTY?: boolean }).isTTY);
+
+  const app = {
+    mode,
+    source,
+    configPath,
+    endpoint: appState.endpoint
+  };
 
   const model = createCockpitModel({
     status: runtime.getStatus(),
     events: runtime.getEvents(20),
     capabilities: runtime.getCapabilities(),
-    selectedId: optionValue(args, "--select")
+    selectedId: optionValue(args, "--select"),
+    app
   });
 
   if (wantJson) {
-    io.stdout.write(`${JSON.stringify(model, null, 2)}\n`);
+    io.stdout.write(`${JSON.stringify({ app: "cockpit", mode, source, model }, null, 2)}\n`);
     return 0;
   }
 
@@ -149,7 +67,7 @@ export async function runCockpitCommand(args: string[], io: CockpitIo): Promise<
 
   // Interactive TTY mode.
   try {
-    const session = await startInteractiveCockpit({ runtime });
+    const session = await startInteractiveCockpit({ runtime, app });
     await session.done;
     return 0;
   } catch (error) {

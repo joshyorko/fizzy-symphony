@@ -82,13 +82,15 @@
   mirrors the Codex app-server/SDK lifecycle. Both SDK and app-server modes are
   live adapters behind the same port contract.
 
-## 6. Default cockpit fixture
+## 6. Cockpit app modes
 
-- **Decision:** `fizzy-symphony cockpit` with no source flags loads
-  `src/v2/fixtures/ready.json`.
-- **Why:** A spike needs a zero-arg happy path for demos, and the default fixture
-  must be present after npm/Homebrew packaging. Test fixtures remain under
-  `test/fixtures/v2/`.
+- **Decision:** `fizzy-symphony` and `fizzy-symphony cockpit` resolve exactly one
+  app mode before rendering: `SETUP`, `OFFLINE`, `LIVE`, or `DEMO`.
+- **Decision:** `DEMO` requires an explicit fixture (`--fixture`). No-source
+  mode never silently loads `src/v2/fixtures/ready.json`.
+- **Why:** The cockpit is the app path, so first-run and stopped-daemon states
+  need honest guidance instead of demo data that looks live. The packaged fixture
+  remains available for explicit demos and packaging verification.
 
 ## 7. Non-TTY behavior preserved
 
@@ -110,11 +112,23 @@
 - **Decision:** The existing daemon now serves `/v2/*` from the same local HTTP
   listener as `/status`, projecting the v1 status snapshot into
   `SymphonyStatus` on demand. The v2 CLIs use the existing instance registry and
-  default endpoint for no-source live discovery, while explicit `--fixture`
-  remains fixture-only.
+  default endpoint for no-source live discovery, while unreachable configured
+  projects render `OFFLINE` guidance and explicit `--fixture` remains fixture-only.
 - **Why:** This keeps fixture mode intact while letting `cockpit` and
   `capabilities` observe a real local daemon without starting a second server or
   making operators paste the endpoint for the common local case.
+
+## 10. Route-level backend harness readiness
+
+- **Decision:** Route tags now accept known backend aliases in both bare and
+  `backend-*` forms (`claude`, `codex`, `opencode`, `anthropic`, `openai`,
+  `command`) and reject unknown `backend-*` aliases as invalid.
+- **Decision:** Route discovery records `enabled: false` and a specific
+  `disabledReason` for routes that select non-Codex backends. A non-codex route
+  can still be configured and shown, but it does not dispatch until the runtime
+  harness exists.
+- **Why:** This keeps workflow intent first-class while preserving honesty in live
+  execution posture.
 
 ## Reversal notes
 

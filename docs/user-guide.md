@@ -8,7 +8,7 @@ Run these from the repo root on your Bluefin host or another Linux shell:
 npm install
 fizzy-symphony setup
 fizzy-symphony start
-fizzy-symphony dashboard
+fizzy-symphony cockpit
 ```
 
 In the repo checkout, the same commands are:
@@ -16,10 +16,11 @@ In the repo checkout, the same commands are:
 ```sh
 node bin/fizzy-symphony.js setup
 node bin/fizzy-symphony.js start
-node bin/fizzy-symphony.js dashboard
+node bin/fizzy-symphony.js cockpit
 ```
 
-That is the normal path.
+That is the normal path. `cockpit` is the primary operator surface for one-command visibility of route
+status and dispatch posture.
 
 `setup` is the normal first-run path. `init` still works, but it is only a deprecated compatibility alias for `setup`.
 
@@ -52,6 +53,9 @@ agent:
   max_concurrent: 1
 ```
 
+If a route card does not include a backend tag, the board route default is used first; when that is
+absent, `agent.default_backend` is used. The default is typically `codex`.
+
 Maximum active agents stays on `--max-agents` and `agent.max_concurrent`; starter-board setup defaults it to `1`.
 
 Agent access is a separate setup choice. `protected` is the default: workspace writes are allowed,
@@ -62,11 +66,17 @@ Generated setup state under `.fizzy-symphony/` is ignored by source protection, 
 
 `start` runs the local daemon.
 
-`dashboard` reads the daemon's existing `/status` endpoint and renders that status. In a TTY it refreshes by default; use `--once` for a static snapshot. In non-TTY, CI, or dumb terminals it prints the same information as text. It is not a clickable workflow editor and does not keep a separate workflow model.
+`cockpit` is the default operator surface. In a TTY it refreshes by default, and `--once` prints a
+single static snapshot. `dashboard` is still available for status-only reads.
 
-`cockpit` is the v2 operator spike. With no source flags it first looks for a local daemon through the instance registry and default endpoint. If none is reachable, it renders a packaged demo fixture so the command works after install. Use `--endpoint URL` to require a specific live daemon or `--fixture PATH` to force fixture mode; `start` serves both the v1 `/status` endpoint and the v2 `/v2/status` cockpit endpoint.
+`capabilities` is an advanced control surface for capability inspection.
+With no source flags it looks for a reachable daemon first; otherwise it renders the static catalogue.
+With no source flags, cockpit shows `SETUP` when config is missing, `OFFLINE` when config exists but
+no daemon is reachable, and `LIVE` when the local registry/default endpoint answers. Use
+`--endpoint URL` to require a specific live daemon or `--fixture PATH` to force explicit `DEMO` mode.
+The CLI serves both the v1 `/status` endpoint and the v2 `/v2/status` cockpit endpoint.
 
-`capabilities` prints the v2 capability catalogue. With no source flags it uses a discovered live daemon when one is reachable, otherwise it shows the static feature list. With `--fixture` or `--endpoint`, it derives disabled reasons from that status snapshot.
+`status`, `worktrees`, and `dashboard` are escape-hatch views for scripts and targeted triage.
 
 ## What You Do In Fizzy
 
@@ -153,7 +163,10 @@ If the board already has the starter route and you want setup to use starter def
 fizzy-symphony setup --adopt-starter --board BOARD_ID --workspace-repo .
 ```
 
-Existing routes still use the same board-native contract: a native golden card tagged `agent-instructions`, `codex`, and one completion tag like `move-to-done`, `close-on-complete`, or `comment-once`.
+Existing routes still use the same board-native contract: a native golden card tagged `agent-instructions`,
+one backend tag (`#codex`, `#backend-codex`, `#claude`, `#backend-claude`, `#opencode`, `#backend-opencode`,
+`#anthropic`, `#backend-anthropic`, `#openai`, `#backend-openai`, `#command`, `#backend-command`), and one
+completion tag like `move-to-done`, `close-on-complete`, or `comment-once`.
 
 ## Gated Live E2E Smoke
 

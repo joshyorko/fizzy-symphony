@@ -437,8 +437,103 @@ test("discoverGoldenTicketRoutes parses aliases and produces stable IDs and fing
   assert.equal(routesA[0].workspace, "app");
   assert.equal(routesA[0].completion.policy, "move_to_column");
   assert.equal(routesA[0].completion.target_column_id, "col_done");
+  assert.equal(routesA[0].enabled, true);
   assert.equal(routesA[0].fingerprint, routesB[0].fingerprint);
   assert.match(routesA[0].fingerprint, /^sha256:[a-f0-9]{64}$/);
+});
+
+test("discoverGoldenTicketRoutes maps bare #claude and #backend-claude as backend aliases", () => {
+  const routesByBareTag = discoverGoldenTicketRoutes([board({
+    cards: [{ id: "golden_ready", title: "Ready Route", golden: true, column_id: "col_ready", tags: ["agent-instructions", "claude", "move-to-done"] }]
+  })]);
+  assert.equal(routesByBareTag[0].backend, "claude");
+  assert.equal(routesByBareTag[0].enabled, false);
+  assert.match(routesByBareTag[0].disabledReason, /not wired yet/);
+
+  const routesByBackendTag = discoverGoldenTicketRoutes([board({
+    cards: [{ id: "golden_ready", title: "Ready Route", golden: true, column_id: "col_ready", tags: ["agent-instructions", "backend-claude", "move-to-done"] }]
+  })]);
+  assert.equal(routesByBackendTag[0].backend, "claude");
+  assert.equal(routesByBackendTag[0].enabled, false);
+  assert.match(routesByBackendTag[0].disabledReason, /not wired yet/);
+});
+
+test("discoverGoldenTicketRoutes uses configured default backend when no backend tag is present", () => {
+  const routes = discoverGoldenTicketRoutes([
+    board({
+      cards: [{ id: "golden_ready", title: "Ready Route", golden: true, column_id: "col_ready", tags: ["agent-instructions", "move-to-done"] }]
+    })
+  ], {
+    defaults: { backend: "claude", workspace: "app", persona: "repo-agent" }
+  });
+
+  assert.equal(routes[0].backend, "claude");
+  assert.equal(routes[0].enabled, false);
+  assert.match(routes[0].disabledReason, /not wired yet/);
+});
+
+test("validateStartup reports non-codex backend routes as disabled but still valid", async () => {
+  const { config } = await parsedConfig();
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy({
+      boards: [
+        board({
+          cards: [{
+            id: "golden_1",
+            title: "One",
+            golden: true,
+            column_id: "col_ready",
+            tags: ["agent-instructions", "backend-claude", "move-to-done"]
+          }]
+        })
+      ],
+      tags: [
+        { id: "tag_agent", name: "agent-instructions" },
+        { id: "tag_claude", name: "backend-claude" },
+        { id: "tag_done", name: "move-to-done" }
+      ]
+    }),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(report.routes[0].backend, "claude");
+  assert.equal(report.routes[0].enabled, false);
+  assert.equal(report.routes[0].disabledReason, "Execution for backend claude is not wired yet.");
+});
+
+test("validateStartup applies agent default backend when board defaults omit backend", async () => {
+  const { config } = await parsedConfig();
+  delete config.boards.entries[0].defaults.backend;
+  config.agent.default_backend = "claude";
+
+  const report = await validateStartup({
+    config,
+    fizzy: fakeFizzy({
+      boards: [
+        board({
+          cards: [{
+            id: "golden_1",
+            title: "One",
+            golden: true,
+            column_id: "col_ready",
+            tags: ["agent-instructions", "move-to-done"]
+          }]
+        })
+      ],
+      tags: [
+        { id: "tag_agent", name: "agent-instructions" },
+        { id: "tag_done", name: "move-to-done" }
+      ]
+    }),
+    runner: fakeRunner()
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(report.routes[0].backend, "claude");
+  assert.equal(report.routes[0].enabled, false);
 });
 
 test("discoverGoldenTicketRoutes rejects tag-only instruction cards and board-level tickets", () => {

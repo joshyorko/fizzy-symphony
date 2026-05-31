@@ -42,10 +42,11 @@ Run these from the repository root:
 
 ```sh
 npm install
+node bin/fizzy-symphony.js
 node bin/fizzy-symphony.js setup
 node bin/fizzy-symphony.js boards
 node bin/fizzy-symphony.js start
-node bin/fizzy-symphony.js dashboard
+node bin/fizzy-symphony.js cockpit
 node bin/fizzy-symphony.js status
 node bin/fizzy-symphony.js worktrees
 node bin/fizzy-symphony.js doctor --goal
@@ -103,11 +104,15 @@ clean-source policy is enabled; commit, stash, or change the policy deliberately
 default, `--once` prints a static snapshot, and non-TTY, CI, or dumb terminals use the same text
 fallback. It does not define a separate workflow model.
 
-`cockpit` and `capabilities` are the v2 operator spike. With no source flags they first look for a
-local daemon through the instance registry and default endpoint. If none is reachable, `cockpit`
-falls back to its packaged demo fixture and `capabilities` prints the static catalogue. Use
-`--endpoint URL` to require a specific live daemon or `--fixture PATH` to force fixture mode; the
-daemon serves `/status` and `/v2/status` from the same base URL used by `dashboard`.
+Bare `fizzy-symphony` launches the cockpit. `cockpit --once` is the default one-command operator
+check for route status and backend posture.
+
+`cockpit` and `capabilities` are the v2 operator surfaces. With no source flags, `cockpit` resolves
+one mode: `SETUP` when config is missing, `OFFLINE` when config exists but no daemon is reachable,
+or `LIVE` when the local registry/default endpoint answers `/v2/status`. `DEMO` requires an explicit
+fixture, for example `cockpit --fixture src/v2/fixtures/ready.json --once`. Use `--endpoint URL` to
+require a specific live daemon; the daemon serves `/status` and `/v2/status` from the same base URL
+used by `dashboard`.
 
 `worktrees` inspects Symphony-created worktrees and their metadata, including dirty file paths,
 branch, run id, last error, and recommended action. Use `--dirty-only`, `--card 426`, or `--json`

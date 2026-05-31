@@ -8,6 +8,14 @@ const AGENT_INSTRUCTIONS = "agent-instructions";
 const AGENT_BOARD = "agent-board";
 const SUPPORTED_SDK_RUNNERS = [];
 
+const KNOWN_BACKEND_TAGS = ["claude", "codex", "opencode", "anthropic", "openai", "command"];
+const MANAGED_TAG_FAMILIES = Object.freeze({
+  "agent-instructions": "scope",
+  "close-on-complete": "completion",
+  "comment-once": "completion",
+  "no-repeat": "completion"
+});
+
 const defaultAllowedCardOverrides = {
   backend: false,
   model: false,
@@ -122,17 +130,9 @@ export function parseGoldenTicketRoute(board, card, options = {}) {
   const sourceColumnId = getColumnId(card);
   const sourceColumn = findColumn(board, sourceColumnId);
 
-  const backend = parseSingleFamily(tags, "backend", (tag) => {
-    if (tag === "codex" || tag === "backend-codex") return "codex";
-    if (tag.startsWith("backend-")) {
-      throw new FizzySymphonyError("INVALID_BACKEND_TAG", "Only Codex backend tags are valid for MVP routes.", {
-        board_id: board.id,
-        card_id: card.id,
-        tag
-      });
-    }
-    return null;
-  }) ?? options.defaults?.backend ?? "codex";
+  const backend = parseSingleFamily(tags, "backend", (tag) => parseBackendTag(tag, board, card)) ??
+    parseDefaultBackend(options.defaults?.backend, board, card) ??
+    "codex";
 
   const model = parseSingleFamily(tags, "model", (tag) => tagValue(tag, "model-")) ?? options.defaults?.model ?? "";
   const workspace = parseSingleFamily(tags, "workspace", (tag) => tagValue(tag, "workspace-")) ?? options.defaults?.workspace ?? "app";
@@ -154,6 +154,10 @@ export function parseGoldenTicketRoute(board, card, options = {}) {
     source_column_name: sourceColumn?.name ?? sourceColumnId,
     golden_card_id: card.id,
     backend,
+    enabled: isExecutableBackend(backend),
+    disabledReason: isExecutableBackend(backend)
+      ? undefined
+      : `Execution for backend ${backend} is not wired yet.`,
     model,
     workspace,
     persona,
@@ -821,6 +825,37 @@ function validateCompletionGraph(routes) {
   }
 }
 
+function parseBackendTag(tag, board, card) {
+  if (KNOWN_BACKEND_TAGS.includes(tag)) return tag;
+  if (!tag.startsWith("backend-")) return null;
+
+  const alias = tagValue(tag, "backend-");
+  if (alias && KNOWN_BACKEND_TAGS.includes(alias)) return alias;
+
+  throw new FizzySymphonyError("INVALID_BACKEND_TAG", "Backend tag is not one of the supported route backends.", {
+    board_id: board.id,
+    card_id: card.id,
+    tag
+  });
+}
+
+function parseDefaultBackend(value, board, card) {
+  if (!value) return undefined;
+  const normalized = normalizeTag(value);
+  if (KNOWN_BACKEND_TAGS.includes(normalized)) return normalized;
+  const backendAlias = tagValue(normalized, "backend-");
+  if (backendAlias && KNOWN_BACKEND_TAGS.includes(backendAlias)) return backendAlias;
+  throw new FizzySymphonyError("INVALID_BACKEND_TAG", "Default route backend is not one of the supported route backends.", {
+    board_id: board.id,
+    card_id: card.id,
+    tag: value
+  });
+}
+
+function isExecutableBackend(backend = "") {
+  return backend === "codex";
+}
+
 function parseSingleFamily(tags, family, parser) {
   const values = new Map();
   for (const tag of tags) {
@@ -841,8 +876,8 @@ function parseSingleFamily(tags, family, parser) {
 
 function rejectUnknownManagedTags(tags, board, card, options) {
   const unknown = tags.filter((tag) => {
+    if (Object.hasOwn(managedTagFamilies(), tag)) return false;
     if (tag === AGENT_INSTRUCTIONS || tag === AGENT_BOARD || tag === "agent-rerun") return false;
-    if (tag === "codex" || tag === "backend-codex") return false;
     if (tag === "close-on-complete" || tag === "comment-once" || tag === "no-repeat") return false;
     if (/^(model|workspace|persona)-[^-].*/u.test(tag)) return false;
     if (/^priority-[1-5]$/u.test(tag)) return false;
@@ -863,12 +898,8 @@ function rejectUnknownManagedTags(tags, board, card, options) {
 
 function managedTagFamilies() {
   return {
-    "agent-instructions": "scope",
-    "backend-codex": "backend",
-    codex: "backend",
-    "close-on-complete": "completion",
-    "comment-once": "completion",
-    "no-repeat": "completion"
+    ...Object.fromEntries(KNOWN_BACKEND_TAGS.map((tag) => [[tag, "backend"], [`backend-${tag}`, "backend"]] ).flat()),
+    ...MANAGED_TAG_FAMILIES
   };
 }
 
@@ -894,7 +925,10 @@ function routeOptionsFromConfig(config) {
 
 function routeOptionsFromBoardEntry(board, config) {
   return {
-    defaults: board?.defaults,
+    defaults: {
+      backend: config.agent?.default_backend,
+      ...(board?.defaults ?? {})
+    },
     allowed_card_overrides: board?.defaults?.allowed_card_overrides ?? defaultAllowedCardOverrides,
     unknownManagedTagPolicy: board?.defaults?.unknown_managed_tag_policy,
     rerun_policy: config.routing?.rerun

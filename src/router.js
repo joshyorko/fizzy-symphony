@@ -49,6 +49,10 @@ export function routeCard({
     return ignoreDecision({ reason: "no-route", card, rerunRequested });
   }
 
+  if (route.enabled === false) {
+    return ignoreDecision({ reason: "route-disabled", card, route, rerunRequested });
+  }
+
   if (hasLiveUnexpiredClaim(activeClaims, card)) {
     return ignoreDecision({ reason: "live-claim", card, route, rerunRequested });
   }

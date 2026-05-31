@@ -300,6 +300,68 @@ export interface CommandResult {
 // ---------------------------------------------------------------------------
 
 export type FactoryState = "open" | "running" | "blocked" | "locked" | "unknown";
+export type CockpitMode = "SETUP" | "OFFLINE" | "LIVE" | "DEMO";
+export type CockpitSectionId = "factory" | "runs" | "worktrees" | "doctor" | "manual" | "events" | "settings" | "advanced";
+
+export interface CockpitApp {
+  mode: CockpitMode;
+  source: string;
+  configPath: string;
+  endpoint?: string | null;
+}
+
+export interface CockpitSection {
+  id: CockpitSectionId;
+  label: string;
+  key: string;
+  shortcutHint?: string;
+}
+
+export interface CockpitNextAction {
+  id: string;
+  label: string;
+  command: string;
+  enabled: boolean;
+  mutates: boolean;
+  disabledReason?: string;
+}
+
+export interface CockpitSettingsSummary {
+  configPath: string;
+  source: string;
+  mode: CockpitMode;
+  endpoint?: string | null;
+  runnerStatus?: string;
+  readiness: ReadinessState;
+  readinessBlockers: number;
+  workspaceCount: number;
+  dirtyWorktrees: number;
+  boardCount: number;
+  routeCount: number;
+  hasLiveEndpoint: boolean;
+}
+
+export interface CockpitAdvancedCommand {
+  id: string;
+  key: string;
+  label: string;
+  command: string;
+  enabled: boolean;
+  mutates: boolean;
+  disabledReason?: string;
+}
+
+export interface CockpitPaletteRow {
+  id: string;
+  key: string;
+  label: string;
+  section?: CockpitSectionId;
+  enabled: boolean;
+  disabledReason?: string;
+  mutates: boolean;
+  command?: OperatorCommandType;
+  endpoint?: string;
+}
 
 export interface CockpitHeader {
   instanceId: string;
@@ -408,6 +470,14 @@ export interface CockpitHelp {
 }
 
 export interface CockpitModel {
+  app: CockpitApp;
+  sections: CockpitSection[];
+  selectedSectionId: CockpitSectionId;
+  nextActions: CockpitNextAction[];
+  settings: CockpitSettingsSummary;
+  commandPaletteOpen: boolean;
+  commandPalette: CockpitPaletteRow[];
+  advancedCommands: CockpitAdvancedCommand[];
   header: CockpitHeader;
   factoryState: FactoryState;
   lanes: CockpitLane[];
@@ -429,6 +499,10 @@ export interface CockpitModelInput {
   capabilities?: Capability[];
   selectedId?: string;
   filter?: string;
+  app?: CockpitApp;
+  sections?: CockpitSection[];
+  selectedSectionId?: CockpitSectionId;
+  commandPaletteOpen?: boolean;
 }
 
 // ---------------------------------------------------------------------------

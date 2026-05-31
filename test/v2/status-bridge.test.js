@@ -73,3 +73,27 @@ test("projectV1StatusToV2 maps the live daemon snapshot into cockpit status", ()
   assert.equal(status.doctor.goalClosable, false);
   assert.ok(status.recentEvents.some((event) => event.type === "v1.recent_failure"));
 });
+
+test("projectV1StatusToV2 preserves route disabled reasons from non-codex backends", () => {
+  const status = projectV1StatusToV2({
+    instance: { id: "instance-a" },
+    readiness: { ready: true, blockers: [] },
+    runner_health: { status: "ready", kind: "cli_app_server" },
+    watched_boards: [{ id: "board_1", label: "Agents" }],
+    routes: [{
+      id: "route_claude",
+      board_id: "board_1",
+      source_column_id: "col_ready",
+      source_column_name: "Ready for Agents",
+      golden_card_id: "golden_1",
+      backend: "claude",
+      enabled: false,
+      disabledReason: "Execution for backend claude is not wired yet."
+    }],
+    runs: { queued: [], running: [], completed: [], failed: [], cancelled: [], preempted: [] }
+  });
+
+  assert.equal(status.routes[0].enabled, false);
+  assert.equal(status.routes[0].backend, "claude");
+  assert.equal(status.routes[0].disabledReason, "Execution for backend claude is not wired yet.");
+});

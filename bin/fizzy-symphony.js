@@ -39,7 +39,7 @@ export async function main(args = process.argv.slice(2), io = defaultIo()) {
       return usage(0, io);
     } else if (!command) {
       if (!bareEntryArgsAllowed(commandArgs)) return usage(1, io);
-      return await smartEntryCommand(commandArgs, io);
+      return await bareCockpitCommand(commandArgs, io);
     } else if (command === "init") {
       return await initCommand(commandArgs, io);
     } else if (command === "setup") {
@@ -130,14 +130,15 @@ async function initCommand(args, io) {
   });
 }
 
-async function smartEntryCommand(args, io) {
-  const configPath = optionValue(args, "--config") ?? ".fizzy-symphony/config.yml";
-  try {
-    await access(configPath);
-    return runDashboardCommand(args, io, { fetch: io.fetch });
-  } catch {
-    return setupCommand(args, io);
-  }
+async function bareCockpitCommand(args, io) {
+  const { runCockpitCommand } = await import("../src/v2/cli/cockpit.ts");
+  return runCockpitCommand(args, {
+    stdout: io.stdout,
+    stderr: io.stderr,
+    env: io.env ?? process.env,
+    fetch: io.fetch,
+    stdoutIsTTY: Boolean(io.stdout?.isTTY)
+  });
 }
 
 async function setupCommandWithOptions(args, io, commandOptions = {}) {
@@ -875,6 +876,9 @@ function isHelpCommand(args) {
 function usage(exitCode, io) {
   const text = [
     "Usage:",
+    "  fizzy-symphony [--config path] [--endpoint url] [--registry-dir path] [--once]",
+    "",
+    "Advanced commands:",
     "  fizzy-symphony setup",
     "  fizzy-symphony setup --template-only [--config path]",
     "  fizzy-symphony setup --mode create-starter [--api-url url] [--token token] [--dotenv path] [--repo url|--git-repo url|--workspace-repo path-or-url] [--ref ref] [--source-cache path] [--model model] [--reasoning-effort level] [--max-agents n] [--agent-access protected|full] [--worktree|--no-dispatch] [--create-starter-workflow|--no-workflow-change]",

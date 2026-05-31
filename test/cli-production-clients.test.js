@@ -575,6 +575,7 @@ test("public help exits successfully", async () => {
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /Usage:/u);
+    assert.match(result.stdout, /fizzy-symphony \[--config path\]/u);
     assert.match(result.stdout, /--max-agents n/u);
     assert.match(result.stdout, /--reasoning-effort level/u);
     assert.doesNotMatch(result.stdout, /fizzy-symphony init/u);
@@ -671,32 +672,68 @@ test("implicit setup friendly errors are premium plain text under NO_COLOR and C
   assert.doesNotMatch(result.stderr, /\x1b\[/u);
 });
 
-test("bare command opens dashboard when config exists", async () => {
+test("bare command opens cockpit LIVE when config exists", async () => {
   const dir = await setupWorkspace("fizzy-symphony-cli-bare-dashboard-");
   const configPath = await writeConfig(dir);
+  const requested = [];
 
   const result = await runCli(["--config", configPath, "--endpoint", "http://127.0.0.1:4567", "--once"], {
     env: {},
-    fetch: async () => ({
-      ok: true,
-      json: async () => ({
-        instance: { id: "instance-a" },
-        readiness: { ready: true },
-        runner_health: { status: "ready", kind: "cli_app_server" },
-        watched_boards: [],
-        routes: [],
-        active_runs: [],
-        claims: [],
-        workpads: [],
-        recent_failures: [],
-        recent_completions: [],
-        validation: { warnings: [], errors: [] }
-      })
-    })
+    fetch: async (url) => {
+      requested.push(String(url));
+      return {
+        ok: true,
+        json: async () => String(url).endsWith("/v2/events")
+          ? { events: [] }
+          : {
+              instance: { id: "instance-a", endpoint: "http://127.0.0.1:4567" },
+              readiness: { state: "ready", ready: true, blockers: [], runnerStatus: "ready" },
+              boards: [],
+              routes: [],
+              cards: [],
+              runs: { queued: [], running: [], completed: [], failed: [], cancelled: [], preempted: [] },
+              claims: [],
+              worktrees: [],
+              retryQueue: [],
+              capacityRefusals: [],
+              doctor: { goalClosable: true, blockers: [] },
+              warnings: [],
+              recentEvents: [],
+              lastUpdatedAt: "2026-05-31T00:00:00.000Z"
+            }
+      };
+    }
   });
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(result.stdout, /fizzy-symphony dashboard/u);
+  assert.deepEqual(requested, [
+    "http://127.0.0.1:4567/v2/status",
+    "http://127.0.0.1:4567/v2/events"
+  ]);
+  assert.match(result.stdout, /Mode: LIVE/u);
+  assert.match(result.stdout, /FIZZY-SYMPHONY COCKPIT/u);
+});
+
+test("bare command with missing config enters cockpit SETUP without constructing clients", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-cli-bare-setup-"));
+  const result = await runCli(["--config", join(dir, ".fizzy-symphony", "config.yml"), "--once"], {
+    env: {},
+    clientFactories: {
+      createFizzyClient() {
+        throw new Error("bare setup cockpit should not construct Fizzy clients");
+      },
+      createRunner() {
+        throw new Error("bare setup cockpit should not construct runner clients");
+      }
+    },
+    fetch: async () => {
+      throw new Error("bare setup cockpit should not fetch without config");
+    }
+  });
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /Mode: SETUP/u);
+  assert.match(result.stdout, /fizzy-symphony setup/u);
 });
 
 test("bare command rejects unknown leading flags instead of entering setup", async () => {

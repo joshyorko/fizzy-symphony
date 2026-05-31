@@ -102,6 +102,19 @@ test("routeCard ignores cards that are not on a watched board or routed column",
   );
 });
 
+test("routeCard ignores disabled routes before dispatch", () => {
+  const decision = routeCard({
+    board: board(),
+    card: card(),
+    routes: [route({ enabled: false, disabledReason: "Execution for backend claude is not wired yet." })],
+    config: config()
+  });
+
+  assert.equal(decision.action, "ignore");
+  assert.equal(decision.reason, "route-disabled");
+  assert.equal(decision.route.disabledReason, "Execution for backend claude is not wired yet.");
+});
+
 test("routeCard ignores closed and postponed cards unless postponed dispatch is allowed", () => {
   assert.equal(
     routeCard({
