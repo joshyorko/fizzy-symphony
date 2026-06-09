@@ -243,7 +243,8 @@ export function createOrchestratorState(options = {}) {
       status: "scheduled",
       backoff_ms: backoffMs,
       next_retry_at: new Date(Date.parse(nowIso(clock)) + backoffMs).toISOString(),
-      workspace_preserved: true
+      workspace_preserved: true,
+      reuse_dirty_workspace: true
     };
     retry.timer = scheduler?.setTimeout?.(() => {
       const replacement = [...activeRuns.values()].find((active) => active.card_id === run.card_id);

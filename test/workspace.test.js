@@ -373,6 +373,105 @@ test("prepareWorkspace reuses a clean matching worktree without rerunning after_
   assert.equal(writtenMetadata.run_attempt_id, "attempt_2");
 });
 
+test("prepareWorkspace recreates missing registered worktrees from the current source ref", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-stale-registration-"));
+  const source = await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  const first = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const firstHead = await git(first.workspace_path, ["rev-parse", "HEAD"]);
+
+  await rm(first.workspace_path, { recursive: true, force: true });
+  await writeFile(join(source, "feature.txt"), "new committed source\n", "utf8");
+  await git(source, ["add", "feature.txt"]);
+  await git(source, ["commit", "-m", "advance source"]);
+  const secondHead = await git(source, ["rev-parse", "HEAD"]);
+
+  const second = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+  });
+
+  assert.notEqual(secondHead, firstHead);
+  assert.equal(second.created, true);
+  assert.equal(second.workspace_path, first.workspace_path);
+  assert.equal(await git(second.workspace_path, ["rev-parse", "HEAD"]), secondHead);
+  assert.equal(await git(second.workspace_path, ["branch", "--show-current"]), branchName(identity));
+
+  const metadata = JSON.parse(await readFile(second.metadata_path, "utf8"));
+  assert.equal(metadata.run_attempt_id, "attempt_2");
+  assert.equal(metadata.source_head, secondHead);
+});
+
+test("prepareWorkspace preserves missing worktree branches with unique commits", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-unique-branch-"));
+  const source = await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  const first = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  await writeFile(join(first.workspace_path, "agent-work.txt"), "unique work\n", "utf8");
+  await git(first.workspace_path, ["add", "agent-work.txt"]);
+  await git(first.workspace_path, ["commit", "-m", "agent work"]);
+  const branchHead = await git(first.workspace_path, ["rev-parse", "HEAD"]);
+
+  await rm(first.workspace_path, { recursive: true, force: true });
+  await writeFile(join(source, "source-work.txt"), "source work\n", "utf8");
+  await git(source, ["add", "source-work.txt"]);
+  await git(source, ["commit", "-m", "source work"]);
+
+  await assert.rejects(
+    () => prepareWorkspace({
+      config,
+      identity,
+      metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+    }),
+    (error) => error.code === "WORKSPACE_BRANCH_HAS_UNPRESERVED_COMMITS" &&
+      error.details.preserve_workspace === true &&
+      error.details.branch === branchName(identity)
+  );
+
+  assert.equal(await git(source, ["rev-parse", branchName(identity)]), branchHead);
+});
+
+test("prepareWorkspace reports stale registration when existing worktree admin cannot be repaired", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-stale-admin-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+
+  const first = await prepareWorkspace({
+    config,
+    identity,
+    metadata: { run_attempt_id: "attempt_1", created_at: "2026-04-29T12:00:00.000Z" }
+  });
+  const gitDir = await git(first.workspace_path, ["rev-parse", "--git-dir"]);
+  await rm(gitDir, { recursive: true, force: true });
+
+  await assert.rejects(
+    () => prepareWorkspace({
+      config,
+      identity,
+      metadata: { run_attempt_id: "attempt_2", created_at: "2026-04-29T12:05:00.000Z" }
+    }),
+    (error) => error.code === "WORKSPACE_WORKTREE_STALE_REGISTRATION" &&
+      error.details.preserve_workspace === true &&
+      error.details.workspace_path === first.workspace_path
+  );
+
+  assert.match(await readFile(join(first.workspace_path, ".fizzy-symphony-workspace-guard.json"), "utf8"), /guard_file_version/u);
+});
+
 test("prepareWorkspace preserves a dirty existing worktree instead of reusing it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-dirty-"));
   await initSourceRepo(dir);
@@ -424,6 +523,38 @@ test("prepareWorkspace reuses a dirty guarded worktree for explicit reruns", asy
 
   const metadata = JSON.parse(await readFile(rerun.metadata_path, "utf8"));
   assert.equal(metadata.run_attempt_id, "attempt_2");
+});
+
+test("workspace manager reuses dirty guarded worktrees for autonomous retries", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fizzy-symphony-worktree-autonomous-retry-"));
+  await initSourceRepo(dir);
+  const config = baseConfig(dir);
+  const identity = resolveWorkspaceIdentity({ config, route: route(), card: card() });
+  const manager = createWorkspaceManager();
+
+  const first = await manager.prepare({
+    config,
+    identity,
+    claim: { run_id: "run_1", attempt_id: "attempt_1" },
+    now: "2026-04-29T12:00:00.000Z"
+  });
+  await writeFile(join(first.workspace_path, "debug.log"), "keep autonomous work\n", "utf8");
+
+  const retry = await manager.prepare({
+    config,
+    identity,
+    decision: { reuse_dirty_workspace: true },
+    claim: { run_id: "run_2", attempt_id: "attempt_2" },
+    now: "2026-04-29T12:05:00.000Z"
+  });
+
+  assert.equal(retry.workspace_path, first.workspace_path);
+  assert.equal(retry.created, false);
+  assert.equal(await readFile(join(retry.workspace_path, "debug.log"), "utf8"), "keep autonomous work\n");
+
+  const metadata = JSON.parse(await readFile(retry.metadata_path, "utf8"));
+  assert.equal(metadata.run_attempt_id, "attempt_2");
+  assert.equal(metadata.run_id, "run_2");
 });
 
 test("preflightWorkspaceSource warns and continues when the source repository is dirty", async () => {

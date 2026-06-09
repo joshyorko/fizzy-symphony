@@ -114,7 +114,17 @@ export async function runReconciliationTick(options = {}) {
         continue;
       }
 
-      dispatchDecisions.push({ ...decision, retry: decision.retry ?? retry, card: decision.card ?? card });
+      const decisionRetry = decision.retry ?? retry;
+      dispatchDecisions.push({
+        ...decision,
+        retry: decisionRetry,
+        reuse_dirty_workspace: decision.reuse_dirty_workspace ??
+          decision.reuseDirtyWorkspace ??
+          decisionRetry?.reuse_dirty_workspace ??
+          decisionRetry?.reuseDirtyWorkspace ??
+          decisionRetry?.workspace_preserved === true,
+        card: decision.card ?? card
+      });
     }
 
     for (const decision of sortDispatchCandidates(dispatchDecisions)) {
@@ -1402,7 +1412,10 @@ function assertRouteStillCurrent(card, route) {
 }
 
 function shouldRecordBlockingFailureMarker({ failureKind, error } = {}) {
-  return failureKind === "runner" || error?.code === "WORKSPACE_WORKTREE_DIRTY";
+  return failureKind === "runner" ||
+    error?.code === "WORKSPACE_WORKTREE_DIRTY" ||
+    error?.code === "WORKSPACE_WORKTREE_STALE_REGISTRATION" ||
+    error?.code === "WORKSPACE_WORKTREE_CREATE_FAILED";
 }
 
 function workspaceFromFailure({ workspaceIdentity, error } = {}) {
@@ -1415,10 +1428,18 @@ function workspaceFromFailure({ workspaceIdentity, error } = {}) {
     key: workspaceIdentity?.workspace_key ?? workspaceIdentity?.key,
     workspace_key: workspaceIdentity?.workspace_key ?? workspaceIdentity?.key,
     dirty_paths: error?.details?.dirty_paths,
-    remediation: error?.code === "WORKSPACE_WORKTREE_DIRTY"
-      ? "Inspect the preserved worktree, recover or commit useful artifacts, then add agent-rerun or create a fresh follow-up card."
-      : undefined
+    remediation: workspaceFailureRemediation(error)
   };
+}
+
+function workspaceFailureRemediation(error = {}) {
+  if (error.code === "WORKSPACE_WORKTREE_DIRTY") {
+    return "Symphony will reuse dirty worktrees for its own retries. For unrelated preserved work, inspect the worktree, recover or commit useful artifacts, then add agent-rerun or create a fresh follow-up card.";
+  }
+  if (error.code === "WORKSPACE_WORKTREE_STALE_REGISTRATION" || error.code === "WORKSPACE_WORKTREE_CREATE_FAILED") {
+    return "Symphony could not repair the git worktree registration automatically. Inspect the preserved workspace and source repository git worktree list before retrying.";
+  }
+  return undefined;
 }
 
 async function recordBlockingFailureMarker({ config, fizzy, run, card, route, workspace, error, now }) {

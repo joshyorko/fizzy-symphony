@@ -950,8 +950,9 @@ test("runReconciliationTick dispatches due retry entries through routing, prefli
         calls.push("preflight");
         return { status: "ok" };
       },
-      async prepare() {
+      async prepare({ decision }) {
         calls.push("prepareWorkspace");
+        assert.equal(decision.reuse_dirty_workspace, true);
         return { key: "workspace_card_1", path: "/tmp/workspace-card-1", identity_digest: "sha256:workspace" };
       }
     },

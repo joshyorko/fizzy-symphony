@@ -135,6 +135,7 @@ test("orchestrator state schedules capped retry backoff and records terminal exh
   assert.equal(snapshot.retry_queue[0].backoff_ms, 1000);
   assert.equal(snapshot.retry_queue[0].next_retry_at, "2026-04-29T12:00:01.000Z");
   assert.equal(snapshot.retry_queue[0].workspace_preserved, true);
+  assert.equal(snapshot.retry_queue[0].reuse_dirty_workspace, true);
   assert.equal(snapshot.retry_queue[0].card.id, "card_1");
   assert.equal(snapshot.retry_queue[0].route.id, "route_1");
 
@@ -287,6 +288,7 @@ test("stall detection uses runner activity, cancels the runner, preserves worksp
   assert.equal(snapshot.stalled_runs[0].workspace_preserved, true);
   assert.equal(snapshot.retry_queue[0].reason, "stalled");
   assert.equal(snapshot.retry_queue[0].attempt_number, 2);
+  assert.equal(snapshot.retry_queue[0].reuse_dirty_workspace, true);
 });
 
 test("claim renewal failure past lease expiry cancels and preserves without retrying", async () => {

@@ -154,7 +154,10 @@ export function createWorkspaceManager({ fs = nodeFs, exec = defaultExec, source
         identity: identity ?? workspace,
         fs,
         exec,
-        reuseDirtyExisting: decision.rerun_requested === true || decision.rerunRequested === true,
+        reuseDirtyExisting: decision.rerun_requested === true ||
+          decision.rerunRequested === true ||
+          decision.reuse_dirty_workspace === true ||
+          decision.reuseDirtyWorkspace === true,
         metadata: {
           run_attempt_id: claim.attempt_id ?? claim.attemptId,
           run_id: claim.run_id ?? claim.runId,
@@ -722,11 +725,15 @@ function parsePorcelainStatus(stdout) {
 }
 
 async function addGitWorktree({ sourceRepositoryPath, workspacePath, branch, sourceRef, exec }) {
+  await removeTargetMissingWorktreeRegistration({ sourceRepositoryPath, workspacePath, exec });
   const branchExists = await runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
     cwd: sourceRepositoryPath,
     exec,
     allowFailure: true
   });
+  if (branchExists.ok) {
+    await moveReusableBranchToSourceRef({ sourceRepositoryPath, branch, sourceRef, exec });
+  }
   const args = branchExists.ok
     ? ["worktree", "add", workspacePath, branch]
     : ["worktree", "add", "-b", branch, workspacePath, sourceRef];
@@ -743,6 +750,28 @@ async function addGitWorktree({ sourceRepositoryPath, workspacePath, branch, sou
       cause_details: error.details ?? {}
     });
   }
+}
+
+async function removeTargetMissingWorktreeRegistration({ sourceRepositoryPath, workspacePath, exec }) {
+  if (!await registeredWorktreePath(sourceRepositoryPath, workspacePath, exec)) return;
+  await runGit(["worktree", "remove", workspacePath], { cwd: sourceRepositoryPath, exec });
+}
+
+async function moveReusableBranchToSourceRef({ sourceRepositoryPath, branch, sourceRef, exec }) {
+  const branchHasUniqueCommits = await runGit(["merge-base", "--is-ancestor", branch, sourceRef], {
+    cwd: sourceRepositoryPath,
+    exec,
+    allowFailure: true
+  });
+  if (!branchHasUniqueCommits.ok) {
+    throw new FizzySymphonyError("WORKSPACE_BRANCH_HAS_UNPRESERVED_COMMITS", "Existing workspace branch has commits not present in the source ref; preserving branch.", {
+      preserve_workspace: true,
+      source_repository_path: sourceRepositoryPath,
+      branch,
+      source_ref: sourceRef
+    });
+  }
+  await runGit(["branch", "--force", branch, sourceRef], { cwd: sourceRepositoryPath, exec });
 }
 
 async function validateReusableWorktree({
@@ -768,8 +797,8 @@ async function validateReusableWorktree({
   }
 
   const worktreeRegistered = await registeredWorktreePath(sourceRepositoryPath, workspacePath, exec);
-  if (!worktreeRegistered) {
-    throw new FizzySymphonyError("WORKSPACE_WORKTREE_UNREGISTERED", "Existing workspace path is not a registered git worktree for the source repository.", {
+  if (!worktreeRegistered && !await repairReusableWorktreeRegistration({ sourceRepositoryPath, workspacePath, exec })) {
+    throw new FizzySymphonyError("WORKSPACE_WORKTREE_STALE_REGISTRATION", "Existing workspace path is not a registered git worktree for the source repository.", {
       preserve_workspace: true,
       source_repository_path: sourceRepositoryPath,
       workspace_path: workspacePath
@@ -808,6 +837,11 @@ async function registeredWorktreePath(sourceRepositoryPath, workspacePath, exec)
   return result.stdout
     .split(/\r?\n/u)
     .some((line) => line.startsWith("worktree ") && resolve(line.slice("worktree ".length)) === expected);
+}
+
+async function repairReusableWorktreeRegistration({ sourceRepositoryPath, workspacePath, exec }) {
+  await runGit(["worktree", "repair", workspacePath], { cwd: sourceRepositoryPath, exec, allowFailure: true });
+  return registeredWorktreePath(sourceRepositoryPath, workspacePath, exec);
 }
 
 async function excludeGuardFile(workspacePath, fs, exec) {
