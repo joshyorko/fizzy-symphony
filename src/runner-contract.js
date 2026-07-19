@@ -36,9 +36,12 @@ export function createFakeCodexRunner(options = {}) {
 
     async startSession(workspace, policies = {}, metadata = {}) {
       sessionCounter += 1;
+      const executionEnvironment = executionEnvironmentFor(workspace, metadata);
       return {
         session_id: `session_${sessionCounter}`,
         workspace,
+        workspace_path: executionEnvironment.workspace_path,
+        execution_environment: executionEnvironment,
         policies,
         metadata,
         process_owned: options.processOwned
@@ -51,6 +54,7 @@ export function createFakeCodexRunner(options = {}) {
         turn_id: `turn_${turnCounter}`,
         session_id: session.session_id,
         session,
+        execution_environment: session.execution_environment,
         prompt,
         metadata
       };
@@ -115,6 +119,17 @@ export function createFakeCodexRunner(options = {}) {
         session_id: session.session_id
       };
     }
+  };
+}
+
+function executionEnvironmentFor(workspace, metadata = {}) {
+  const path = typeof workspace === "string" ? workspace : workspace?.path ?? workspace?.workspace_path;
+  const explicit = metadata.execution_environment ?? metadata.executionEnvironment ?? {};
+  return {
+    id: explicit.id ?? metadata.workspace_key ?? path,
+    kind: explicit.kind ?? "local_workspace",
+    workspace_path: explicit.workspace_path ?? path,
+    cwd: explicit.cwd ?? path
   };
 }
 

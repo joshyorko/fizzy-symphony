@@ -38,10 +38,17 @@ test("fake Codex runner contract supports SPEC method names for harmless streami
   const session = await runner.startSession(workspace, policies, metadata);
   assert.equal(session.session_id, "session_1");
   assert.deepEqual(session.workspace, workspace);
+  assert.deepEqual(session.execution_environment, {
+    id: "/tmp/workspace",
+    kind: "local_workspace",
+    workspace_path: "/tmp/workspace",
+    cwd: "/tmp/workspace"
+  });
 
   const turn = await runner.startTurn(session, "harmless noop", metadata);
   assert.equal(turn.turn_id, "turn_1");
   assert.equal(turn.prompt, "harmless noop");
+  assert.deepEqual(turn.execution_environment, session.execution_environment);
 
   const streamed = [];
   const result = await runner.stream(turn, (event) => streamed.push(event));
